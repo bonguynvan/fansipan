@@ -1,0 +1,9 @@
+[package]
+name = "bus"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+description = "In-process event bus connecting data-engine, execution-engine, and the UI shell."
+
+[dependencies]
+model = { path = "../model" }
