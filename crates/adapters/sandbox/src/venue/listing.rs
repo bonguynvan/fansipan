@@ -1,6 +1,7 @@
 //! A listing's rules and where its price wanders: the tick ladder, the
 //! band, the lean, and the random walk.
 
+use super::book::DEPTH_LEVELS;
 use model::{Decimal, InstrumentId, InstrumentInfo, PriceBand, TickTable, UnixNanos};
 
 /// Tick of an instrument listed with [`super::SimVenue::list`] (no market rules).
@@ -43,6 +44,8 @@ pub struct Listing {
     /// Size shown at the best bid and ask, and the most one order fills per
     /// price move: an order larger than this fills across several moves.
     pub display_size: Decimal,
+    /// Price levels the feed publishes on each side of the book.
+    pub depth_levels: usize,
 }
 
 impl Listing {
@@ -53,6 +56,7 @@ impl Listing {
             info: InstrumentInfo::new(instrument.clone(), Decimal::ONE, ticks),
             band: PriceBand::new(instrument, price, None, None, UnixNanos::default()),
             display_size: TOP_OF_BOOK_SIZE,
+            depth_levels: DEPTH_LEVELS,
         })
     }
 

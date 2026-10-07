@@ -4,7 +4,8 @@ use model::{BookLevel, Decimal, Depth, InstrumentId, Quote, Side, Trade, UnixNan
 
 use super::listing::Listing;
 
-/// Price levels published on each side of the book.
+/// Price levels a listing publishes on each side of the book unless its
+/// market says otherwise.
 pub const DEPTH_LEVELS: usize = 3;
 
 /// One price move on the venue: what a market-data feed publishes.
@@ -37,10 +38,11 @@ impl Book {
     pub(super) fn depth(&self, quote: &Quote) -> Depth {
         let ticks = self.listing.ticks();
         let band = &self.listing.band;
+        let depth_levels = self.listing.depth_levels;
         let side = |best: Decimal, next: &dyn Fn(Decimal) -> Decimal| {
-            let mut levels = Vec::with_capacity(DEPTH_LEVELS);
+            let mut levels = Vec::with_capacity(depth_levels);
             let mut price = best;
-            for slot in 0..DEPTH_LEVELS {
+            for slot in 0..depth_levels {
                 if price <= Decimal::ZERO || !band.contains(price) {
                     break;
                 }

@@ -4,6 +4,7 @@
   import { market, startMarket } from "./lib/market.svelte.js";
   import { connectionLines, summarize } from "./lib/connection.js";
   import { flushLinks, startLinks } from "./lib/links.svelte.js";
+  import { startPicks } from "./lib/picks.svelte.js";
   import { mark, money } from "./lib/format.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
@@ -21,6 +22,7 @@
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
     startLocale().catch(failed);
     startLinks().catch(failed);
+    startPicks().catch(failed);
     startMarket().catch(failed);
     // The shell sends this just before quitting and waits briefly, so saves
     // still inside their debounce window are not lost.

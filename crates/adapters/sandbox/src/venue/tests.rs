@@ -318,6 +318,7 @@ fn banded(symbol: &str, reference: &str) -> Listing {
         info: InstrumentInfo::new(id, d("100"), ticks),
         band,
         display_size: d("10000"),
+        depth_levels: DEPTH_LEVELS,
     }
 }
 

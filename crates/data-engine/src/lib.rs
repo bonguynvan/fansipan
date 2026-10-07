@@ -28,7 +28,7 @@ use std::time::Duration;
 use adapter_api::{AdapterError, DataClient};
 use bus::BusHandle;
 use model::{
-    Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote,
+    BookLevel, Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote,
     SessionStatus, Trade,
 };
 
@@ -39,6 +39,9 @@ pub use tape::{Print, Tape};
 pub const DEFAULT_BAR_INTERVAL: Duration = Duration::from_secs(5);
 pub const DEFAULT_BAR_CAPACITY: usize = 1_000;
 pub const DEFAULT_TAPE_CAPACITY: usize = 500;
+/// Book levels kept per side. A full-depth feed can send hundreds; a screen
+/// shows a handful, and every level kept is sent to the front end.
+pub const DEFAULT_DEPTH_LEVELS: usize = 10;
 
 pub struct DataEngine {
     client: Box<dyn DataClient>,
@@ -57,6 +60,7 @@ pub struct DataEngine {
     /// tape carries on the count.
     taken_before: HashMap<InstrumentId, u64>,
     tape_capacity: usize,
+    depth_levels: usize,
     sessions: BTreeMap<String, SessionStatus>,
     connection: Option<ConnectionStatus>,
 }
@@ -100,6 +104,7 @@ impl DataEngine {
             tapes: HashMap::new(),
             taken_before: HashMap::new(),
             tape_capacity: DEFAULT_TAPE_CAPACITY,
+            depth_levels: DEFAULT_DEPTH_LEVELS,
             sessions: BTreeMap::new(),
             connection: None,
         }
@@ -120,6 +125,14 @@ impl DataEngine {
     pub fn with_tape(self, capacity: usize) -> Self {
         Self {
             tape_capacity: capacity,
+            ..self
+        }
+    }
+
+    /// How many book levels to keep per side, best first. Zero keeps none.
+    pub fn with_depth(self, levels: usize) -> Self {
+        Self {
+            depth_levels: levels,
             ..self
         }
     }
@@ -227,12 +240,21 @@ impl DataEngine {
         self.bands.insert(band.instrument.clone(), band.clone());
     }
 
-    /// Caches depth for quote-subscribed instruments; returns whether kept.
+    /// Caches the best levels of depth for quote-subscribed instruments, as
+    /// many per side as [`DataEngine::with_depth`] says; returns whether
+    /// kept.
     pub fn on_depth(&mut self, depth: &Depth) -> bool {
         if !self.is_subscribed(&depth.instrument) {
             return false;
         }
-        self.depth.insert(depth.instrument.clone(), depth.clone());
+        let best = |levels: &[BookLevel]| levels.iter().take(self.depth_levels).cloned().collect();
+        let kept = Depth::new(
+            depth.instrument.clone(),
+            best(&depth.bids),
+            best(&depth.asks),
+            depth.ts_event,
+        );
+        self.depth.insert(depth.instrument.clone(), kept);
         true
     }
 
@@ -513,6 +535,37 @@ mod tests {
 
         assert!(engine.on_depth(&depth));
         assert!(engine.depth(&id("AAA")).is_some());
+    }
+
+    #[test]
+    fn only_the_best_levels_of_depth_are_kept() {
+        let (engine, _) = engine();
+        let mut engine = engine.with_depth(2);
+        engine.subscribe_quotes(&id("AAA")).unwrap();
+        let side = |prices: [i64; 3]| {
+            prices
+                .iter()
+                .map(|p| BookLevel::new(Decimal::from(*p), Decimal::ONE))
+                .collect::<Vec<_>>()
+        };
+
+        engine.on_depth(&Depth::new(
+            id("AAA"),
+            side([10, 9, 8]),
+            side([11, 12, 13]),
+            UnixNanos(0),
+        ));
+
+        let kept = engine.depth(&id("AAA")).unwrap();
+        let prices = |levels: &[BookLevel]| levels.iter().map(|l| l.price).collect::<Vec<_>>();
+        assert_eq!(
+            prices(&kept.bids),
+            vec![Decimal::from(10), Decimal::from(9)]
+        );
+        assert_eq!(
+            prices(&kept.asks),
+            vec![Decimal::from(11), Decimal::from(12)]
+        );
     }
 
     #[test]

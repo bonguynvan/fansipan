@@ -12,6 +12,7 @@ import Blotter from "../lib/Blotter.svelte";
 import Portfolio from "../lib/Portfolio.svelte";
 import PriceBoard from "../lib/PriceBoard.svelte";
 import TimeAndSales from "../lib/TimeAndSales.svelte";
+import DepthLadder from "../lib/DepthLadder.svelte";
 
 export const DEFAULT_LAYOUT = "trading";
 
@@ -78,6 +79,15 @@ export function registerBuiltins() {
     description: "screen.time-and-sales.description",
   });
 
+  registerScreen({
+    id: "depth-ladder",
+    title: "screen.depth-ladder.title",
+    component: DepthLadder,
+    linkable: true,
+    defaultParams: { link: "a" },
+    description: "screen.depth-ladder.description",
+  });
+
   registerLayout({
     id: DEFAULT_LAYOUT,
     title: "layout.trading.title",
@@ -87,7 +97,8 @@ export function registerBuiltins() {
       const orders = add("orders", { position: { referencePanel: watchlist, direction: "right" }, initialHeight: 270 });
       const chart = add("chart", { position: { referencePanel: orders, direction: "above" } });
       const ticket = add("order-ticket", { position: { referencePanel: chart, direction: "right" }, initialWidth: 340 });
-      add("time-and-sales", { position: { referencePanel: ticket, direction: "below" } });
+      const tape = add("time-and-sales", { position: { referencePanel: ticket, direction: "below" } });
+      add("depth-ladder", { position: { referencePanel: tape, direction: "within" } });
       add("account", { position: { referencePanel: watchlist, direction: "below" }, initialHeight: 270 });
     },
   });
@@ -119,7 +130,8 @@ export function registerBuiltins() {
       const orders = add("orders", { position: { referencePanel: ticket, direction: "right" }, initialWidth: 560 });
       add("account", { position: { referencePanel: orders, direction: "within" } });
       // Beside the board, once the bottom row spans beneath both.
-      add("time-and-sales", { position: { referencePanel: board, direction: "right" }, initialWidth: 300 });
+      const tape = add("time-and-sales", { position: { referencePanel: board, direction: "right" }, initialWidth: 300 });
+      add("depth-ladder", { position: { referencePanel: tape, direction: "within" } });
     },
   });
 

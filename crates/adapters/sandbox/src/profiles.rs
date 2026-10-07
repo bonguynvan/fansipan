@@ -74,6 +74,9 @@ impl MarketProfile {
     }
 }
 
+const VIETNAM_DEPTH_LEVELS: usize = 3;
+const US_DEPTH_LEVELS: usize = 10;
+
 /// One exchange's rules: how prices step and how far they may move in a day.
 struct Board {
     code: &'static str,
@@ -85,6 +88,8 @@ struct Board {
     short_selling: bool,
     /// The order types an odd lot may be; none for no odd lots.
     odd_lot_types: &'static [OrderType],
+    /// Price levels its feed publishes on each side of the book.
+    depth_levels: usize,
 }
 
 fn dec(units: i64, scale: u32) -> Decimal {
@@ -116,6 +121,7 @@ fn listing(
         info,
         band,
         display_size,
+        depth_levels: board.depth_levels,
     })
 }
 
@@ -205,10 +211,10 @@ fn vietnam_days() -> Vec<MarketDay> {
 }
 
 /// Vietnam's three boards. Odd lots (1 to 99 shares) trade as limit orders
-/// only. HOSE's tick widens with price (10 VND below
-/// 10,000, 50 below 50,000, then 100); HNX and UPCoM tick at 100. Daily
-/// limits are 7%, 10% and 15% of the reference price. Shares trade in lots
-/// of 100.
+/// only. HOSE's tick widens with price (10 VND below 10,000, 50 below
+/// 50,000, then 100); HNX and UPCoM tick at 100. Daily limits are 7%, 10%
+/// and 15% of the reference price. Shares trade in lots of 100, and each
+/// board's feed publishes the three best prices on each side.
 pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
     let lot = Decimal::ONE_HUNDRED;
     let flat_100 = TickTable::flat(Decimal::ONE_HUNDRED).map_err(|e| e.to_string())?;
@@ -224,6 +230,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         lot,
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
+        depth_levels: VIETNAM_DEPTH_LEVELS,
     };
     let hnx = Board {
         code: "HNX",
@@ -232,6 +239,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         lot,
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
+        depth_levels: VIETNAM_DEPTH_LEVELS,
     };
     let upcom = Board {
         code: "UPCOM",
@@ -240,6 +248,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         lot,
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
+        depth_levels: VIETNAM_DEPTH_LEVELS,
     };
     let display = dec(10_000, 0);
     let on = |board: &Board, entries: &[(&str, &str, i64)]| -> Result<Vec<Listing>, String> {
@@ -299,7 +308,8 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
     })
 }
 
-/// A US-style market: a flat one-cent tick, no daily limits, single shares.
+/// A US-style market: a flat one-cent tick, no daily limits, single shares,
+/// and ten levels of depth, as a full-depth feed shows.
 pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
     let board = Board {
         code: "NASDAQ",
@@ -308,6 +318,7 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         lot: Decimal::ONE,
         short_selling: true,
         odd_lot_types: &[],
+        depth_levels: US_DEPTH_LEVELS,
     };
     let listings = [
         ("AAPL", "Apple", 19_000),
@@ -367,6 +378,28 @@ mod tests {
                 assert_eq!(listing.info.currency, profile.currency);
             }
         }
+    }
+
+    #[test]
+    fn each_market_publishes_its_own_depth() {
+        let depth_of = |profile: MarketProfile| {
+            let listing = profile.listings[0].clone();
+            let venue = SimVenue::new(Decimal::ZERO);
+            let instrument = listing.info.id.clone();
+            venue.list_with(listing);
+            let tick = venue
+                .step(
+                    &instrument,
+                    Decimal::ZERO,
+                    UnixNanos::default(),
+                    &mut |_| {},
+                )
+                .expect("listed");
+            (tick.depth.bids.len(), tick.depth.asks.len())
+        };
+
+        assert_eq!(depth_of(vietnam("sim").unwrap()), (3, 3));
+        assert_eq!(depth_of(united_states("sim").unwrap()), (10, 10));
     }
 
     #[test]
