@@ -3,8 +3,9 @@
   import CancelCell from "./CancelCell.svelte";
   import { blotterError } from "./orders.svelte.js";
   import { price, quantity } from "./format.js";
+  import { market } from "./market.svelte.js";
 
-  let { orders } = $props();
+  const orders = $derived(market.orderList);
 
   const STATUS_TONES = {
     filled: "up",
@@ -48,7 +49,6 @@
 
 <div class="blotter">
   <header>
-    <h2>Orders</h2>
     <span class="dim">{working} working · {orders.length} this session</span>
   </header>
 
@@ -64,7 +64,7 @@
       theme={tradecanvasTheme}
       fitColumns
       cellSelection={false}
-      emptyMessage="No orders yet. Use the ticket on the right."
+      emptyMessage="No orders yet. Place one from an order ticket."
     />
   </div>
 </div>
@@ -85,13 +85,6 @@
     padding: 10px 16px 8px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-  }
 
   .grid {
     min-height: 0;

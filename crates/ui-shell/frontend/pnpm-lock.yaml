@@ -20,6 +20,9 @@ importers:
       bo-grid:
         specifier: ^2.2.0
         version: 2.2.0(svelte@5.57.2)
+      dockview-core:
+        specifier: ^8.4.1
+        version: 8.4.1
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^5.0.0
@@ -560,6 +563,9 @@ packages:
 
   devalue@5.9.4:
     resolution: {integrity: sha512-sPAT4pztbu6586/hrhOnMKS17IJrvg12mXiSPSS3W5qDeN2RGgvZ0diZCm31dBbnevfVmujNO3IM2wrS4Y2Rhg==}
+
+  dockview-core@8.4.1:
+    resolution: {integrity: sha512-LcvhGwmK/Q1tFDEPkiBpkLIYctimmu8JJHgG5yhIXwyf9IvWQkJa3EG7/a1NKUS2Q8w82uoYZTL+c84/zpQUjg==}
 
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==}
@@ -1167,6 +1173,8 @@ snapshots:
   deepmerge@4.3.1: {}
 
   devalue@5.9.4: {}
+
+  dockview-core@8.4.1: {}
 
   es-module-lexer@1.7.0: {}
 

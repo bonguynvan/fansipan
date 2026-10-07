@@ -1,8 +1,13 @@
 <script>
   import { Grid, tradecanvasTheme } from "bo-grid";
   import { mark, money, price, quantity } from "./format.js";
+  import { market } from "./market.svelte.js";
+  import { selectSymbol } from "./links.svelte.js";
 
-  let { account, quotes } = $props();
+  let { params } = $props();
+
+  const account = $derived(market.account);
+  const quotes = $derived(market.quotes);
 
   const tone = (value) => (value > 0 ? "up" : value < 0 ? "down" : undefined);
 
@@ -31,7 +36,7 @@
 
 <div class="portfolio">
   <header>
-    <h2>Account</h2>
+    <span class="dim">{account.positions.length} positions</span>
     <span class="num">cash {money(account.cash)}</span>
   </header>
 
@@ -43,6 +48,7 @@
       theme={tradecanvasTheme}
       fitColumns
       cellSelection={false}
+      onRowClick={(row) => selectSymbol(params.link, row.symbol)}
       emptyMessage="No positions yet."
     />
   </div>
@@ -64,13 +70,6 @@
     padding: 10px 16px 8px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-  }
 
   .grid {
     min-height: 0;

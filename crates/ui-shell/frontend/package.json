@@ -13,7 +13,8 @@
     "@tauri-apps/api": "^2.0.0",
     "@tradecanvas/chart": "^1.16.1",
     "@tradecanvas/svelte": "^1.2.3",
-    "bo-grid": "^2.2.0"
+    "bo-grid": "^2.2.0",
+    "dockview-core": "^8.4.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

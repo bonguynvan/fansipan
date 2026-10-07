@@ -1,7 +1,17 @@
 <script>
   import { Grid, tradecanvasTheme } from "bo-grid";
+  import { market } from "./market.svelte.js";
+  import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
 
-  let { quotes, trends, symbols, selected = $bindable(null) } = $props();
+  let { params, panel } = $props();
+
+  const selected = $derived(symbolOf(params, market.symbols[0]));
+
+  /** Linked: the whole group follows. Unlinked: only this panel remembers it. */
+  function choose(symbol) {
+    if (isLinked(params.link)) selectSymbol(params.link, symbol);
+    else panel?.updateParameters({ symbol });
+  }
 
   const columns = [
     { type: "text", key: "symbol", header: "Symbol", width: 70 },
@@ -12,19 +22,18 @@
   ];
 
   const rows = $derived(
-    symbols.map((symbol) => {
-      const quote = quotes[symbol];
+    market.symbols.map((symbol) => {
+      const quote = market.quotes[symbol];
       const bid = Number(quote.bid);
       const ask = Number(quote.ask);
-      return { id: symbol, symbol, bid, ask, spread: ask - bid, trend: trends[symbol] ?? [] };
+      return { id: symbol, symbol, bid, ask, spread: ask - bid, trend: market.trends[symbol] ?? [] };
     }),
   );
 </script>
 
 <div class="watch">
   <header>
-    <h2>Watchlist</h2>
-    <span class="dim">{symbols.length} instruments</span>
+    <span class="dim">{market.symbols.length} instruments</span>
   </header>
 
   <div class="grid">
@@ -36,12 +45,12 @@
       fitColumns
       cellSelection={false}
       selectedRowId={selected}
-      onRowClick={(row) => (selected = row.symbol)}
+      onRowClick={(row) => choose(row.symbol)}
       emptyMessage="Waiting for the first quotes…"
     />
   </div>
 
-  <p class="hint dim">Click a row to chart it and load the order ticket.</p>
+  <p class="hint dim">Click a row to send it to every panel in this link group.</p>
 </div>
 
 <style>
@@ -60,13 +69,6 @@
     padding: 10px 16px 8px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-  }
 
   .grid {
     min-height: 0;

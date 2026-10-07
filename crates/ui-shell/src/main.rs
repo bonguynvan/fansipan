@@ -8,6 +8,8 @@
 
 mod batch;
 mod dto;
+mod settings;
+mod workspace;
 
 use std::mem;
 use std::process::ExitCode;
@@ -301,25 +303,35 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
             app.manage(shell);
+            workspace::setup(app)?;
             pump(app.handle().clone(), events);
             flush(app.handle().clone());
             Ok(())
         })
+        .on_window_event(workspace::on_window_event)
         .invoke_handler(tauri::generate_handler![
             snapshot,
             bars,
             place_order,
-            cancel_order
+            cancel_order,
+            workspace::settings_get,
+            workspace::settings_set,
+            workspace::settings_remove,
+            workspace::open_window
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
+    match app {
+        Ok(app) => {
+            app.run(workspace::on_run_event);
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("Fansipan stopped: {e}");
+            eprintln!("Fansipan could not start: {e}");
             ExitCode::FAILURE
         }
     }

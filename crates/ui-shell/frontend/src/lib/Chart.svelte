@@ -1,8 +1,12 @@
 <script>
   import { TradeCanvas } from "@tradecanvas/svelte";
   import { BAR_TIMEFRAME, ShellAdapter } from "./shellAdapter.js";
+  import { market } from "./market.svelte.js";
+  import { symbolOf } from "./links.svelte.js";
 
-  let { symbol } = $props();
+  let { params } = $props();
+
+  const symbol = $derived(symbolOf(params, market.symbols[0]));
 
   const adapter = new ShellAdapter();
   // Chart-side trading, alerts and screenshots stay off until they are wired
@@ -13,7 +17,6 @@
 
 <div class="chart">
   <header>
-    <h2>Chart</h2>
     <span class="sym">{symbol ?? "—"}</span>
     <span class="dim">{BAR_TIMEFRAME} bars · mid · tick volume</span>
   </header>
@@ -51,13 +54,6 @@
     padding: 10px 16px 8px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-  }
 
   .sym {
     font-family: var(--mono);

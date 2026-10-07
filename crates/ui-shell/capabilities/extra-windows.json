@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extra-windows",
+  "description": "Extra workspace windows may close themselves once their last panel is gone; the main window never needs to",
+  "windows": [
+    "ws-*"
+  ],
+  "permissions": [
+    "core:window:allow-close"
+  ]
+}

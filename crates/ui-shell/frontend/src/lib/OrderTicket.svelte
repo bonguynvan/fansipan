@@ -1,7 +1,12 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { market } from "./market.svelte.js";
+  import { symbolOf } from "./links.svelte.js";
 
-  let { selected, quote } = $props();
+  let { params } = $props();
+
+  const selected = $derived(symbolOf(params, market.symbols[0]));
+  const quote = $derived(selected ? market.quotes[selected] : null);
 
   let side = $state("buy");
   let quantity = $state(10);
@@ -51,7 +56,6 @@
 
 <div class="ticket">
   <header>
-    <h2>Order ticket</h2>
     <span class="sym">{selected ?? "—"}</span>
   </header>
 
@@ -114,13 +118,6 @@
     margin-bottom: 10px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-  }
 
   .sym {
     font-family: var(--mono);
