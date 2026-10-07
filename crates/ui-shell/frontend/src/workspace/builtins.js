@@ -1,6 +1,7 @@
 // The screens and layouts Fansipan ships with, registered through the same
 // calls a third-party screen uses. Screen ids are saved in layouts: never
-// rename one that has shipped.
+// rename one that has shipped. Titles and descriptions are message ids
+// (see src/i18n/locales).
 
 import { registerLayout, registerScreen } from "./registry.js";
 import Watchlist from "../lib/Watchlist.svelte";
@@ -19,46 +20,46 @@ export function registerBuiltins() {
 
   registerScreen({
     id: "watchlist",
-    title: "Watchlist",
+    title: "screen.watchlist.title",
     component: Watchlist,
     linkable: true,
     defaultParams: { link: "a" },
-    description: "Live bid/ask with two-minute sparklines; picks the symbol for its link group.",
+    description: "screen.watchlist.description",
   });
   registerScreen({
     id: "chart",
-    title: "Chart",
+    title: "screen.chart.title",
     component: Chart,
     linkable: true,
     defaultParams: { link: "a" },
-    description: "Candles built by the engines from live quotes.",
+    description: "screen.chart.description",
   });
   registerScreen({
     id: "order-ticket",
-    title: "Order ticket",
+    title: "screen.order-ticket.title",
     component: OrderTicket,
     linkable: true,
     defaultParams: { link: "a" },
-    description: "Buy or sell the linked symbol; risk checks run before the venue sees it.",
+    description: "screen.order-ticket.description",
   });
   registerScreen({
     id: "orders",
-    title: "Orders",
+    title: "screen.orders.title",
     component: Blotter,
-    description: "Every order this session, with fills, status, reason, and cancel.",
+    description: "screen.orders.description",
   });
   registerScreen({
     id: "account",
-    title: "Account",
+    title: "screen.account.title",
     component: Portfolio,
     linkable: true,
     defaultParams: { link: "a" },
-    description: "Cash and positions as the venue reports them, with live P&L.",
+    description: "screen.account.description",
   });
 
   registerLayout({
     id: DEFAULT_LAYOUT,
-    title: "Trading desk",
+    title: "layout.trading.title",
     // Orders is placed before the chart so it spans the chart and ticket.
     build(add) {
       const watchlist = add("watchlist", { initialWidth: 420 });
@@ -71,17 +72,17 @@ export function registerBuiltins() {
 
   registerLayout({
     id: "two-charts",
-    title: "Two charts (link groups A and B)",
+    title: "layout.two-charts.title",
     build(add) {
-      const watchA = add("watchlist", { initialWidth: 380, title: "Watchlist A" });
-      const chartA = add("chart", { position: { referencePanel: watchA, direction: "right" }, title: "Chart A" });
+      const watchA = add("watchlist", { initialWidth: 380, title: "layout.two-charts.watchlist-a" });
+      const chartA = add("chart", { position: { referencePanel: watchA, direction: "right" }, title: "layout.two-charts.chart-a" });
       add("order-ticket", { position: { referencePanel: chartA, direction: "right" }, initialWidth: 320 });
       const watchB = add("watchlist", {
         params: { link: "b" },
-        title: "Watchlist B",
+        title: "layout.two-charts.watchlist-b",
         position: { referencePanel: watchA, direction: "below" },
       });
-      add("chart", { params: { link: "b" }, title: "Chart B", position: { referencePanel: chartA, direction: "below" } });
+      add("chart", { params: { link: "b" }, title: "layout.two-charts.chart-b", position: { referencePanel: chartA, direction: "below" } });
       add("orders", { position: { referencePanel: watchB, direction: "within" } });
     },
   });

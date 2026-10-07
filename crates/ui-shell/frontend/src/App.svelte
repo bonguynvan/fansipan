@@ -8,6 +8,8 @@
   import Workspace from "./workspace/Workspace.svelte";
   import WorkspaceMenu from "./workspace/WorkspaceMenu.svelte";
   import { MAIN_WINDOW, currentWindowLabel, flushLayout } from "./workspace/workspace.svelte.js";
+  import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
+  import LocalePicker from "./i18n/LocalePicker.svelte";
 
   // Screens must be registered before any layout that names them loads.
   registerBuiltins();
@@ -15,6 +17,7 @@
   const label = currentWindowLabel();
 
   onMount(() => {
+    startLocale();
     startLinks();
     startMarket();
     // The shell sends this just before quitting and waits briefly, so saves
@@ -22,6 +25,7 @@
     const flushing = listen("workspace-flush", () => {
       flushLayout();
       flushLinks();
+      flushLocale();
     });
     return () => flushing.then((unlisten) => unlisten());
   });
@@ -40,16 +44,19 @@
     <div class="brand">
       <span class="mark" aria-hidden="true">▲</span>
       <span>Fansipan</span>
-      <span class="venue dim">sim · simulated venue{label === MAIN_WINDOW ? "" : " · extra window"}</span>
+      <span class="venue dim"
+        >sim · {t("app.simulatedVenue")}{label === MAIN_WINDOW ? "" : ` · ${t("app.extraWindow")}`}</span
+      >
     </div>
     <div class="equity">
-      <span class="dim">equity</span>
+      <span class="dim">{t("app.equity")}</span>
       <span class="num">{money(equity)}</span>
     </div>
     <div class="tools">
       <WorkspaceMenu />
+      <LocalePicker />
       <div class="status" class:live={market.ready}>
-        <span class="dot"></span>{market.ready ? "live" : "connecting"}
+        <span class="dot"></span>{market.ready ? t("app.live") : t("app.connecting")}
       </div>
     </div>
   </header>

@@ -3,6 +3,7 @@
   // or layout a plugin registers shows up here with no change to this file.
   import { listLayouts, listScreens } from "./registry.js";
   import { addScreen, applyLayout } from "./workspace.svelte.js";
+  import { t } from "../i18n/i18n.svelte.js";
 
   let open = $state(null);
   let pendingLayout = $state(null);
@@ -31,9 +32,9 @@
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
 
-<nav class="workspace-menu" aria-label="Workspace" bind:this={nav}>
+<nav class="workspace-menu" aria-label={t("workspace.menu")} bind:this={nav}>
   <div class="menu">
-    <button aria-expanded={open === "add"} onclick={() => toggle("add")}>Add panel ▾</button>
+    <button aria-expanded={open === "add"} onclick={() => toggle("add")}>{t("workspace.addPanel")} ▾</button>
     {#if open === "add"}
       <ul role="menu">
         {#each listScreens() as screen (screen.id)}
@@ -45,8 +46,8 @@
                 close();
               }}
             >
-              <span class="title">{screen.title}</span>
-              {#if screen.description}<span class="desc dim">{screen.description}</span>{/if}
+              <span class="title">{t(screen.title)}</span>
+              {#if screen.description}<span class="desc dim">{t(screen.description)}</span>{/if}
             </button>
           </li>
         {/each}
@@ -55,26 +56,26 @@
   </div>
 
   <div class="menu">
-    <button aria-expanded={open === "layout"} onclick={() => toggle("layout")}>Layout ▾</button>
+    <button aria-expanded={open === "layout"} onclick={() => toggle("layout")}>{t("workspace.layout")} ▾</button>
     {#if open === "layout"}
       <ul role="menu">
         {#each listLayouts() as layout (layout.id)}
           <li role="none">
             {#if pendingLayout === layout.id}
               <div class="confirm">
-                <span>Replace this window's panels?</span>
+                <span>{t("workspace.replaceConfirm")}</span>
                 <button
                   class="danger"
                   onclick={() => {
                     applyLayout(layout.id);
                     close();
-                  }}>Replace</button
+                  }}>{t("workspace.replace")}</button
                 >
-                <button onclick={() => (pendingLayout = null)}>Keep</button>
+                <button onclick={() => (pendingLayout = null)}>{t("workspace.keep")}</button>
               </div>
             {:else}
               <button role="menuitem" onclick={() => (pendingLayout = layout.id)}>
-                <span class="title">{layout.title}</span>
+                <span class="title">{t(layout.title)}</span>
               </button>
             {/if}
           </li>

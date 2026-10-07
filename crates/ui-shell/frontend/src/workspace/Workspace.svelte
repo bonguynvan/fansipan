@@ -7,7 +7,8 @@
   import { getScreen } from "./registry.js";
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
-  import { MAIN_WINDOW, persist, popOut, restore, workspace } from "./workspace.svelte.js";
+  import { MAIN_WINDOW, persist, popOut, restore, retitlePanels, workspace } from "./workspace.svelte.js";
+  import { i18n, t } from "../i18n/i18n.svelte.js";
 
   let { label } = $props();
 
@@ -42,7 +43,7 @@
       createRightHeaderActionComponent: headerActions,
       getTabContextMenuItems: ({ panel }) => [
         "maximize",
-        { label: "Move to new window", action: () => popOut(panel) },
+        { label: t("workspace.moveToNewWindow"), action: () => popOut(panel) },
         "separator",
         "close",
         "closeOthers",
@@ -66,13 +67,17 @@
       workspace.api = null;
     };
   });
+
+  $effect(() => {
+    if (i18n.locale) retitlePanels();
+  });
 </script>
 
 <div class="root">
   {#if workspace.notice}
     <p class="notice" role="status">
-      {workspace.notice}
-      <button onclick={() => (workspace.notice = null)} aria-label="Dismiss">×</button>
+      {t(workspace.notice.id, workspace.notice.vars)}
+      <button onclick={() => (workspace.notice = null)} aria-label={t("workspace.dismiss")}>×</button>
     </p>
   {/if}
 

@@ -3,6 +3,7 @@
   import { BAR_TIMEFRAME, ShellAdapter } from "./shellAdapter.js";
   import { market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
+  import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
 
@@ -18,7 +19,7 @@
 <div class="chart">
   <header>
     <span class="sym">{symbol ?? "—"}</span>
-    <span class="dim">{BAR_TIMEFRAME} bars · mid · tick volume</span>
+    <span class="dim">{t("chart.caption", { timeframe: BAR_TIMEFRAME })}</span>
   </header>
 
   <div class="canvas">
@@ -33,7 +34,7 @@
         historyLimit={500}
       />
     {:else}
-      <p class="dim empty">Waiting for the first quotes…</p>
+      <p class="dim empty">{t("feed.waiting")}</p>
     {/if}
   </div>
 </div>

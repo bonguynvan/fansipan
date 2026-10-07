@@ -1,5 +1,6 @@
 <script>
   import { cancelOrder, cancelling } from "./orders.svelte.js";
+  import { t } from "../i18n/i18n.svelte.js";
 
   let { row } = $props();
 
@@ -14,7 +15,7 @@
       event.stopPropagation();
       cancelOrder(row.id);
     }}
-    aria-label="Cancel order {row.id}">Cancel</button
+    aria-label={t("orders.cancelOrder", { id: row.id })}>{t("orders.cancel")}</button
   >
 {/if}
 

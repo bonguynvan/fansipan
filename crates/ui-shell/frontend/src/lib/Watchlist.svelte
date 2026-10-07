@@ -2,6 +2,7 @@
   import { Grid, tradecanvasTheme } from "bo-grid";
   import { market } from "./market.svelte.js";
   import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
+  import { t, tn } from "../i18n/i18n.svelte.js";
 
   let { params, panel } = $props();
 
@@ -13,13 +14,13 @@
     else panel?.updateParameters({ symbol });
   }
 
-  const columns = [
-    { type: "text", key: "symbol", header: "Symbol", width: 70 },
-    { type: "sparkline", key: "trend", sparkKey: "trend", header: "2 min", width: 96, sortable: false },
-    { type: "price", key: "bid", header: "Bid", width: 84, flash: "auto" },
-    { type: "price", key: "ask", header: "Ask", width: 84, flash: "auto" },
-    { type: "number", key: "spread", header: "Spread", width: 64, decimals: 2 },
-  ];
+  const columns = $derived([
+    { type: "text", key: "symbol", header: t("column.symbol"), width: 70 },
+    { type: "sparkline", key: "trend", sparkKey: "trend", header: t("column.trend"), width: 96, sortable: false },
+    { type: "price", key: "bid", header: t("column.bid"), width: 84, flash: "auto" },
+    { type: "price", key: "ask", header: t("column.ask"), width: 84, flash: "auto" },
+    { type: "number", key: "spread", header: t("column.spread"), width: 64, decimals: 2 },
+  ]);
 
   const rows = $derived(
     market.symbols.map((symbol) => {
@@ -33,7 +34,7 @@
 
 <div class="watch">
   <header>
-    <span class="dim">{market.symbols.length} instruments</span>
+    <span class="dim">{tn("watchlist.count", market.symbols.length)}</span>
   </header>
 
   <div class="grid">
@@ -46,11 +47,11 @@
       cellSelection={false}
       selectedRowId={selected}
       onRowClick={(row) => choose(row.symbol)}
-      emptyMessage="Waiting for the first quotes…"
+      emptyMessage={t("feed.waiting")}
     />
   </div>
 
-  <p class="hint dim">Click a row to send it to every panel in this link group.</p>
+  <p class="hint dim">{t("watchlist.hint")}</p>
 </div>
 
 <style>

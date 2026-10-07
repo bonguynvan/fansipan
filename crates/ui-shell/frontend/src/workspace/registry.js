@@ -25,7 +25,8 @@ function checkId(kind, id, registry) {
  *
  * @param {object} screen
  * @param {string} screen.id         Stable id, saved in layouts. Never rename a shipped one.
- * @param {string} screen.title      Default tab title.
+ * @param {string} screen.title      Default tab title: a message id (see src/i18n)
+ *                                   or plain text.
  * @param {import("svelte").Component} screen.component
  * @param {object} [screen.defaultParams]  Parameters a new panel starts with.
  * @param {boolean} [screen.linkable]      Shows a link-group button; the screen

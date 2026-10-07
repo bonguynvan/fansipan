@@ -1,6 +1,7 @@
 // The shell's persistent settings store: string keys to JSON values.
 // Keys are lower-case and namespaced by convention: `workspace.*` for the
-// workspace, `screen.<id>.*` for a screen's own settings.
+// workspace, `ui.*` for app-wide preferences, `screen.<id>.*` for a
+// screen's own settings.
 
 import { invoke } from "@tauri-apps/api/core";
 

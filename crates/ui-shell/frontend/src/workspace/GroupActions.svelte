@@ -2,7 +2,8 @@
   // The buttons at the right of each panel group's tab strip: the active
   // panel's link group, and moving it to a window of its own.
   import { cycleLink, popOut, screenOf } from "./workspace.svelte.js";
-  import { groupColor, isLinked } from "../lib/links.svelte.js";
+  import { LINK_GROUPS, groupColor, isLinked } from "../lib/links.svelte.js";
+  import { t } from "../i18n/i18n.svelte.js";
 
   let { group } = $props();
 
@@ -41,13 +42,20 @@
     <button
       class="link"
       style:--group={groupColor(link)}
-      title={isLinked(link) ? `Link group ${linkLabel}: click for the next group` : "Not linked: click to link to A"}
-      aria-label="Link group {linkLabel}, change"
+      title={isLinked(link)
+        ? t("workspace.linkGroup", { group: linkLabel })
+        : t("workspace.notLinked", { group: LINK_GROUPS[0].label })}
+      aria-label={t("workspace.changeLink", { group: linkLabel })}
       onclick={() => cycleLink(panel)}>{linkLabel}</button
     >
   {/if}
   {#if panel}
-    <button class="popout" title="Move to a new window" aria-label="Move {panel.title} to a new window" onclick={() => popOut(panel)}>⧉</button>
+    <button
+      class="popout"
+      title={t("workspace.moveToNewWindow")}
+      aria-label={t("workspace.moveToNewWindowNamed", { title: panel.title })}
+      onclick={() => popOut(panel)}>⧉</button
+    >
   {/if}
 </div>
 

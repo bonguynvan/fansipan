@@ -3,6 +3,7 @@
   import { mark, money, price, quantity } from "./format.js";
   import { market } from "./market.svelte.js";
   import { selectSymbol } from "./links.svelte.js";
+  import { t, tn } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
 
@@ -11,13 +12,13 @@
 
   const tone = (value) => (value > 0 ? "up" : value < 0 ? "down" : undefined);
 
-  const columns = [
-    { type: "text", key: "symbol", header: "Symbol", width: 66, minWidth: 62 },
-    { type: "text", key: "quantity", header: "Qty", width: 48, minWidth: 40, align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
-    { type: "text", key: "avg", header: "Avg", width: 78, minWidth: 72, align: "right", format: (v) => price(v) },
-    { type: "price", key: "mark", header: "Mark", width: 72, minWidth: 64, flash: "auto" },
-    { type: "number", key: "pnl", header: "P&L", width: 76, minWidth: 64, decimals: 2, cellClass: (v) => tone(v) },
-  ];
+  const columns = $derived([
+    { type: "text", key: "symbol", header: t("column.symbol"), width: 66, minWidth: 62 },
+    { type: "text", key: "quantity", header: t("column.qty"), width: 48, minWidth: 40, align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
+    { type: "text", key: "avg", header: t("column.avg"), width: 78, minWidth: 72, align: "right", format: (v) => price(v) },
+    { type: "price", key: "mark", header: t("column.mark"), width: 72, minWidth: 64, flash: "auto" },
+    { type: "number", key: "pnl", header: t("column.pnl"), width: 76, minWidth: 64, decimals: 2, cellClass: (v) => tone(v) },
+  ]);
 
   const rows = $derived(
     account.positions.map((p) => {
@@ -36,8 +37,8 @@
 
 <div class="portfolio">
   <header>
-    <span class="dim">{account.positions.length} positions</span>
-    <span class="num">cash {money(account.cash)}</span>
+    <span class="dim">{tn("account.positions", account.positions.length)}</span>
+    <span class="num">{t("account.cash", { cash: money(account.cash) })}</span>
   </header>
 
   <div class="grid">
@@ -49,7 +50,7 @@
       fitColumns
       cellSelection={false}
       onRowClick={(row) => selectSymbol(params.link, row.symbol)}
-      emptyMessage="No positions yet."
+      emptyMessage={t("account.empty")}
     />
   </div>
 </div>

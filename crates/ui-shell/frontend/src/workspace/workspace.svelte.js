@@ -10,6 +10,7 @@ import { DEFAULT_LAYOUT } from "./builtins.js";
 import { debouncedSetter, getSetting, removeSetting, setSetting } from "../lib/settings.js";
 import { isLinked, links, nextGroup } from "../lib/links.svelte.js";
 import { newWindowLabel } from "./labels.js";
+import { t } from "../i18n/i18n.svelte.js";
 
 export const MAIN_WINDOW = "main";
 /** Bump when the saved shape changes; older saves then fall back to a preset. */
@@ -19,6 +20,7 @@ const SAVE_DELAY_MS = 400;
 class WorkspaceState {
   api = $state.raw(null);
   label = $state(MAIN_WINDOW);
+  /** `{ id, vars }` of a message for the notice bar, or null. */
   notice = $state(null);
   /**
    * True while a whole layout is being replaced or restored. Panels come and
@@ -72,19 +74,28 @@ function rebuild(change) {
   }
 }
 
+function notify(id, vars) {
+  workspace.notice = { id, vars };
+}
+
 /**
  * Adds a panel showing a registered screen. An unregistered id still gets a
  * panel, which explains what is missing instead of failing the whole layout.
+ * `options.title` (a message id or plain text) overrides the screen's title
+ * and is kept in the panel's `titleKey` parameter, so the tab can be
+ * re-labelled in another language.
  */
 export function addScreen(screenId, options = {}) {
   const api = workspace.api;
   if (!api) return null;
   const screen = getScreen(screenId);
+  const params = { ...(screen?.defaultParams ?? {}), ...(options.params ?? {}) };
+  if (options.title) params.titleKey = options.title;
   const panel = {
     id: newPanelId(screenId),
     component: screenId,
-    title: options.title ?? screen?.title ?? screenId,
-    params: { ...(screen?.defaultParams ?? {}), ...(options.params ?? {}) },
+    title: t(options.title ?? screen?.title ?? screenId),
+    params,
   };
   if (options.position) panel.position = options.position;
   return api.addPanel(panel);
@@ -115,6 +126,18 @@ export function applyLayout(layoutId) {
 }
 
 /**
+ * Labels every tab in the current language. A saved layout holds tab text
+ * in whatever language it was saved in; the source of each title is the
+ * panel's `titleKey` or its screen's title.
+ */
+export function retitlePanels() {
+  for (const panel of workspace.api?.panels ?? []) {
+    const key = panel.params?.titleKey ?? screenOf(panel)?.title;
+    if (key) panel.api.setTitle(t(key));
+  }
+}
+
+/**
  * Restores this window from its saved layout: dockview JSON from an earlier
  * session, or a seed (a panel list) written by the window that popped a
  * panel out. With nothing usable, the main window shows the default layout;
@@ -134,7 +157,7 @@ export async function restore(api, label) {
   } catch (err) {
     // Unreadable is not the same as absent: show the default, but leave
     // whatever is stored alone rather than overwrite it.
-    workspace.notice = `The saved layout could not be read (${String(err)}); changes will not be saved this session.`;
+    notify("workspace.unreadable", { error: String(err) });
     if (label === MAIN_WINDOW) applyLayout(DEFAULT_LAYOUT);
     return;
   }
@@ -152,8 +175,9 @@ export async function restore(api, label) {
     }
   }
   saver = debouncedSetter(layoutKey(label), SAVE_DELAY_MS, (message) => {
-    workspace.notice = `Layout not saved: ${message}`;
+    notify("workspace.notSaved", { error: message });
   });
+  retitlePanels();
   persist();
 }
 
@@ -171,7 +195,7 @@ function loadSaved(api, saved) {
     }
   } catch (err) {
     api.clear();
-    workspace.notice = `The saved layout could not be restored (${String(err)}); showing the default.`;
+    notify("workspace.unrestorable", { error: String(err) });
   }
   return false;
 }
@@ -179,13 +203,13 @@ function loadSaved(api, saved) {
 /** Moves a panel into a new native window of its own. */
 export async function popOut(panel) {
   const label = newWindowLabel();
-  const seed = [{ component: panel.view.contentComponent, title: panel.title, params: panel.params ?? {} }];
+  const seed = [{ component: panel.view.contentComponent, params: panel.params ?? {} }];
   try {
     await setSetting(layoutKey(label), { version: LAYOUT_VERSION, seed });
     await invoke("open_window", { label });
     workspace.api?.removePanel(panel);
   } catch (err) {
-    workspace.notice = `Could not open a new window: ${String(err)}`;
+    notify("workspace.windowFailed", { error: String(err) });
     // The seed was for a window that never opened; nothing else removes it.
     removeSetting(layoutKey(label)).catch(() => {});
   }

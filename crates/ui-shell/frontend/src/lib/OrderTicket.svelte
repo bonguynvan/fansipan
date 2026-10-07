@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
+  import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
 
@@ -44,8 +45,11 @@
         limitPrice: orderType === "limit" ? asText(limitPrice) : null,
       });
       message = REFUSED.has(order.status)
-        ? { kind: "err", text: `${order.status === "denied" ? "Denied by risk" : "Rejected"}: ${order.reason}` }
-        : { kind: "ok", text: `#${order.id} ${side.toUpperCase()} ${quantity} ${selected} sent; live status in Orders` };
+        ? { kind: "err", text: t(order.status === "denied" ? "ticket.denied" : "ticket.rejected", { reason: order.reason }) }
+        : {
+            kind: "ok",
+            text: t("ticket.sent", { id: order.id, side: t(`side.${side}`), quantity, symbol: selected }),
+          };
     } catch (err) {
       message = { kind: "err", text: String(err) };
     } finally {
@@ -59,45 +63,45 @@
     <span class="sym">{selected ?? "—"}</span>
   </header>
 
-  <div class="sides" role="group" aria-label="Side">
-    <button class="side buy" class:active={side === "buy"} onclick={() => (side = "buy")}>Buy</button>
-    <button class="side sell" class:active={side === "sell"} onclick={() => (side = "sell")}>Sell</button>
+  <div class="sides" role="group" aria-label={t("ticket.side")}>
+    <button class="side buy" class:active={side === "buy"} onclick={() => (side = "buy")}>{t("side.buy")}</button>
+    <button class="side sell" class:active={side === "sell"} onclick={() => (side = "sell")}>{t("side.sell")}</button>
   </div>
 
   <form onsubmit={submit}>
     <label>
-      <span>Quantity</span>
+      <span>{t("ticket.quantity")}</span>
       <input class="num" type="number" min="1" step="1" bind:value={quantity} />
     </label>
 
     <label>
-      <span>Type</span>
+      <span>{t("ticket.type")}</span>
       <select bind:value={orderType} onchange={onTypeChange}>
-        <option value="market">Market</option>
-        <option value="limit">Limit</option>
+        <option value="market">{t("ticket.market")}</option>
+        <option value="limit">{t("ticket.limit")}</option>
       </select>
     </label>
 
     {#if orderType === "limit"}
       <label>
-        <span>Limit price</span>
+        <span>{t("ticket.limitPrice")}</span>
         <input class="num" type="number" min="0.01" step="0.01" bind:value={limitPrice} />
       </label>
     {/if}
 
     <dl class="summary">
       <div>
-        <dt class="dim">Reference</dt>
+        <dt class="dim">{t("ticket.reference")}</dt>
         <dd class="num">{reference ? reference.toFixed(2) : "—"}</dd>
       </div>
       <div>
-        <dt class="dim">Est. notional</dt>
+        <dt class="dim">{t("ticket.notional")}</dt>
         <dd class="num">{notional ? notional.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "—"}</dd>
       </div>
     </dl>
 
     <button class="submit {side}" type="submit" disabled={!selected || busy}>
-      {busy ? "Sending…" : `${side === "buy" ? "Buy" : "Sell"} ${selected ?? ""}`}
+      {busy ? t("ticket.sending") : t("ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
     </button>
 
     {#if message}
