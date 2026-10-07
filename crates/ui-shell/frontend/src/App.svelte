@@ -46,7 +46,7 @@
       <span class="mark" aria-hidden="true">▲</span>
       <span>Fansipan</span>
       <span class="venue dim"
-        >sim · {t("app.simulatedVenue")}{label === MAIN_WINDOW ? "" : ` · ${t("app.extraWindow")}`}</span
+        >{market.info?.title ?? ""}{label === MAIN_WINDOW ? "" : ` · ${t("app.extraWindow")}`}</span
       >
     </div>
     <div class="equity">

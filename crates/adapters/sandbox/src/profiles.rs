@@ -161,7 +161,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
 
     Ok(MarketProfile {
         id: "vn",
-        title: "Vietnam (HOSE, HNX, UPCoM)",
+        title: "Vietnam (HOSE, HNX, UPCoM), simulated",
         currency: "VND",
         starting_cash: dec(2_000_000_000, 0),
         max_order_quantity: dec(500_000, 0),
@@ -199,7 +199,7 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
 
     Ok(MarketProfile {
         id: "us",
-        title: "United States (simulated)",
+        title: "United States, simulated",
         currency: "USD",
         starting_cash: dec(100_000, 0),
         max_order_quantity: dec(1_000, 0),
