@@ -1,0 +1,11 @@
+[package]
+name = "execution-engine"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+description = "Order state machine and pre-trade risk checks; routes orders to an ExecutionClient."
+
+[dependencies]
+model = { path = "../model" }
+bus = { path = "../bus" }
+adapter-api = { path = "../adapter-api" }
