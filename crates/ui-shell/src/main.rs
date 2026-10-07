@@ -220,7 +220,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("the trading terminal stopped: {e}");
+            eprintln!("Fansipan stopped: {e}");
             ExitCode::FAILURE
         }
     }

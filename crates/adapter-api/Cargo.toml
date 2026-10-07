@@ -1,11 +1,11 @@
 [package]
-name = "adapter-api"
+name = "fansipan-adapter-api"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "The trait contract every adapter repo implements. See /docs/adapter-contract.md. Semver-stable — breaking this breaks every adapter in the ecosystem."
+description = "The trait contract every Fansipan adapter implements. See docs/adapter-contract.md. Semver-stable: breaking this breaks every adapter in the ecosystem."
 
 [dependencies]
-model = { path = "../model" }
-bus = { path = "../bus" }
+model.workspace = true
+bus.workspace = true
 serde_json = "1"

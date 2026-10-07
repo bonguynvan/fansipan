@@ -1,11 +1,11 @@
 [package]
-name = "data-engine"
+name = "fansipan-data-engine"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
 description = "Owns quote subscriptions (ref-counted, so screens can share an instrument) and caches the latest quote per instrument."
 
 [dependencies]
-model = { path = "../model" }
-bus = { path = "../bus" }
-adapter-api = { path = "../adapter-api" }
+model.workspace = true
+bus.workspace = true
+adapter-api.workspace = true

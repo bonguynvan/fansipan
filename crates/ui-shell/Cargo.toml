@@ -1,17 +1,17 @@
 [package]
-name = "ui-shell"
+name = "fansipan-shell"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
-description = "Desktop shell: wires the bus, engines, and a simulated adapter to a Tauri window."
+description = "Fansipan desktop shell: wires the bus, engines, and an adapter to a Tauri window."
 
 [dependencies]
-model = { path = "../model" }
-bus = { path = "../bus" }
-data-engine = { path = "../data-engine" }
-execution-engine = { path = "../execution-engine" }
-adapter-api = { path = "../adapter-api" }
-sandbox = { path = "../adapters/sandbox" }
+model.workspace = true
+bus.workspace = true
+data-engine.workspace = true
+execution-engine.workspace = true
+adapter-api.workspace = true
+sandbox.workspace = true
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 

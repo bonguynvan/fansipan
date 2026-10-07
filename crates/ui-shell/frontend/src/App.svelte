@@ -53,8 +53,8 @@
 <div class="terminal">
   <header>
     <div class="brand">
-      <span class="mark">◆</span>
-      <span>Trading Terminal</span>
+      <span class="mark" aria-hidden="true">▲</span>
+      <span>Fansipan</span>
       <span class="venue dim">sim · simulated venue</span>
     </div>
     <div class="equity">

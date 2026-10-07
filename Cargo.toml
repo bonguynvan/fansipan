@@ -13,3 +13,13 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "LGPL-3.0-or-later"
+
+# Published names carry the `fansipan-` prefix; inside the workspace each
+# crate is imported by its short name (`model`, `bus`, `adapter_api`, ...).
+[workspace.dependencies]
+model = { package = "fansipan-model", path = "crates/model" }
+bus = { package = "fansipan-bus", path = "crates/bus" }
+adapter-api = { package = "fansipan-adapter-api", path = "crates/adapter-api" }
+data-engine = { package = "fansipan-data-engine", path = "crates/data-engine" }
+execution-engine = { package = "fansipan-execution-engine", path = "crates/execution-engine" }
+sandbox = { package = "fansipan-sandbox", path = "crates/adapters/sandbox" }

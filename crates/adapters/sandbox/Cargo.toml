@@ -1,15 +1,15 @@
 [package]
-name = "sandbox"
+name = "fansipan-sandbox"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
-description = "Simulated market data and execution. Not a real venue: used for demos, CI, and development."
+description = "Simulated venue for Fansipan: market data and execution for demos, CI, and development. Not a real venue."
 
 [dependencies]
-model = { path = "../../model" }
-bus = { path = "../../bus" }
-adapter-api = { path = "../../adapter-api" }
+model.workspace = true
+bus.workspace = true
+adapter-api.workspace = true
 
 [dev-dependencies]
-execution-engine = { path = "../../execution-engine" }
-data-engine = { path = "../../data-engine" }
+execution-engine.workspace = true
+data-engine.workspace = true

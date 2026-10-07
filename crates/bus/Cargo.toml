@@ -1,9 +1,9 @@
 [package]
-name = "bus"
-version = "0.0.1"
+name = "fansipan-bus"
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "In-process event bus connecting data-engine, execution-engine, and the UI shell."
+description = "Fansipan's in-process event bus connecting adapters, engines, and the UI shell."
 
 [dependencies]
-model = { path = "../model" }
+model.workspace = true
