@@ -34,6 +34,7 @@ export function createSync(apply) {
         bars: [],
         instruments: snap.instruments ?? [],
         boards: snap.boards ?? [],
+        connections: snap.connections ?? [],
       });
       lastSeq = snap.seq;
       synced = true;

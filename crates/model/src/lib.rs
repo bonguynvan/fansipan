@@ -6,6 +6,7 @@
 //! drift. See /docs/adr/0001-decimal-money.md.
 
 mod account;
+mod connection;
 mod ids;
 mod market;
 mod order;
@@ -14,6 +15,7 @@ mod rules;
 pub use rust_decimal::Decimal;
 
 pub use account::{AccountState, Position};
+pub use connection::{Connection, ConnectionState, ConnectionStatus};
 pub use ids::{ClientOrderId, FillId, InstrumentId, UnixNanos, VenueOrderId};
 pub use market::{Quote, Trade};
 pub use order::{

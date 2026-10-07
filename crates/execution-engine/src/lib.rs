@@ -11,8 +11,8 @@ use std::fmt;
 use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
 use model::{
-    CancelOrder, ClientOrderId, Decimal, ExecutionReport, FillId, InstrumentId, InstrumentInfo,
-    NewOrder, Order, OrderEvent, OrderStatus, PriceBand, SubmitOrder,
+    CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal, ExecutionReport, FillId,
+    InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent, OrderStatus, PriceBand, SubmitOrder,
 };
 
 pub use lifecycle::TransitionError;
@@ -75,6 +75,7 @@ pub struct ExecutionEngine {
     /// Market rules as the adapter published them, for risk.
     instruments: HashMap<InstrumentId, InstrumentInfo>,
     bands: HashMap<InstrumentId, PriceBand>,
+    connection: Option<ConnectionStatus>,
 }
 
 impl ExecutionEngine {
@@ -86,6 +87,7 @@ impl ExecutionEngine {
             next_id: 1,
             instruments: HashMap::new(),
             bands: HashMap::new(),
+            connection: None,
         }
     }
 
@@ -99,8 +101,12 @@ impl ExecutionEngine {
         self.bands.insert(band.instrument.clone(), band);
     }
 
+    /// A connect that succeeds means up (the contract), so a report from
+    /// before it, such as the `Down` of an earlier disconnect, no longer holds.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
-        self.client.connect(bus)
+        self.client.connect(bus)?;
+        self.connection = None;
+        Ok(())
     }
 
     /// Creates an order, runs risk, and hands it to the adapter if risk
@@ -225,12 +231,28 @@ impl ExecutionEngine {
     pub fn orders(&self) -> impl Iterator<Item = &Order> {
         self.orders.values().map(|t| &t.order)
     }
+
+    /// Records a report on the orders connection; returns whether kept.
+    /// Reports on the adapter's other connections are not this engine's.
+    pub fn on_connection(&mut self, status: &ConnectionStatus) -> bool {
+        if status.connection != Connection::Orders {
+            return false;
+        }
+        self.connection = Some(status.clone());
+        true
+    }
+
+    /// The orders connection as last reported. `None` means no report since
+    /// `connect` succeeded, which the contract defines as up.
+    pub fn connection(&self) -> Option<&ConnectionStatus> {
+        self.connection.as_ref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{AccountState, InstrumentId, Side, UnixNanos, VenueOrderId};
+    use model::{AccountState, ConnectionState, InstrumentId, Side, UnixNanos, VenueOrderId};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -507,5 +529,34 @@ mod tests {
             engine.order(id).map(|o| o.status),
             Some(OrderStatus::Submitted)
         );
+    }
+
+    #[test]
+    fn keeps_the_latest_orders_connection_report_and_no_other() {
+        let (mut engine, _) = engine();
+        assert_eq!(engine.connection(), None);
+        let down = ConnectionStatus::new(Connection::Orders, ConnectionState::Down, UnixNanos(1))
+            .with_detail("keys refused");
+        let data = ConnectionStatus::new(
+            Connection::MarketData,
+            ConnectionState::Degraded,
+            UnixNanos(2),
+        );
+
+        assert!(engine.on_connection(&down));
+        assert!(!engine.on_connection(&data));
+
+        assert_eq!(engine.connection(), Some(&down));
+    }
+
+    #[test]
+    fn connecting_again_forgets_the_last_report() {
+        let (mut engine, _) = engine();
+        let down = ConnectionStatus::new(Connection::Orders, ConnectionState::Down, UnixNanos(1));
+        engine.on_connection(&down);
+
+        engine.connect(bus::Bus::new().handle()).unwrap();
+
+        assert_eq!(engine.connection(), None);
     }
 }

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { market, startMarket } from "./lib/market.svelte.js";
+  import { connectionLines, summarize } from "./lib/connection.js";
   import { flushLinks, startLinks } from "./lib/links.svelte.js";
   import { mark, money } from "./lib/format.js";
   import { registerBuiltins } from "./workspace/builtins.js";
@@ -38,6 +39,21 @@
         0,
       ),
   );
+
+  const connectionText = ({ connection, state }) =>
+    connection
+      ? t(`app.connectionState.${state}`, { connection: t(`app.connection.${connection}`) })
+      : t(`app.venueState.${state}`);
+  const connection = $derived(summarize(market.connections));
+  const status = $derived(
+    !market.ready ? t("app.connecting") : connection.state === "up" ? t("app.live") : connectionText(connection),
+  );
+  // Every connection, with the adapter's own words when it gave any.
+  const statusDetail = $derived(
+    connectionLines(market.connections)
+      .map((line) => connectionText(line) + (line.detail ? ` (${line.detail})` : ""))
+      .join("\n"),
+  );
 </script>
 
 <div class="terminal">
@@ -56,8 +72,8 @@
     <div class="tools">
       <WorkspaceMenu />
       <LocalePicker />
-      <div class="status" class:live={market.ready}>
-        <span class="dot"></span>{market.ready ? t("app.live") : t("app.connecting")}
+      <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
+        <span class="dot"></span>{status}
       </div>
     </div>
   </header>
@@ -137,13 +153,43 @@
     background: var(--text-dim);
   }
 
-  .status.live {
-    color: var(--up);
+  .status.up {
+    --tone: var(--up);
   }
 
-  .status.live .dot {
-    background: var(--up);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 25%, transparent);
+  .status.degraded,
+  .status.unknown,
+  .status.reconnecting {
+    --tone: var(--accent);
+  }
+
+  .status.down {
+    --tone: var(--down);
+  }
+
+  .status:not(.connecting) {
+    color: var(--tone);
+  }
+
+  .status:not(.connecting) .dot {
+    background: var(--tone);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 25%, transparent);
+  }
+
+  .status.reconnecting .dot {
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status.reconnecting .dot {
+      animation: none;
+    }
   }
 
   main {

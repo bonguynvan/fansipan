@@ -52,4 +52,16 @@ describe("createSync", () => {
     expect(received[0].boards).toEqual([{ symbol: "VNM" }]);
     expect(received[1].instruments).toEqual([]);
   });
+
+  it("hands on the snapshot's connections as a batch", () => {
+    const received = [];
+    const sync = createSync((b) => received.push(b));
+    const orders = { connection: "orders", state: "reconnecting", detail: "stream closed" };
+
+    sync.snapshot({ ...snapshot(1), connections: [orders] });
+    sync.snapshot(snapshot(2));
+
+    expect(received[0].connections).toEqual([orders]);
+    expect(received[1].connections).toEqual([]);
+  });
 });

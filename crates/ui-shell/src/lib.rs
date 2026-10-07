@@ -26,13 +26,16 @@ use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
 use data_engine::DataEngine;
 use execution_engine::ExecutionEngine;
-use model::{AccountState, ClientOrderId, Decimal, InstrumentId, NewOrder, Side};
+use model::{AccountState, ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
-use dto::{AccountDto, BarDto, BoardDto, InstrumentDto, MarketDto, OrderDto, QuoteDto, Snapshot};
+use dto::{
+    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, MarketDto, OrderDto, QuoteDto,
+    Snapshot,
+};
 
 const EVENT_NAME: &str = "bus-batch";
 /// How often conflated changes go to the front end: fast enough that an
@@ -186,7 +189,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     // from `pending` before the state below was read, so it holds nothing
     // newer than this snapshot and the front end can drop it.
     let seq = shell.flushed.load(Ordering::SeqCst);
-    let (instruments, boards, quotes) = {
+    let (instruments, boards, quotes, data_connection) = {
         let data = lock(&shell.data)?;
         let known: BTreeSet<&InstrumentId> = data
             .instruments()
@@ -200,9 +203,16 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
                 .map(|id| BoardDto::of(&data, id))
                 .collect(),
             data.quotes().map(QuoteDto::from).collect(),
+            ConnectionDto::of(Connection::MarketData, data.connection()),
         )
     };
-    let orders = lock(&shell.exec)?.orders().map(OrderDto::from).collect();
+    let (orders, orders_connection) = {
+        let exec = lock(&shell.exec)?;
+        (
+            exec.orders().map(OrderDto::from).collect(),
+            ConnectionDto::of(Connection::Orders, exec.connection()),
+        )
+    };
     let account = AccountDto::from(&*lock(&shell.account)?);
     Ok(Snapshot {
         seq,
@@ -212,6 +222,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         quotes,
         orders,
         account,
+        connections: vec![data_connection, orders_connection],
     })
 }
 
@@ -370,6 +381,13 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
         Event::AccountUpdate(account) => {
             *lock(&shell.account)? = account.clone();
             lock(&shell.pending)?.account(AccountDto::from(account));
+        }
+        // Each engine keeps the status of its own connection.
+        Event::Connection(status) => {
+            let kept_by_data = lock(&shell.data)?.on_connection(status);
+            if kept_by_data || lock(&shell.exec)?.on_connection(status) {
+                lock(&shell.pending)?.connection(ConnectionDto::from(status));
+            }
         }
         _ => {}
     }
@@ -541,6 +559,7 @@ mod tests {
             bars: vec![],
             instruments: vec![],
             boards: vec![],
+            connections: vec![],
         })
     }
 
@@ -743,5 +762,31 @@ mod tests {
 
         assert_eq!(venue.instruments().len(), before + 1);
         assert_eq!(venue.id(), VENUE);
+    }
+
+    #[test]
+    fn a_connection_report_reaches_the_batch_and_the_snapshot() {
+        let shell = shell();
+        let lost = model::ConnectionStatus::new(
+            Connection::Orders,
+            model::ConnectionState::Reconnecting,
+            UnixNanos(1),
+        )
+        .with_detail("stream closed");
+
+        route(&shell, &Event::Connection(lost)).unwrap();
+
+        let reported = ConnectionDto {
+            connection: "orders",
+            state: "reconnecting",
+            detail: Some("stream closed".into()),
+        };
+        assert_eq!(take_pending(&shell).connections, vec![reported.clone()]);
+        let up = ConnectionDto {
+            connection: "marketData",
+            state: "up",
+            detail: None,
+        };
+        assert_eq!(snapshot_of(&shell).unwrap().connections, vec![up, reported]);
     }
 }

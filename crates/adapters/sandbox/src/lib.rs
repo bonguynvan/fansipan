@@ -20,7 +20,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{BusHandle, Event};
-use model::{AccountState, CancelOrder, InstrumentId, SubmitOrder, UnixNanos};
+use model::{
+    AccountState, CancelOrder, Connection, ConnectionState, ConnectionStatus, InstrumentId,
+    SubmitOrder, UnixNanos,
+};
 
 pub use profiles::MarketProfile;
 pub use venue::{Listing, SimVenue, Tick, DEPTH_LEVELS, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
@@ -93,6 +96,7 @@ impl DataClient for SandboxDataClient {
                     beat.run(&mut state, now());
                     thread::sleep(TICK_INTERVAL);
                 }
+                bus.publish(down(Connection::MarketData));
             })
             .map(drop)
             .map_err(|e| {
@@ -244,7 +248,9 @@ impl ExecutionClient for SandboxExecutionClient {
     }
 
     fn disconnect(&mut self) -> Result<(), AdapterError> {
-        self.bus = None;
+        if let Some(bus) = self.bus.take() {
+            bus.publish(down(Connection::Orders));
+        }
         Ok(())
     }
 }
@@ -256,6 +262,15 @@ fn now() -> UnixNanos {
     UnixNanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
+/// A disconnect core asked for: down, and not coming back on its own.
+fn down(connection: Connection) -> Event {
+    Event::Connection(ConnectionStatus::new(
+        connection,
+        ConnectionState::Down,
+        now(),
+    ))
+}
+
 fn not_connected() -> AdapterError {
     AdapterError::fatal("sandbox: not connected")
 }
@@ -265,6 +280,7 @@ mod tests {
     use super::*;
     use model::{ClientOrderId, Decimal, Side};
     use std::sync::mpsc;
+    use std::time::Instant;
 
     struct ChannelBus(mpsc::Sender<Event>);
 
@@ -463,6 +479,51 @@ mod tests {
 
         assert!(
             matches!(rx.try_recv(), Ok(Event::AccountUpdate(a)) if a.cash == Decimal::from(1_000))
+        );
+    }
+
+    fn connection_reports(
+        events: impl Iterator<Item = Event>,
+    ) -> Vec<(Connection, ConnectionState)> {
+        events
+            .filter_map(|e| match e {
+                Event::Connection(status) => Some((status.connection, status.state)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn disconnecting_the_execution_client_reports_its_connection_down() {
+        let mut client = SandboxExecutionClient::new(listed(&["AAA"]));
+        let (tx, rx) = mpsc::channel();
+        client.connect(Box::new(ChannelBus(tx))).unwrap();
+
+        client.disconnect().unwrap();
+        client.disconnect().unwrap();
+
+        assert_eq!(
+            connection_reports(rx.try_iter()),
+            vec![(Connection::Orders, ConnectionState::Down)]
+        );
+    }
+
+    #[test]
+    fn disconnecting_the_data_client_reports_its_feed_down_once_the_beat_stops() {
+        let mut client = SandboxDataClient::new(listed(&["AAA"]));
+        let (tx, rx) = mpsc::channel();
+        client.connect(Box::new(ChannelBus(tx))).unwrap();
+
+        client.disconnect().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let reports = connection_reports(std::iter::from_fn(|| {
+            rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .ok()
+        }));
+        assert_eq!(
+            reports,
+            vec![(Connection::MarketData, ConnectionState::Down)]
         );
     }
 }

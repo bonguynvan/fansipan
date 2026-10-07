@@ -13,6 +13,9 @@
 //! Reference data (instrument definitions, today's price bands) is kept for
 //! every instrument the adapter publishes, subscribed or not: it is small,
 //! and screens need it before they subscribe.
+//!
+//! The engine also holds the market-data connection's status as the adapter
+//! last reported it, so a screen can tell a quiet market from a dead feed.
 
 mod bars;
 mod session;
@@ -22,7 +25,9 @@ use std::time::Duration;
 
 use adapter_api::{AdapterError, DataClient};
 use bus::BusHandle;
-use model::{Depth, InstrumentId, InstrumentInfo, PriceBand, Quote, Trade};
+use model::{
+    Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote, Trade,
+};
 
 pub use bars::{Bar, BarSeries};
 pub use session::SessionStats;
@@ -42,6 +47,7 @@ pub struct DataEngine {
     bands: HashMap<InstrumentId, PriceBand>,
     depth: HashMap<InstrumentId, Depth>,
     stats: HashMap<InstrumentId, SessionStats>,
+    connection: Option<ConnectionStatus>,
 }
 
 /// Takes one reference; true if it is the first, so the adapter must be told.
@@ -80,6 +86,7 @@ impl DataEngine {
             bands: HashMap::new(),
             depth: HashMap::new(),
             stats: HashMap::new(),
+            connection: None,
         }
     }
 
@@ -93,8 +100,12 @@ impl DataEngine {
         }
     }
 
+    /// A connect that succeeds means up (the contract), so a report from
+    /// before it, such as the `Down` of an earlier disconnect, no longer holds.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
-        self.client.connect(bus)
+        self.client.connect(bus)?;
+        self.connection = None;
+        Ok(())
     }
 
     pub fn subscribe_quotes(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
@@ -231,12 +242,28 @@ impl DataEngine {
     pub fn quotes(&self) -> impl Iterator<Item = &Quote> {
         self.latest.values()
     }
+
+    /// Records a report on the market-data connection; returns whether kept.
+    /// Reports on the adapter's other connections are not this engine's.
+    pub fn on_connection(&mut self, status: &ConnectionStatus) -> bool {
+        if status.connection != Connection::MarketData {
+            return false;
+        }
+        self.connection = Some(status.clone());
+        true
+    }
+
+    /// The market-data connection as last reported. `None` means no report
+    /// since `connect` succeeded, which the contract defines as up.
+    pub fn connection(&self) -> Option<&ConnectionStatus> {
+        self.connection.as_ref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{Decimal, UnixNanos};
+    use model::{ConnectionState, Decimal, UnixNanos};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -537,5 +564,37 @@ mod tests {
         engine.unsubscribe_quotes(&id("AAA")).unwrap();
 
         assert!(calls.lock().unwrap().unsubscribed.is_empty());
+    }
+
+    #[test]
+    fn keeps_the_latest_market_data_connection_report_and_no_other() {
+        let (mut engine, _) = engine();
+        assert_eq!(engine.connection(), None);
+        let lost = ConnectionStatus::new(
+            Connection::MarketData,
+            ConnectionState::Reconnecting,
+            UnixNanos(1),
+        )
+        .with_detail("stream closed");
+        let back = ConnectionStatus::new(Connection::MarketData, ConnectionState::Up, UnixNanos(2));
+        let orders = ConnectionStatus::new(Connection::Orders, ConnectionState::Down, UnixNanos(3));
+
+        assert!(engine.on_connection(&lost));
+        assert!(engine.on_connection(&back));
+        assert!(!engine.on_connection(&orders));
+
+        assert_eq!(engine.connection(), Some(&back));
+    }
+
+    #[test]
+    fn connecting_again_forgets_the_last_report() {
+        let (mut engine, _) = engine();
+        let down =
+            ConnectionStatus::new(Connection::MarketData, ConnectionState::Down, UnixNanos(1));
+        engine.on_connection(&down);
+
+        engine.connect(bus::Bus::new().handle()).unwrap();
+
+        assert_eq!(engine.connection(), None);
     }
 }

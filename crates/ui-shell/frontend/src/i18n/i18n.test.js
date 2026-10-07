@@ -81,6 +81,16 @@ describe("catalogs", () => {
     expect(ids.filter((id) => !(id in english))).toEqual([]);
   });
 
+  it("every connection and connection state has a label", () => {
+    const states = ["up", "degraded", "reconnecting", "down", "unknown"];
+    const ids = ["marketData", "orders", "unknown"]
+      .map((connection) => `app.connection.${connection}`)
+      .concat(states.map((state) => `app.connectionState.${state}`))
+      .concat(states.filter((state) => state !== "up").map((state) => `app.venueState.${state}`));
+
+    expect(ids.filter((id) => !(id in english))).toEqual([]);
+  });
+
   it("are named by valid language tags", () => {
     expect(Object.keys(catalogs).filter((locale) => !isLocaleTag(locale))).toEqual([]);
   });

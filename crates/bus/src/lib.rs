@@ -3,7 +3,9 @@
 
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
-use model::{AccountState, Depth, ExecutionReport, InstrumentInfo, PriceBand, Quote, Trade};
+use model::{
+    AccountState, ConnectionStatus, Depth, ExecutionReport, InstrumentInfo, PriceBand, Quote, Trade,
+};
 
 /// Everything an adapter can tell core. There is deliberately no variant
 /// carrying an [`model::Order`]: adapters report what the venue said, and the
@@ -24,6 +26,8 @@ pub enum Event {
     PriceBand(PriceBand),
     /// Top levels of the book, for venues that publish depth.
     Depth(Depth),
+    /// One of the adapter's connections changed: lost, degraded, back.
+    Connection(ConnectionStatus),
 }
 
 /// Handle an adapter uses to push events onto the bus.

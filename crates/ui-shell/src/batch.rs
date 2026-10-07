@@ -2,15 +2,15 @@
 //!
 //! A feed can produce thousands of events a second; a screen shows one state
 //! per frame. Between flushes only the latest quote, board row, and
-//! instrument per symbol and the latest state per order survive, and each
-//! changed bar is kept once, so the webview receives a bounded number of
-//! messages whatever the feed rate.
+//! instrument per symbol, the latest state per order and per connection
+//! survive, and each changed bar is kept once, so the webview receives a
+//! bounded number of messages whatever the feed rate.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::dto::{AccountDto, BarDto, BoardDto, InstrumentDto, OrderDto, QuoteDto};
+use crate::dto::{AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, QuoteDto};
 
 #[derive(Default)]
 pub struct Batch {
@@ -20,6 +20,7 @@ pub struct Batch {
     bars: BTreeMap<(String, u64), BarDto>,
     instruments: BTreeMap<String, InstrumentDto>,
     boards: BTreeMap<String, BoardDto>,
+    connections: BTreeMap<&'static str, ConnectionDto>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -35,6 +36,7 @@ pub struct BatchDto {
     pub bars: Vec<BarDto>,
     pub instruments: Vec<InstrumentDto>,
     pub boards: Vec<BoardDto>,
+    pub connections: Vec<ConnectionDto>,
 }
 
 impl Batch {
@@ -66,6 +68,10 @@ impl Batch {
         self.boards.insert(board.symbol.clone(), board);
     }
 
+    pub fn connection(&mut self, connection: ConnectionDto) {
+        self.connections.insert(connection.connection, connection);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.quotes.is_empty()
             && self.orders.is_empty()
@@ -73,6 +79,7 @@ impl Batch {
             && self.bars.is_empty()
             && self.instruments.is_empty()
             && self.boards.is_empty()
+            && self.connections.is_empty()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -84,6 +91,7 @@ impl Batch {
             bars: self.bars.into_values().collect(),
             instruments: self.instruments.into_values().collect(),
             boards: self.boards.into_values().collect(),
+            connections: self.connections.into_values().collect(),
         }
     }
 }

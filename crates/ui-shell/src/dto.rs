@@ -7,7 +7,8 @@
 
 use data_engine::{Bar, DataEngine};
 use model::{
-    AccountState, BookLevel, Decimal, InstrumentId, InstrumentInfo, Order, OrderStatus, Quote, Side,
+    AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
+    InstrumentInfo, Order, OrderStatus, Quote, Side,
 };
 use serde::Serialize;
 
@@ -22,6 +23,8 @@ pub struct Snapshot {
     pub quotes: Vec<QuoteDto>,
     pub orders: Vec<OrderDto>,
     pub account: AccountDto,
+    /// Both of the venue's connections.
+    pub connections: Vec<ConnectionDto>,
 }
 
 /// Which market the terminal is wired to, so the front end can pick
@@ -279,6 +282,55 @@ fn status_label(status: OrderStatus) -> &'static str {
         OrderStatus::Cancelled => "cancelled",
         OrderStatus::Rejected => "rejected",
         OrderStatus::Denied => "denied",
+        _ => "unknown",
+    }
+}
+
+/// One of the venue's connections, for the status badge.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectionDto {
+    /// "marketData" or "orders".
+    pub connection: &'static str,
+    /// "up", "degraded", "reconnecting", "down", or "unknown" for a state
+    /// this shell has no name for.
+    pub state: &'static str,
+    pub detail: Option<String>,
+}
+
+impl ConnectionDto {
+    /// As last reported, or up if nothing was reported since `connect`.
+    pub fn of(connection: Connection, status: Option<&ConnectionStatus>) -> Self {
+        status.map_or(
+            Self {
+                connection: connection_label(connection),
+                state: "up",
+                detail: None,
+            },
+            Self::from,
+        )
+    }
+}
+
+impl From<&ConnectionStatus> for ConnectionDto {
+    fn from(status: &ConnectionStatus) -> Self {
+        Self {
+            connection: connection_label(status.connection),
+            state: match status.state {
+                ConnectionState::Up => "up",
+                ConnectionState::Degraded => "degraded",
+                ConnectionState::Reconnecting => "reconnecting",
+                ConnectionState::Down => "down",
+                _ => "unknown",
+            },
+            detail: status.detail.clone(),
+        }
+    }
+}
+
+fn connection_label(connection: Connection) -> &'static str {
+    match connection {
+        Connection::MarketData => "marketData",
+        Connection::Orders => "orders",
         _ => "unknown",
     }
 }
