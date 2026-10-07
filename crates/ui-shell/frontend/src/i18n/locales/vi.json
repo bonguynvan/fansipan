@@ -46,7 +46,7 @@
   "screen.order-ticket.title": "Đặt lệnh",
   "screen.order-ticket.description": "Mua hoặc bán mã đang liên kết; kiểm tra rủi ro chạy trước khi lệnh tới sàn.",
   "screen.orders.title": "Sổ lệnh",
-  "screen.orders.description": "Mọi lệnh trong phiên: khớp, trạng thái, lý do và hủy lệnh.",
+  "screen.orders.description": "Mọi lệnh trong phiên: khớp, trạng thái, lý do, sửa và hủy lệnh.",
   "screen.account.title": "Tài khoản",
   "screen.account.description": "Tiền và vị thế theo báo cáo của sàn, kèm lãi/lỗ trực tiếp.",
   "screen.price-board.title": "Bảng giá",

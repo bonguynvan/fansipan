@@ -46,7 +46,7 @@
   "screen.order-ticket.title": "Order ticket",
   "screen.order-ticket.description": "Buy or sell the linked symbol; risk checks run before the venue sees it.",
   "screen.orders.title": "Orders",
-  "screen.orders.description": "Every order this session, with fills, status, reason, and cancel.",
+  "screen.orders.description": "Every order this session, with fills, status, reason, amend, and cancel.",
   "screen.account.title": "Account",
   "screen.account.description": "Cash and positions as the venue reports them, with live P&L.",
   "screen.price-board.title": "Price board",
