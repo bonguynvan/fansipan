@@ -355,3 +355,24 @@ fn a_limit_order_after_the_close_fills_only_at_its_price_or_better() {
     assert!(fills(&under, 1).is_empty() && !ended(&under, 1));
     assert_eq!(fills(&over, 2), vec![(d("100"), d("13600"))]);
 }
+
+#[test]
+fn the_venue_tells_a_new_connection_every_markets_session() {
+    let venue = venue();
+    advance(&venue, at(ATO));
+
+    let announced = venue.sessions(at(ATO + 5));
+
+    assert_eq!(
+        sessions(&announced),
+        vec![
+            (
+                "HOSE".into(),
+                SessionPhase::OpeningAuction,
+                Some("ATO".into())
+            ),
+            ("HNX".into(), SessionPhase::Continuous, None),
+            ("UPCOM".into(), SessionPhase::Continuous, None),
+        ]
+    );
+}

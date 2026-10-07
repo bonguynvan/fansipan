@@ -97,6 +97,27 @@ impl SimVenue {
         self
     }
 
+    /// Every scheduled market's session as the venue holds it now, as a feed
+    /// announces it at connect.
+    pub fn sessions(&self, now: UnixNanos) -> Vec<Event> {
+        let state = self.state();
+        let Some(day) = &state.day else {
+            return Vec::new();
+        };
+        day.markets
+            .iter()
+            .filter_map(|market| {
+                let index = state
+                    .phases
+                    .get(&market.market)
+                    .copied()
+                    .or_else(|| day.phase_index(market, now))?;
+                let phase = market.phases.get(index)?;
+                Some(Event::Session(phase.session(&market.market, now)))
+            })
+            .collect()
+    }
+
     /// Moves each scheduled market to its phase at `now`, and sends what
     /// that did to `sink`: an ended auction's fills, the close's cancels,
     /// and the new session. Call it before each beat's prices move.

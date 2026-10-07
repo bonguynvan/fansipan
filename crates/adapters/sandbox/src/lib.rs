@@ -162,9 +162,10 @@ struct Beat<'a> {
 }
 
 impl Beat<'_> {
-    /// The first beat announces every listing's rules and today's band.
-    /// Every beat then moves each market to its phase of the day, which
-    /// publishes its session when it changes. Newly quote-subscribed
+    /// The first beat announces every listing's rules, today's band, and
+    /// each market's session, so a connection that comes after another
+    /// learns them again. Every beat then moves each market to its phase of
+    /// the day, which publishes its session when it changes. Newly quote-subscribed
     /// instruments get their made-up history. Then every listed instrument
     /// in continuous trading takes a random step: quotes and depth go out
     /// for quote subscriptions, prints for trade subscriptions, fills for
@@ -176,6 +177,7 @@ impl Beat<'_> {
             self.venue
                 .reference_data(now)
                 .into_iter()
+                .chain(self.venue.sessions(now))
                 .for_each(|event| self.bus.publish(event));
         }
         self.venue

@@ -112,10 +112,13 @@ impl ExecutionEngine {
     }
 
     /// A connect that succeeds means up (the contract), so a report from
-    /// before it, such as the `Down` of an earlier disconnect, no longer holds.
+    /// before it, such as the `Down` of an earlier disconnect, no longer
+    /// holds; nor do the sessions of the last connection, which the adapter
+    /// publishes again.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
         self.client.connect(bus)?;
         self.connection = None;
+        self.sessions.clear();
         Ok(())
     }
 
@@ -589,5 +592,26 @@ mod tests {
             Some("HOSE is in a break and takes no orders now")
         );
         assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    #[test]
+    fn connecting_again_forgets_the_last_connections_sessions() {
+        let (mut engine, calls) = engine();
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(
+            InstrumentInfo::new(InstrumentId::new("sim", "AAA"), Decimal::ONE, ticks)
+                .with_exchange("HOSE"),
+        );
+        engine.set_session(model::SessionStatus::new(
+            "HOSE",
+            model::SessionPhase::Closed,
+            UnixNanos(0),
+        ));
+
+        engine.connect(bus::Bus::new().handle()).unwrap();
+        let order = engine.submit(buy("1"));
+
+        assert_eq!(order.status, OrderStatus::Submitted);
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
     }
 }

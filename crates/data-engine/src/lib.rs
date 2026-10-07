@@ -105,10 +105,13 @@ impl DataEngine {
     }
 
     /// A connect that succeeds means up (the contract), so a report from
-    /// before it, such as the `Down` of an earlier disconnect, no longer holds.
+    /// before it, such as the `Down` of an earlier disconnect, no longer
+    /// holds; nor do the sessions of the last connection, which the adapter
+    /// publishes again.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
         self.client.connect(bus)?;
         self.connection = None;
+        self.sessions.clear();
         Ok(())
     }
 
@@ -635,5 +638,19 @@ mod tests {
                 ("HOSE", model::SessionPhase::ClosingAuction)
             ]
         );
+    }
+
+    #[test]
+    fn connecting_again_forgets_the_last_connections_sessions() {
+        let (mut engine, _) = engine();
+        engine.on_session(&SessionStatus::new(
+            "HOSE",
+            model::SessionPhase::Continuous,
+            UnixNanos(1),
+        ));
+
+        engine.connect(bus::Bus::new().handle()).unwrap();
+
+        assert_eq!(engine.sessions().count(), 0);
     }
 }
