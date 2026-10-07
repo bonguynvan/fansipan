@@ -51,6 +51,14 @@ struct Resting {
     reserve: Decimal,
 }
 
+/// Shares bought that have not settled yet.
+struct Unsettled {
+    instrument: InstrumentId,
+    quantity: Decimal,
+    /// The trading day they settle on.
+    settles_on: u64,
+}
+
 struct VenueState {
     books: BTreeMap<InstrumentId, Book>,
     resting: Vec<Resting>,
@@ -65,6 +73,8 @@ struct VenueState {
     phases: BTreeMap<String, usize>,
     /// Each instrument's price at its last closing auction.
     closes: BTreeMap<InstrumentId, Decimal>,
+    /// Bought shares still settling; only kept when the venue has a day.
+    unsettled: Vec<Unsettled>,
 }
 
 /// Cheap to clone; every clone is the same venue.
@@ -86,6 +96,7 @@ impl SimVenue {
                 day: None,
                 phases: BTreeMap::new(),
                 closes: BTreeMap::new(),
+                unsettled: Vec::new(),
             })),
         }
     }
@@ -336,11 +347,30 @@ impl SimVenue {
     }
 }
 
+/// Shares of `instrument` bought and not settled yet.
+fn unsettled_in(state: &VenueState, instrument: &InstrumentId) -> Decimal {
+    state
+        .unsettled
+        .iter()
+        .filter(|lot| &lot.instrument == instrument)
+        .map(|lot| lot.quantity)
+        .sum()
+}
+
+/// The account as the venue reports it. With a trading day, each position
+/// says how much of it has settled.
 fn account_of(state: &VenueState) -> AccountState {
-    AccountState {
-        cash: state.cash,
-        positions: state.positions.values().cloned().collect(),
-    }
+    let positions = state
+        .positions
+        .values()
+        .map(|position| match state.day {
+            Some(_) => position.clone().with_settled(
+                (position.quantity - unsettled_in(state, &position.instrument)).max(Decimal::ZERO),
+            ),
+            None => position.clone(),
+        })
+        .collect();
+    AccountState::new(state.cash, positions)
 }
 
 fn report(order_id: ClientOrderId, event: OrderEvent, now: UnixNanos) -> Event {

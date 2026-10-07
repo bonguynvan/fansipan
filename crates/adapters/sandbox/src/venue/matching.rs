@@ -15,7 +15,7 @@ use model::{
 };
 
 use super::listing::{Listing, TOP_OF_BOOK_SIZE};
-use super::{account_of, report, Resting, VenueState};
+use super::{account_of, report, unsettled_in, Resting, Unsettled, VenueState};
 
 const AVG_PRICE_DP: u32 = 8;
 
@@ -100,6 +100,14 @@ pub(super) fn submit_locked(
     let market = book.listing.info.exchange.clone();
     if let Some(reason) = type_refusal(state, &market, &order, now) {
         return reject(reason);
+    }
+    if order.side == Side::Sell && !book.listing.info.short_selling {
+        let sellable = sellable(state, &order.instrument);
+        if order.quantity > sellable {
+            return reject(format!(
+                "not enough settled shares: {sellable} can be sold now"
+            ));
+        }
     }
     let quote = book.quote(&order.instrument, now);
     let display_size = book.listing.display_size;
@@ -221,6 +229,21 @@ fn trade_now(
     events
 }
 
+/// Settled shares of `instrument` not already in a resting sell order.
+fn sellable(state: &VenueState, instrument: &InstrumentId) -> Decimal {
+    let held = state
+        .positions
+        .get(instrument)
+        .map_or(Decimal::ZERO, |p| p.quantity);
+    let resting: Decimal = state
+        .resting
+        .iter()
+        .filter(|r| &r.order.instrument == instrument && r.order.side == Side::Sell)
+        .map(|r| r.remaining)
+        .sum();
+    (held - unsettled_in(state, instrument) - resting).max(Decimal::ZERO)
+}
+
 /// The price a taker on `side` trades at.
 fn touch_price(quote: &Quote, side: Side) -> Decimal {
     match side {
@@ -310,6 +333,16 @@ pub(super) fn fill(
         Some(position) => state.positions.insert(order.instrument.clone(), position),
         None => state.positions.remove(&order.instrument),
     };
+    if order.side == Side::Buy {
+        if let Some(day) = &state.day {
+            let settles_on = day.trading_day(now) + day.settlement_days;
+            state.unsettled.push(Unsettled {
+                instrument: order.instrument.clone(),
+                quantity,
+                settles_on,
+            });
+        }
+    }
 
     let fill_id = FillId(format!("SIM-F{}", state.next_fill_id));
     state.next_fill_id += 1;
@@ -352,9 +385,5 @@ fn net_position(
     } else {
         avg
     };
-    Some(Position {
-        instrument: instrument.clone(),
-        quantity: next,
-        avg_price,
-    })
+    Some(Position::new(instrument.clone(), next, avg_price))
 }

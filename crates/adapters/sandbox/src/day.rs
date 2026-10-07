@@ -14,6 +14,10 @@ const NANOS_PER_SECOND: u64 = 1_000_000_000;
 /// as 0.
 const EPOCH_WEEKDAY: i64 = 3;
 const SATURDAY: i64 = 5;
+/// Weekdays among the first `n` days of a week that starts on a Thursday,
+/// as the epoch's weeks do: Thursday, Friday, Saturday, Sunday, Monday,
+/// Tuesday, Wednesday.
+const WEEKDAYS_FROM_THURSDAY: [i64; 7] = [0, 1, 2, 2, 2, 3, 4];
 
 /// The demo day: seconds into a 15-minute cycle, and the local time (in
 /// minutes after midnight) it stands for. Each trading phase lasts long
@@ -106,6 +110,27 @@ impl Clock {
             }
         }
     }
+
+    /// Trading days since the clock's epoch at `now`: weekdays on a real
+    /// clock (a weekend counts as the Monday after it), demo cycles on a
+    /// compressed one. Settlement counts in these.
+    fn trading_day(self, now: UnixNanos) -> u64 {
+        match self {
+            Self::Real { utc_offset_minutes } => {
+                let seconds = i64::try_from(now.0 / NANOS_PER_SECOND).unwrap_or(i64::MAX);
+                let local = seconds.saturating_add(i64::from(utc_offset_minutes) * 60);
+                let day = local.div_euclid(SECONDS_PER_DAY);
+                let weekdays = day.div_euclid(7) * 5
+                    + WEEKDAYS_FROM_THURSDAY[usize::try_from(day.rem_euclid(7)).unwrap_or(0)];
+                u64::try_from(weekdays).unwrap_or(0)
+            }
+            Self::Compressed { start } => {
+                let cycle = DEMO_DAY[DEMO_DAY.len() - 1].0;
+                let elapsed = now.0.saturating_sub(start.0) / NANOS_PER_SECOND;
+                (elapsed + DEMO_START_SECONDS) / cycle
+            }
+        }
+    }
 }
 
 /// The local time a point in the demo cycle stands for.
@@ -125,6 +150,9 @@ fn demo_minute(second: u64) -> u32 {
 pub struct TradingDay {
     pub clock: Clock,
     pub markets: Vec<MarketDay>,
+    /// Trading days until shares bought settle and can be sold: two in
+    /// Vietnam (T+2).
+    pub settlement_days: u64,
 }
 
 impl TradingDay {
@@ -133,6 +161,11 @@ impl TradingDay {
     pub fn phase(&self, market: &str, now: UnixNanos) -> Option<&Phase> {
         let day = self.markets.iter().find(|day| day.market == market)?;
         day.phases.get(self.phase_index(day, now)?)
+    }
+
+    /// Trading days since the clock's epoch at `now`.
+    pub fn trading_day(&self, now: UnixNanos) -> u64 {
+        self.clock.trading_day(now)
     }
 
     /// The position in `day.phases` of the phase at `now`.
@@ -160,6 +193,7 @@ mod tests {
     fn day(clock: Clock) -> TradingDay {
         TradingDay {
             clock,
+            settlement_days: 2,
             markets: vec![MarketDay {
                 market: "HOSE".into(),
                 phases: vec![
@@ -236,4 +270,35 @@ mod tests {
         assert!(session.accepts(OrderType::LIMIT).is_some());
         assert_eq!(session.ts_event, UnixNanos(5));
     }
+
+    #[test]
+    fn trading_days_count_demo_cycles_and_real_weekdays() {
+        let demo = Clock::Compressed {
+            start: START_OF_DEMO,
+        };
+        let after = |seconds: u64| UnixNanos(START_OF_DEMO.0 + seconds * SECOND);
+        assert_eq!(demo.trading_day(START_OF_DEMO), 0);
+        assert_eq!(demo.trading_day(after(809)), 0);
+        assert_eq!(demo.trading_day(after(810)), 1);
+
+        let vietnam = Clock::Real {
+            utc_offset_minutes: 7 * 60,
+        };
+        // Wednesday 2026-10-07, 09:30 in Vietnam.
+        let wednesday = UnixNanos(1_791_340_200 * SECOND);
+        let days_on = |days: u64| UnixNanos(wednesday.0 + days * 86_400 * SECOND);
+        let monday = vietnam.trading_day(days_on(5));
+        assert_eq!(
+            vietnam.trading_day(days_on(1)),
+            vietnam.trading_day(wednesday) + 1
+        );
+        assert_eq!(
+            vietnam.trading_day(days_on(3)),
+            monday,
+            "Saturday counts as Monday"
+        );
+        assert_eq!(monday, vietnam.trading_day(wednesday) + 3);
+    }
+
+    const START_OF_DEMO: UnixNanos = UnixNanos(1_000 * SECOND);
 }

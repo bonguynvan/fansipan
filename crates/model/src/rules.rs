@@ -188,6 +188,9 @@ pub struct InstrumentInfo {
     /// Order quantities must be a multiple of this. One for no lot rule.
     pub lot_size: Decimal,
     pub ticks: TickTable,
+    /// Whether a sell may take more than the settled holding. Vietnam
+    /// forbids it for retail accounts; a US margin account allows it.
+    pub short_selling: bool,
 }
 
 impl InstrumentInfo {
@@ -199,6 +202,7 @@ impl InstrumentInfo {
             currency: String::new(),
             lot_size,
             ticks,
+            short_selling: true,
         }
     }
 
@@ -219,6 +223,13 @@ impl InstrumentInfo {
     pub fn with_currency(self, currency: impl Into<String>) -> Self {
         Self {
             currency: currency.into(),
+            ..self
+        }
+    }
+
+    pub fn with_short_selling(self, short_selling: bool) -> Self {
+        Self {
+            short_selling,
             ..self
         }
     }

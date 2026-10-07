@@ -16,7 +16,7 @@ use bus::Event;
 use model::{Decimal, OrderEvent, SessionPhase, Side, TimeInForce, UnixNanos};
 
 use super::matching::{crosses, fill};
-use super::{report, VenueState};
+use super::{account_of, report, VenueState};
 
 /// Moves every market with a schedule to its phase at `now`, and returns
 /// what that did: the fills of an auction that ended, the cancels of day
@@ -27,6 +27,12 @@ pub(super) fn advance(state: &mut VenueState, now: UnixNanos) -> Vec<Event> {
         return Vec::new();
     };
     let mut events = Vec::new();
+    let today = day.trading_day(now);
+    let settling = state.unsettled.len();
+    state.unsettled.retain(|lot| lot.settles_on > today);
+    if state.unsettled.len() < settling {
+        events.push(Event::AccountUpdate(account_of(state)));
+    }
     for market in &day.markets {
         let Some(current) = day.phase_index(market, now) else {
             continue;

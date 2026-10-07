@@ -334,6 +334,7 @@ fn a_limit_order_after_the_close_fills_only_at_its_price_or_better() {
             market: "HNX".into(),
             phases: vec![phase(0, SessionPhase::AfterClose)],
         }],
+        settlement_days: 2,
     };
     let venue = MarketProfile::by_id("vn", "sim")
         .expect("vn profile")
@@ -374,5 +375,76 @@ fn the_venue_tells_a_new_connection_every_markets_session() {
             ("HNX".into(), SessionPhase::Continuous, None),
             ("UPCOM".into(), SessionPhase::Continuous, None),
         ]
+    );
+}
+
+/// `second` into the demo cycle, `days` cycles after the first.
+fn on_day(days: u64, second: u64) -> UnixNanos {
+    UnixNanos(at(second).0 + days * CYCLE_SECONDS * SECOND)
+}
+
+fn settled_of(events: &[Event], symbol: &str) -> Option<Decimal> {
+    events.iter().rev().find_map(|e| match e {
+        Event::AccountUpdate(account) => account
+            .positions
+            .iter()
+            .find(|p| p.instrument.symbol == symbol)
+            .and_then(|p| p.settled),
+        _ => None,
+    })
+}
+
+#[test]
+fn shares_bought_settle_two_trading_days_later_and_only_then_sell() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    let bought = submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("62600")),
+        at(MORNING),
+    );
+    let sell = |order_id: u64, now: UnixNanos| {
+        let new = NewOrder::new(
+            id("VNM"),
+            Side::Sell,
+            d("100"),
+            OrderType::LIMIT,
+            Some(d("62400")),
+        );
+        submit(&venue, SubmitOrder::new(ClientOrderId(order_id), new), now)
+    };
+
+    let too_soon = sell(2, on_day(1, MORNING));
+    advance(&venue, on_day(1, MORNING));
+    let settling = advance(&venue, on_day(2, MORNING));
+    let settled_sell = sell(3, on_day(2, MORNING));
+
+    assert_eq!(fills(&bought, 1), vec![(d("100"), d("62600"))]);
+    assert_eq!(settled_of(&bought, "VNM"), Some(Decimal::ZERO));
+    assert_eq!(
+        refusal(&too_soon).as_deref(),
+        Some("not enough settled shares: 0 can be sold now")
+    );
+    assert_eq!(settled_of(&settling, "VNM"), Some(d("100")));
+    assert!(refusal(&settled_sell).is_none());
+}
+
+#[test]
+fn nothing_held_cannot_be_sold_where_short_selling_is_forbidden() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    let new = NewOrder::new(
+        id("VNM"),
+        Side::Sell,
+        d("100"),
+        OrderType::LIMIT,
+        Some(d("62400")),
+    );
+
+    let short = submit(&venue, SubmitOrder::new(ClientOrderId(1), new), at(MORNING));
+
+    assert_eq!(
+        refusal(&short).as_deref(),
+        Some("not enough settled shares: 0 can be sold now")
     );
 }

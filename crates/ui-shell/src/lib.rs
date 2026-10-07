@@ -26,7 +26,7 @@ use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
 use data_engine::DataEngine;
 use execution_engine::ExecutionEngine;
-use model::{AccountState, ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
+use model::{ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use execution_engine::RiskLimits;
@@ -131,7 +131,6 @@ pub struct Shell {
     market: MarketDto,
     data: Mutex<DataEngine>,
     exec: Mutex<ExecutionEngine>,
-    account: Mutex<AccountState>,
     /// Changes not yet sent to the front end.
     pending: Mutex<Batch>,
     /// Number of the last batch taken from `pending`.
@@ -228,14 +227,14 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             data.sessions().map(SessionDto::from).collect(),
         )
     };
-    let (orders, orders_connection) = {
+    let (orders, orders_connection, account) = {
         let exec = lock(&shell.exec)?;
         (
             exec.orders().map(OrderDto::from).collect(),
             ConnectionDto::of(Connection::Orders, exec.connection()),
+            AccountDto::from(exec.account()),
         )
     };
-    let account = AccountDto::from(&*lock(&shell.account)?);
     Ok(Snapshot {
         seq,
         market: shell.market.clone(),
@@ -402,8 +401,9 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                 ),
             }
         }
+        // The execution engine keeps the account: risk checks sells against it.
         Event::AccountUpdate(account) => {
-            *lock(&shell.account)? = account.clone();
+            lock(&shell.exec)?.set_account(account.clone());
             lock(&shell.pending)?.account(AccountDto::from(account));
         }
         // A session goes to both engines: the data engine to show it, the
@@ -485,7 +485,6 @@ fn connect_engines(bus: &Bus, venue: Venue) -> Result<Shell, AdapterError> {
         },
         data: Mutex::new(data),
         exec: Mutex::new(exec),
-        account: Mutex::new(AccountState::default()),
         pending: Mutex::new(Batch::default()),
         flushed: AtomicU64::new(0),
     })

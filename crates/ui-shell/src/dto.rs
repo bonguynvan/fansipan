@@ -447,6 +447,9 @@ pub struct PositionDto {
     pub symbol: String,
     pub quantity: String,
     pub avg_price: String,
+    /// What a market without short selling lets be sold, before working
+    /// sell orders; `None` when the venue does not say.
+    pub settled: Option<String>,
 }
 
 impl From<&AccountState> for AccountDto {
@@ -460,6 +463,7 @@ impl From<&AccountState> for AccountDto {
                     symbol: p.instrument.symbol.clone(),
                     quantity: p.quantity.to_string(),
                     avg_price: p.avg_price.to_string(),
+                    settled: p.settled.map(|s| s.to_string()),
                 })
                 .collect(),
         }

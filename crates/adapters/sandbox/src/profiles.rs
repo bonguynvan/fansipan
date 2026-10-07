@@ -27,6 +27,8 @@ pub struct MarketProfile {
     pub markets: Vec<MarketDay>,
     /// The markets' offset from UTC, in minutes, for real-hours clocks.
     pub utc_offset_minutes: i32,
+    /// Trading days until shares bought settle (T+2 in Vietnam).
+    pub settlement_days: u64,
 }
 
 /// The ids [`MarketProfile::by_id`] knows.
@@ -60,6 +62,7 @@ impl MarketProfile {
         self.venue().with_day(TradingDay {
             clock,
             markets: self.markets.clone(),
+            settlement_days: self.settlement_days,
         })
     }
 
@@ -78,6 +81,8 @@ struct Board {
     /// Daily limit as a fraction of the reference price; `None` for none.
     band: Option<Decimal>,
     lot: Decimal,
+    /// Whether a sell may take more than the settled holding.
+    short_selling: bool,
 }
 
 fn dec(units: i64, scale: u32) -> Decimal {
@@ -95,7 +100,8 @@ fn listing(
     let info = InstrumentInfo::new(id.clone(), board.lot, board.ticks.clone())
         .with_name(name)
         .with_exchange(board.code)
-        .with_currency(currency);
+        .with_currency(currency)
+        .with_short_selling(board.short_selling);
     let band = match board.band {
         Some(fraction) => {
             PriceBand::from_fraction(id, reference, fraction, &board.ticks, UnixNanos::default())
@@ -212,18 +218,21 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         .map_err(|e| e.to_string())?,
         band: Some(dec(7, 2)),
         lot,
+        short_selling: false,
     };
     let hnx = Board {
         code: "HNX",
         ticks: flat_100.clone(),
         band: Some(dec(10, 2)),
         lot,
+        short_selling: false,
     };
     let upcom = Board {
         code: "UPCOM",
         ticks: flat_100,
         band: Some(dec(15, 2)),
         lot,
+        short_selling: false,
     };
     let display = dec(10_000, 0);
     let on = |board: &Board, entries: &[(&str, &str, i64)]| -> Result<Vec<Listing>, String> {
@@ -279,6 +288,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         listings,
         markets: vietnam_days(),
         utc_offset_minutes: 7 * 60,
+        settlement_days: 2,
     })
 }
 
@@ -289,6 +299,7 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         ticks: TickTable::flat(dec(1, 2)).map_err(|e| e.to_string())?,
         band: None,
         lot: Decimal::ONE,
+        short_selling: true,
     };
     let listings = [
         ("AAPL", "Apple", 19_000),
@@ -319,6 +330,7 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         listings,
         markets: Vec::new(),
         utc_offset_minutes: -5 * 60,
+        settlement_days: 1,
     })
 }
 

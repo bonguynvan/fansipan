@@ -2,14 +2,18 @@
 //!
 //! Two families: this terminal's own limits ([`check`]), and the market's
 //! rules as the adapter published them: for the instrument
-//! ([`check_market_rules`]: lot size, tick size, daily price band), and for
-//! the moment ([`check_session`]: the order types its market takes in the
-//! current phase of the day). An order a venue would refuse for breaking its
-//! rules is refused here first, with a reason.
+//! ([`check_market_rules`]: lot size, tick size, daily price band), for the
+//! moment ([`check_session`]: the order types its market takes in the
+//! current phase of the day), and for the holding ([`check_sellable`]: no
+//! selling beyond the settled shares where short selling is forbidden). An
+//! order a venue would refuse for breaking its rules is refused here first,
+//! with a reason.
 
 use std::fmt;
 
-use model::{Decimal, InstrumentInfo, NewOrder, PriceBand, SessionPhase, SessionStatus};
+use model::{
+    Decimal, InstrumentInfo, NewOrder, Position, PriceBand, SessionPhase, SessionStatus, Side,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RiskLimits {
@@ -52,6 +56,14 @@ pub enum RiskReject {
         phase: String,
         accepted: Vec<String>,
     },
+    /// A sell beyond what may be sold now, where short selling is
+    /// forbidden: the settled shares less those already in working sells.
+    NotEnoughToSell {
+        sellable: Decimal,
+        held: Decimal,
+        unsettled: Decimal,
+        working: Decimal,
+    },
 }
 
 impl fmt::Display for RiskReject {
@@ -92,6 +104,16 @@ impl fmt::Display for RiskReject {
                 f,
                 "{market} is in {phase} and takes only {} now",
                 accepted.join(", ")
+            ),
+            Self::NotEnoughToSell {
+                sellable,
+                held,
+                unsettled,
+                working,
+            } => write!(
+                f,
+                "only {sellable} can be sold now: {held} held, {unsettled} not settled yet, \
+                 {working} in working sell orders"
             ),
         }
     }
@@ -179,6 +201,34 @@ pub fn check_session(order: &NewOrder, session: Option<&SessionStatus>) -> Resul
             .clone()
             .unwrap_or_else(|| phase_words(session.phase).to_string()),
         accepted: session.order_types.iter().map(|t| t.name.clone()).collect(),
+    })
+}
+
+/// A sell against the holding, where the instrument's market forbids short
+/// selling: at most the settled shares, less what this session's working
+/// sell orders (`working`) already take. An instrument without published
+/// rules, or one that allows short selling, is not checked; nor is a buy.
+pub fn check_sellable(
+    order: &NewOrder,
+    info: Option<&InstrumentInfo>,
+    position: Option<&Position>,
+    working: Decimal,
+) -> Result<(), RiskReject> {
+    let forbids_short = info.is_some_and(|info| !info.short_selling);
+    if order.side != Side::Sell || !forbids_short {
+        return Ok(());
+    }
+    let held = position.map_or(Decimal::ZERO, |p| p.quantity.max(Decimal::ZERO));
+    let settled = position.map_or(Decimal::ZERO, Position::sellable);
+    let sellable = (settled - working).max(Decimal::ZERO);
+    if order.quantity <= sellable {
+        return Ok(());
+    }
+    Err(RiskReject::NotEnoughToSell {
+        sellable,
+        held,
+        unsettled: held - settled,
+        working,
     })
 }
 
@@ -479,6 +529,64 @@ mod tests {
         assert_eq!(
             reject.to_string(),
             "HNX is in a closed session and takes no orders now"
+        );
+    }
+
+    fn no_short_selling() -> InstrumentInfo {
+        let ticks = TickTable::flat(d("100")).unwrap();
+        InstrumentInfo::new(InstrumentId::new("sim", "AAA"), d("100"), ticks)
+            .with_short_selling(false)
+    }
+
+    fn sell(quantity: &str) -> NewOrder {
+        NewOrder::market(InstrumentId::new("sim", "AAA"), Side::Sell, d(quantity))
+    }
+
+    fn holding(quantity: &str, settled: &str) -> Position {
+        Position::new(InstrumentId::new("sim", "AAA"), d(quantity), d("62500"))
+            .with_settled(d(settled))
+    }
+
+    #[test]
+    fn a_sell_takes_only_settled_shares_not_already_in_working_sells() {
+        let info = no_short_selling();
+        let position = holding("500", "300");
+
+        assert_eq!(
+            check_sellable(&sell("200"), Some(&info), Some(&position), d("100")),
+            Ok(())
+        );
+        let reject =
+            check_sellable(&sell("300"), Some(&info), Some(&position), d("100")).unwrap_err();
+        assert_eq!(
+            reject.to_string(),
+            "only 200 can be sold now: 500 held, 200 not settled yet, 100 in working sell orders"
+        );
+    }
+
+    #[test]
+    fn nothing_held_means_nothing_to_sell_where_short_selling_is_forbidden() {
+        let reject = check_sellable(&sell("100"), Some(&no_short_selling()), None, d("0"));
+
+        assert!(matches!(
+            reject,
+            Err(RiskReject::NotEnoughToSell { sellable, .. }) if sellable.is_zero()
+        ));
+    }
+
+    #[test]
+    fn a_market_that_allows_short_selling_or_a_buy_is_not_checked() {
+        let ticks = TickTable::flat(d("0.01")).unwrap();
+        let shortable = InstrumentInfo::new(InstrumentId::new("sim", "AAA"), d("1"), ticks);
+
+        assert_eq!(
+            check_sellable(&sell("100"), Some(&shortable), None, d("0")),
+            Ok(())
+        );
+        assert_eq!(check_sellable(&sell("100"), None, None, d("0")), Ok(()));
+        assert_eq!(
+            check_sellable(&order("100", None), Some(&no_short_selling()), None, d("0")),
+            Ok(())
         );
     }
 }

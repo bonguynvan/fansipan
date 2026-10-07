@@ -1,5 +1,6 @@
-//! Owns order state. Risk runs before anything reaches the adapter; adapters
-//! only report what the venue said, and this engine decides what it means.
+//! Owns order state and the account as the venue last reported it. Risk
+//! runs before anything reaches the adapter; adapters only report what the
+//! venue said, and this engine decides what it means.
 //! The state machine itself is in [`lifecycle`]; see /docs/order-lifecycle.md.
 
 pub mod lifecycle;
@@ -11,9 +12,9 @@ use std::fmt;
 use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
 use model::{
-    CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal, ExecutionReport, FillId,
-    InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent, OrderStatus, PriceBand,
-    SessionStatus, SubmitOrder,
+    AccountState, CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal,
+    ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
+    OrderStatus, PriceBand, SessionStatus, Side, SubmitOrder,
 };
 
 pub use lifecycle::TransitionError;
@@ -79,6 +80,8 @@ pub struct ExecutionEngine {
     /// Each market's phase of the day and the order types it takes, by the
     /// market's name as `InstrumentInfo::exchange` gives it.
     sessions: HashMap<String, SessionStatus>,
+    /// Cash and positions as the venue last reported them.
+    account: AccountState,
     connection: Option<ConnectionStatus>,
 }
 
@@ -92,6 +95,7 @@ impl ExecutionEngine {
             instruments: HashMap::new(),
             bands: HashMap::new(),
             sessions: HashMap::new(),
+            account: AccountState::default(),
             connection: None,
         }
     }
@@ -104,6 +108,27 @@ impl ExecutionEngine {
     /// Records today's price band for risk to apply.
     pub fn set_band(&mut self, band: PriceBand) {
         self.bands.insert(band.instrument.clone(), band);
+    }
+
+    /// Records the account as the venue reported it, for risk to check sells
+    /// against.
+    pub fn set_account(&mut self, account: AccountState) {
+        self.account = account;
+    }
+
+    pub fn account(&self) -> &AccountState {
+        &self.account
+    }
+
+    /// What this session's working sell orders in `instrument` have yet to
+    /// sell.
+    fn working_sells(&self, instrument: &InstrumentId) -> Decimal {
+        self.orders
+            .values()
+            .map(|t| &t.order)
+            .filter(|o| &o.instrument == instrument && o.side == Side::Sell && o.status.is_open())
+            .map(Order::remaining)
+            .sum()
     }
 
     /// Records a market's current session for risk to apply.
@@ -154,6 +179,14 @@ impl ExecutionEngine {
             .and_then(|()| {
                 let session = info.and_then(|info| self.sessions.get(&info.exchange));
                 risk::check_session(&request, session)
+            })
+            .and_then(|()| {
+                risk::check_sellable(
+                    &request,
+                    info,
+                    self.account.position(&request.instrument),
+                    self.working_sells(&request.instrument),
+                )
             });
         let order = match cleared {
             Err(reject) => Order {
@@ -612,6 +645,31 @@ mod tests {
         let order = engine.submit(buy("1"));
 
         assert_eq!(order.status, OrderStatus::Submitted);
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+    }
+
+    #[test]
+    fn a_sell_beyond_the_settled_holding_never_reaches_the_adapter() {
+        let (mut engine, calls) = engine();
+        let instrument = InstrumentId::new("sim", "AAA");
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(
+            InstrumentInfo::new(instrument.clone(), Decimal::ONE, ticks).with_short_selling(false),
+        );
+        let held = model::Position::new(instrument.clone(), d("10"), d("5")).with_settled(d("4"));
+        engine.set_account(AccountState::new(d("1000"), vec![held]));
+        let sell =
+            |quantity: &str| NewOrder::limit(instrument.clone(), Side::Sell, d(quantity), d("5"));
+
+        let first = engine.submit(sell("3"));
+        let second = engine.submit(sell("2"));
+
+        assert_eq!(first.status, OrderStatus::Submitted);
+        assert_eq!(second.status, OrderStatus::Denied);
+        assert_eq!(
+            second.reason.as_deref(),
+            Some("only 1 can be sold now: 10 held, 6 not settled yet, 3 in working sell orders")
+        );
         assert_eq!(calls.lock().unwrap().submitted.len(), 1);
     }
 }
