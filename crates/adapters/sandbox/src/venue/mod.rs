@@ -60,8 +60,9 @@ struct VenueState {
     next_fill_id: u64,
     /// The markets' schedules; `None` trades every market continuously.
     day: Option<TradingDay>,
-    /// Each scheduled market's phase as of the last [`SimVenue::advance`].
-    phases: BTreeMap<String, SessionPhase>,
+    /// Each scheduled market's phase, by its position in the market's day,
+    /// as of the last [`SimVenue::advance`].
+    phases: BTreeMap<String, usize>,
     /// Each instrument's price at its last closing auction.
     closes: BTreeMap<InstrumentId, Decimal>,
 }

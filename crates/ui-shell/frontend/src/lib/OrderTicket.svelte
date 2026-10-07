@@ -38,6 +38,13 @@
   const orderType = $derived(pickOrderType(offered, wantedType));
   const priced = $derived(isPriced(orderType));
   let limitPrice = $derived(blankFor(selected));
+  const missingPrice = $derived(priced && (limitPrice === null || limitPrice === ""));
+
+  // A type the market stopped taking is forgotten, not kept for later: when
+  // the phase changes back, the ticket must not quietly offer it again.
+  $effect(() => {
+    if (wantedType !== null && (!orderType || typeKey(orderType) !== wantedType)) wantedType = null;
+  });
   let message = $state(null);
   let busy = $state(false);
 
@@ -65,7 +72,7 @@
 
   async function submit(event) {
     event.preventDefault();
-    if (!selected || !orderType) return;
+    if (!selected || !orderType || missingPrice) return;
     busy = true;
     message = null;
     try {
@@ -173,7 +180,7 @@
       </div>
     </dl>
 
-    <button class="submit {side}" type="submit" disabled={!selected || !orderType || busy}>
+    <button class="submit {side}" type="submit" disabled={!selected || !orderType || missingPrice || busy}>
       {busy ? t("ticket.sending") : t("ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
     </button>
 

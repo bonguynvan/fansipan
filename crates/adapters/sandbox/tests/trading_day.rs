@@ -3,10 +3,10 @@
 //! auctions and the close that end phases.
 
 use bus::Event;
-use fansipan_sandbox::{Clock, MarketProfile, SimVenue};
+use fansipan_sandbox::{Clock, MarketDay, MarketProfile, Phase, SimVenue, TradingDay};
 use model::{
-    CancelOrder, ClientOrderId, Decimal, InstrumentId, NewOrder, OrderEvent, OrderKind, OrderType,
-    SessionPhase, Side, SubmitOrder, TimeInForce, UnixNanos,
+    CancelOrder, ClientOrderId, Decimal, InstrumentId, NamedOrderType, NewOrder, OrderEvent,
+    OrderKind, OrderType, SessionPhase, Side, SubmitOrder, TimeInForce, UnixNanos,
 };
 
 const SECOND: u64 = 1_000_000_000;
@@ -301,4 +301,57 @@ fn the_close_expires_what_still_rests() {
     let closing = advance(&venue, at(CLOSED));
 
     assert!(ended(&closing, 1));
+}
+
+#[test]
+fn a_late_beat_still_ends_the_auction_it_missed() {
+    let venue = venue();
+    advance(&venue, at(AFTERNOON));
+    let atc = typed(OrderKind::Market, TimeInForce::AtClose);
+    submit(&venue, order(1, "SHS", "100", atc, None), at(ATC + 5));
+
+    // The next beat comes after the close: the ATC auction ended unseen.
+    let late = advance(&venue, at(CLOSED));
+
+    assert_eq!(fills(&late, 1), vec![(d("100"), d("13600"))]);
+    assert!(!ended(&late, 1));
+    assert!(sessions(&late).contains(&("HNX".into(), SessionPhase::Closed, None)));
+}
+
+#[test]
+fn a_limit_order_after_the_close_fills_only_at_its_price_or_better() {
+    // A market that takes limit orders after the close, at the closing price.
+    let lo = NamedOrderType::new(OrderType::LIMIT, "LO");
+    let phase = |start, phase| Phase {
+        start,
+        phase,
+        name: None,
+        order_types: vec![lo.clone()],
+    };
+    let day = TradingDay {
+        clock: Clock::Compressed { start: START },
+        markets: vec![MarketDay {
+            market: "HNX".into(),
+            phases: vec![phase(0, SessionPhase::AfterClose)],
+        }],
+    };
+    let venue = MarketProfile::by_id("vn", "sim")
+        .expect("vn profile")
+        .venue()
+        .with_day(day);
+    let now = at(MORNING);
+
+    let under = submit(
+        &venue,
+        order(1, "SHS", "100", OrderType::LIMIT, Some("13500")),
+        now,
+    );
+    let over = submit(
+        &venue,
+        order(2, "SHS", "100", OrderType::LIMIT, Some("13700")),
+        now,
+    );
+
+    assert!(fills(&under, 1).is_empty() && !ended(&under, 1));
+    assert_eq!(fills(&over, 2), vec![(d("100"), d("13600"))]);
 }

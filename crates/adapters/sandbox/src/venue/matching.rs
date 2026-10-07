@@ -147,9 +147,23 @@ pub(super) fn submit_locked(
         SessionPhase::Continuous => {
             events.extend(trade_now(state, order, touch, display_size, now));
         }
+        // At the closing price, if the order's limit allows it; otherwise it
+        // waits, and the close cancels it.
         SessionPhase::AfterClose => {
-            let quantity = order.quantity;
-            events.extend(fill(state, &order, quantity, close, now));
+            if order
+                .limit_price
+                .is_none_or(|limit| crosses(order.side, limit, close))
+            {
+                let quantity = order.quantity;
+                events.extend(fill(state, &order, quantity, close, now));
+            } else {
+                state.resting.push(Resting {
+                    limit: order.limit_price,
+                    reserve: worst_price,
+                    remaining: order.quantity,
+                    order,
+                });
+            }
         }
         // Auctions and breaks collect orders; nothing trades until they end.
         _ => state.resting.push(Resting {

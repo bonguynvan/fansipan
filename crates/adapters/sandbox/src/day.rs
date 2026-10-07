@@ -65,12 +65,12 @@ pub struct MarketDay {
 }
 
 impl MarketDay {
-    fn phase_at(&self, minute: u32) -> Option<&Phase> {
+    /// The position in `phases` of the phase at `minute`.
+    fn index_at(&self, minute: u32) -> Option<usize> {
         self.phases
             .iter()
-            .rev()
-            .find(|phase| phase.start <= minute)
-            .or_else(|| self.phases.last())
+            .rposition(|phase| phase.start <= minute)
+            .or_else(|| self.phases.len().checked_sub(1))
     }
 }
 
@@ -131,11 +131,13 @@ impl TradingDay {
     /// The phase `market` is in at `now`; `None` for a market with no
     /// schedule, which trades continuously.
     pub fn phase(&self, market: &str, now: UnixNanos) -> Option<&Phase> {
-        let minute = self.clock.minute(now);
-        self.markets
-            .iter()
-            .find(|day| day.market == market)
-            .and_then(|day| day.phase_at(minute))
+        let day = self.markets.iter().find(|day| day.market == market)?;
+        day.phases.get(self.phase_index(day, now)?)
+    }
+
+    /// The position in `day.phases` of the phase at `now`.
+    pub fn phase_index(&self, day: &MarketDay, now: UnixNanos) -> Option<usize> {
+        day.index_at(self.clock.minute(now))
     }
 }
 

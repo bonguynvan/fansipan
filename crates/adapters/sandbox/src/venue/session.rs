@@ -7,9 +7,13 @@
 //! cross rests on into the next phase. At the close, day orders still
 //! resting are cancelled, as an exchange expires them, and the closing
 //! auction's price becomes the price after-close orders fill at.
+//!
+//! Phases end in the order of the day even when the venue is told late
+//! (a suspended process, a slow beat): every phase between the last one
+//! seen and the current one ends in turn, so no auction or close is lost.
 
 use bus::Event;
-use model::{OrderEvent, SessionPhase, TimeInForce, UnixNanos};
+use model::{Decimal, OrderEvent, SessionPhase, Side, TimeInForce, UnixNanos};
 
 use super::matching::{crosses, fill};
 use super::{report, VenueState};
@@ -24,27 +28,35 @@ pub(super) fn advance(state: &mut VenueState, now: UnixNanos) -> Vec<Event> {
     };
     let mut events = Vec::new();
     for market in &day.markets {
-        let Some(phase) = day.phase(&market.market, now) else {
+        let Some(current) = day.phase_index(market, now) else {
             continue;
         };
         let previous = state.phases.get(&market.market).copied();
-        if previous == Some(phase.phase) {
+        if previous == Some(current) {
             continue;
         }
-        match previous {
-            Some(SessionPhase::OpeningAuction) => {
-                events.extend(uncross(state, &market.market, false, now));
+        if let Some(mut index) = previous {
+            let count = market.phases.len();
+            while index != current {
+                match market.phases[index].phase {
+                    SessionPhase::OpeningAuction => {
+                        events.extend(uncross(state, &market.market, false, now));
+                    }
+                    SessionPhase::ClosingAuction => {
+                        events.extend(uncross(state, &market.market, true, now));
+                    }
+                    _ => {}
+                }
+                index = (index + 1) % count;
+                if market.phases[index].phase == SessionPhase::Closed {
+                    events.extend(expire(state, &market.market, now));
+                }
             }
-            Some(SessionPhase::ClosingAuction) => {
-                events.extend(uncross(state, &market.market, true, now));
-            }
-            _ => {}
         }
-        if previous.is_some() && phase.phase == SessionPhase::Closed {
-            events.extend(expire(state, &market.market, now));
-        }
-        state.phases.insert(market.market.clone(), phase.phase);
-        events.push(Event::Session(phase.session(&market.market, now)));
+        state.phases.insert(market.market.clone(), current);
+        events.push(Event::Session(
+            market.phases[current].session(&market.market, now),
+        ));
     }
     events
 }
@@ -74,13 +86,27 @@ fn uncross(state: &mut VenueState, market: &str, closing: bool, now: UnixNanos) 
             });
         state.resting = kept;
         for resting in matched {
-            events.extend(fill(state, &resting.order, resting.remaining, price, now));
+            if fits(state.cash, resting.order.side, resting.remaining, price) {
+                events.extend(fill(state, &resting.order, resting.remaining, price, now));
+            } else {
+                events.push(report(resting.order.order_id, OrderEvent::Cancelled, now));
+            }
         }
         if closing {
             state.closes.insert(instrument, price);
         }
     }
     events
+}
+
+/// Whether trading `quantity` at `price` keeps cash representable. Checked
+/// at submit against the order's worst price; checked again here because an
+/// auction prices it later.
+fn fits(cash: Decimal, side: Side, quantity: Decimal, price: Decimal) -> bool {
+    quantity.checked_mul(price).is_some_and(|value| match side {
+        Side::Buy => cash.checked_sub(value).is_some(),
+        Side::Sell => cash.checked_add(value).is_some(),
+    })
 }
 
 /// The close of `market`: its resting orders expire.
