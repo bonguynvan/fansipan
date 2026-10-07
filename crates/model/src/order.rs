@@ -265,6 +265,11 @@ pub struct VenueOrder {
     pub filled_quantity: Decimal,
     /// Over every fill so far; `None` until the first.
     pub avg_fill_price: Option<Decimal>,
+    /// The order's total quantity on the venue now, if the adapter read it.
+    /// It settles an amendment whose answer the stream missed.
+    pub quantity: Option<Decimal>,
+    /// The order's limit price on the venue now, if the adapter read it.
+    pub limit_price: Option<Decimal>,
 }
 
 impl VenueOrder {
@@ -278,6 +283,17 @@ impl VenueOrder {
             state,
             filled_quantity,
             avg_fill_price,
+            quantity: None,
+            limit_price: None,
+        }
+    }
+
+    /// The order's terms on the venue now: its total quantity and limit.
+    pub fn with_terms(self, quantity: Decimal, limit_price: Option<Decimal>) -> Self {
+        Self {
+            quantity: Some(quantity),
+            limit_price,
+            ..self
         }
     }
 
