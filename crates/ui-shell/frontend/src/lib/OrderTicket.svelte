@@ -6,6 +6,7 @@
   import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
   import { orderTypeName, phaseName } from "./orderTypes.js";
+  import { UNTYPED, isSendable, typedOr } from "./ticket.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
@@ -29,16 +30,18 @@
   // meant for one instrument is wrong for the next, whose lots and prices
   // differ. Assigning to these overrides them until then.
   const blankFor = (_symbol) => null;
+  const untypedFor = (_symbol) => UNTYPED;
   let side = $state("buy");
-  /** What was typed; until then, one lot. */
-  let typedQuantity = $derived(blankFor(selected));
-  const quantity = $derived(typedQuantity ?? lot);
+  /** What was typed; until then, one lot. Cleared, it stays empty. */
+  let typedQuantity = $derived(untypedFor(selected));
+  const quantity = $derived(typedOr(typedQuantity, lot));
   /** The type asked for; shown while the market still takes it. */
   let wantedType = $state(null);
   const orderType = $derived(pickOrderType(offered, wantedType));
   const priced = $derived(isPriced(orderType));
   let limitPrice = $derived(blankFor(selected));
-  const missingPrice = $derived(priced && (limitPrice === null || limitPrice === ""));
+  const missingPrice = $derived(priced && !isSendable(limitPrice));
+  const missingQuantity = $derived(!isSendable(quantity));
 
   // A type the market stopped taking is forgotten, not kept for later: when
   // the phase changes back, the ticket must not quietly offer it again.
@@ -72,7 +75,7 @@
 
   async function submit(event) {
     event.preventDefault();
-    if (!selected || !orderType || missingPrice) return;
+    if (!selected || !orderType || missingPrice || missingQuantity) return;
     busy = true;
     message = null;
     try {
@@ -180,7 +183,7 @@
       </div>
     </dl>
 
-    <button class="submit {side}" type="submit" disabled={!selected || !orderType || missingPrice || busy}>
+    <button class="submit {side}" type="submit" disabled={!selected || !orderType || missingPrice || missingQuantity || busy}>
       {busy ? t("ticket.sending") : t("ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
     </button>
 
