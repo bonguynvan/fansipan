@@ -1,0 +1,10 @@
+# Only what the image is built from goes to the Docker daemon: never build
+# output, installed packages from the host, history, or private files.
+**/target
+**/node_modules
+crates/ui-shell/frontend/dist
+crates/ui-shell/gen
+.git
+.env
+*.env
+docs

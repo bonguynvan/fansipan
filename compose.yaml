@@ -1,0 +1,28 @@
+# Fansipan in a container, shown in the browser:
+#
+#   docker compose up --build
+#   # open http://localhost:6080/vnc.html?autoconnect=true&resize=scale
+#
+# FANSIPAN_SANDBOX_MARKET=us docker compose up   for the US-style market.
+name: fansipan
+
+services:
+  fansipan:
+    build: .
+    image: fansipan:local
+    init: true
+    # WebKit's renderer uses shared memory; Docker's 64 MB default is too little.
+    shm_size: 512m
+    ports:
+      # This machine only: the VNC session behind it has no password.
+      - "127.0.0.1:6080:6080"
+    environment:
+      FANSIPAN_SANDBOX_MARKET: ${FANSIPAN_SANDBOX_MARKET:-vn}
+      # The chart's clock: TZ=Asia/Ho_Chi_Minh docker compose up
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Layouts, windows, link groups, and the chosen language.
+      - fansipan-settings:/home/fansipan/.config
+
+volumes:
+  fansipan-settings:

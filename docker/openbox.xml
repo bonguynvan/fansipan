@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The container's window manager: the terminal's main window fills the
+     virtual screen; windows popped out of it open at their own size. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application title="Fansipan" type="normal">
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>
