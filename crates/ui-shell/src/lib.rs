@@ -227,12 +227,13 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             data.sessions().map(SessionDto::from).collect(),
         )
     };
-    let (orders, orders_connection, account) = {
-        let exec = lock(&shell.exec)?;
+    let (orders, orders_connection, account, can_amend) = {
+        let mut exec = lock(&shell.exec)?;
         (
             exec.orders().map(OrderDto::from).collect(),
             ConnectionDto::of(Connection::Orders, exec.connection()),
             AccountDto::from(exec.account()),
+            exec.can_amend(),
         )
     };
     Ok(Snapshot {
@@ -245,6 +246,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         account,
         connections: vec![data_connection, orders_connection],
         sessions,
+        can_amend,
     })
 }
 
@@ -940,7 +942,9 @@ mod tests {
             route(&shell, &event).unwrap();
         }
 
+        assert!(snapshot_of(&shell).unwrap().can_amend);
         assert_eq!(pending.status, "amending");
+        assert!(!pending.amendable);
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(
@@ -951,6 +955,7 @@ mod tests {
             ),
             ("accepted", "2", Some("101"))
         );
+        assert!(order.amendable);
         assert!(amend(&shell, 404, Decimal::ONE, Decimal::ONE)
             .unwrap_err()
             .contains("no order 404"));

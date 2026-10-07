@@ -82,6 +82,26 @@ impl fmt::Display for AmendError {
 
 impl std::error::Error for AmendError {}
 
+/// Whether an amendment could change `order`: a limit order resting on the
+/// venue, with no cancel or other amendment in flight. Whether the venue
+/// amends at all is [`ExecutionEngine::can_amend`].
+pub fn is_amendable(order: &Order) -> bool {
+    amend_refusal(order).is_none()
+}
+
+fn amend_refusal(order: &Order) -> Option<AmendError> {
+    if !matches!(
+        order.status,
+        OrderStatus::Accepted | OrderStatus::PartiallyFilled
+    ) {
+        return Some(AmendError::NotAmendable(order.status));
+    }
+    if order.order_type.kind != OrderKind::Limit {
+        return Some(AmendError::NotALimitOrder);
+    }
+    None
+}
+
 /// Why an execution report changed nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApplyError {
@@ -309,14 +329,8 @@ impl ExecutionEngine {
             .get(&id)
             .map(|t| t.order.clone())
             .ok_or(AmendError::UnknownOrder(id))?;
-        if !matches!(
-            current.status,
-            OrderStatus::Accepted | OrderStatus::PartiallyFilled
-        ) {
-            return Err(AmendError::NotAmendable(current.status));
-        }
-        if current.order_type.kind != OrderKind::Limit {
-            return Err(AmendError::NotALimitOrder);
+        if let Some(refusal) = amend_refusal(&current) {
+            return Err(refusal);
         }
         if quantity <= current.filled_quantity {
             return Err(AmendError::BelowFilled(current.filled_quantity));
@@ -518,6 +532,12 @@ impl ExecutionEngine {
     /// Every order this session, oldest first.
     pub fn orders(&self) -> impl Iterator<Item = &Order> {
         self.orders.values().map(|t| &t.order)
+    }
+
+    /// Whether the adapter's venue takes amendments at all. Which orders
+    /// one could change is [`is_amendable`].
+    pub fn can_amend(&mut self) -> bool {
+        self.client.amender().is_some()
     }
 
     /// Records a report on the orders connection; returns whether kept.
@@ -1068,6 +1088,42 @@ mod tests {
             plain.amend(other, d("3"), d("5")),
             Err(AmendError::Unsupported)
         );
+        assert!(engine.can_amend());
+        assert!(!plain.can_amend());
+    }
+
+    #[test]
+    fn only_a_resting_limit_order_is_amendable() {
+        let (mut engine, _) = engine();
+        let id = resting(&mut engine, "2");
+        let unacked = engine.submit(buy("1")).id;
+        let market = engine
+            .submit(NewOrder::market(
+                InstrumentId::new("sim", "AAA"),
+                Side::Buy,
+                d("1"),
+            ))
+            .id;
+        engine
+            .apply(&report(
+                market,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V2".into()),
+                },
+            ))
+            .unwrap();
+        let amendable = |engine: &ExecutionEngine, id| engine.order(id).is_some_and(is_amendable);
+
+        assert!(amendable(&engine, id));
+        assert!(!amendable(&engine, unacked));
+        assert!(!amendable(&engine, market));
+        assert_eq!(
+            engine.amend(market, d("2"), d("5")),
+            Err(AmendError::NotALimitOrder)
+        );
+
+        engine.amend(id, d("3"), d("5")).unwrap();
+        assert!(!amendable(&engine, id), "an amendment is in flight");
     }
 
     #[test]

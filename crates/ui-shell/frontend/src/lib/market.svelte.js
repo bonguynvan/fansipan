@@ -31,6 +31,8 @@ class Market {
   typeNames = $state.raw({});
   /** `{ id, title, currency }` of the market the shell is wired to; null until the snapshot is in. */
   info = $state.raw(null);
+  /** Whether the venue takes amendments; fixed for the session. */
+  canAmend = $state(false);
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -90,6 +92,7 @@ export function startMarket() {
       const snap = await invoke("snapshot");
       sync.snapshot(snap);
       market.info = snap.market ?? null;
+      market.canAmend = Boolean(snap.can_amend);
       infoIn(market.info);
       await loadTrends(snap.quotes.map((q) => q.symbol));
       market.ready = true;

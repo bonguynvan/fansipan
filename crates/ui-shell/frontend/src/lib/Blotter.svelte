@@ -1,6 +1,9 @@
 <script>
+  import { tick } from "svelte";
   import { Grid, tradecanvasTheme } from "bo-grid";
-  import CancelCell from "./CancelCell.svelte";
+  import OrderActions from "./OrderActions.svelte";
+  import AmendForm from "./AmendForm.svelte";
+  import { canAmendOrder } from "./amend.js";
   import { blotterError } from "./orders.svelte.js";
   import { price, quantity } from "./format.js";
   import { market } from "./market.svelte.js";
@@ -9,6 +12,24 @@
   import { t } from "../i18n/i18n.svelte.js";
 
   const orders = $derived(market.orderList);
+
+  /** The order this blotter's amend form is open for, by id. */
+  let amending = $state(null);
+  const amendingOrder = $derived(amending === null ? null : market.orders[amending]);
+  let blotter;
+
+  $effect(() => {
+    if (amending !== null && !amendingOrder) amending = null;
+  });
+
+  /** Back to the Amend button that opened the form, or the grid once the order has none. */
+  async function closeAmend() {
+    const id = amending;
+    amending = null;
+    await tick();
+    const target = blotter?.querySelector(`[data-amend="${id}"]`) ?? blotter?.querySelector('[role="grid"]');
+    target?.focus();
+  }
 
   const STATUS_TONES = {
     filled: "up",
@@ -36,7 +57,15 @@
     { type: "text", key: "avg", header: t("column.avg"), width: 92, align: "right", format: (v, row) => price(v, row && market.priceDecimals(row.symbol)) },
     { type: "badge", key: "statusText", header: t("column.status"), width: 116, tones: byText("status", STATUS_TONES), flash: "change" },
     { type: "text", key: "reason", header: t("column.reason"), width: 220, tooltip: true },
-    { type: "custom", key: "action", header: "", width: 84, sortable: false, component: CancelCell },
+    {
+      type: "custom",
+      key: "action",
+      header: "",
+      width: 164,
+      sortable: false,
+      component: OrderActions,
+      onAmend: (id) => (amending = id),
+    },
   ]);
 
   const rows = $derived(
@@ -51,6 +80,7 @@
       statusText: t(`status.${o.status}`),
       reason: o.reason ?? "",
       open: o.open,
+      amendable: canAmendOrder(o, market.canAmend),
     })),
   );
 
@@ -66,13 +96,19 @@
   const working = $derived(orders.filter((o) => o.open).length);
 </script>
 
-<div class="blotter">
+<div class="blotter" bind:this={blotter}>
   <header>
     <span class="dim">{t("orders.summary", { working, total: orders.length })}</span>
   </header>
 
   {#if blotterError.text}
     <p class="error" role="alert">{blotterError.text}</p>
+  {/if}
+
+  {#if amendingOrder}
+    {#key amending}
+      <AmendForm order={amendingOrder} onclose={closeAmend} />
+    {/key}
   {/if}
 
   <div class="grid">
@@ -92,7 +128,7 @@
   .blotter {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
   }
@@ -105,7 +141,9 @@
   }
 
 
+  /* Last row whichever of the error and the amend form are showing. */
   .grid {
+    grid-row: 4;
     min-height: 0;
   }
 

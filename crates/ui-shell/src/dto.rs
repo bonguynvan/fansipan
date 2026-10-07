@@ -6,6 +6,7 @@
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
 use data_engine::{Bar, DataEngine};
+use execution_engine::is_amendable;
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
     InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
@@ -28,6 +29,9 @@ pub struct Snapshot {
     pub connections: Vec<ConnectionDto>,
     /// Each market's phase of the day, for markets the adapter reported.
     pub sessions: Vec<SessionDto>,
+    /// Whether the venue takes amendments; when it does not, no order's
+    /// `amendable` matters.
+    pub can_amend: bool,
 }
 
 /// Which market the terminal is wired to, so the front end can pick
@@ -256,6 +260,8 @@ pub struct OrderDto {
     /// Whether a cancel makes sense, so the front end does not re-derive the
     /// engine's notion of "open".
     pub open: bool,
+    /// Whether an amendment could change it, on a venue that amends.
+    pub amendable: bool,
 }
 
 impl From<&Order> for OrderDto {
@@ -277,6 +283,7 @@ impl From<&Order> for OrderDto {
             status: status_label(order.status),
             reason: order.reason.clone(),
             open: order.status.is_open(),
+            amendable: is_amendable(order),
         }
     }
 }
@@ -515,5 +522,6 @@ mod tests {
         assert_eq!(dto.status, "cancelling");
         assert_eq!(dto.side, "sell");
         assert!(dto.open);
+        assert!(!dto.amendable);
     }
 }
