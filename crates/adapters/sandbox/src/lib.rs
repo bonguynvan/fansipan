@@ -9,6 +9,7 @@
 //! too (decode, translate, publish). [`MarketProfile`] supplies the
 //! listings and their market rules.
 
+pub mod day;
 pub mod profiles;
 mod venue;
 
@@ -25,6 +26,7 @@ use model::{
     SubmitOrder, UnixNanos,
 };
 
+pub use day::{Clock, MarketDay, Phase, TradingDay};
 pub use profiles::MarketProfile;
 pub use venue::{Listing, SimVenue, Tick, DEPTH_LEVELS, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
 
@@ -160,9 +162,11 @@ struct Beat<'a> {
 }
 
 impl Beat<'_> {
-    /// The first beat announces every listing's rules and today's band. Newly
-    /// quote-subscribed instruments then get their made-up history. Then
-    /// every listed instrument takes a random step: quotes and depth go out
+    /// The first beat announces every listing's rules and today's band.
+    /// Every beat then moves each market to its phase of the day, which
+    /// publishes its session when it changes. Newly quote-subscribed
+    /// instruments get their made-up history. Then every listed instrument
+    /// in continuous trading takes a random step: quotes and depth go out
     /// for quote subscriptions, prints for trade subscriptions, fills for
     /// all. Unsubscribing forgets the backfill, so subscribing again brings
     /// a fresh history.
@@ -174,6 +178,8 @@ impl Beat<'_> {
                 .into_iter()
                 .for_each(|event| self.bus.publish(event));
         }
+        self.venue
+            .advance(now, &mut |event| self.bus.publish(event));
 
         state
             .backfilled

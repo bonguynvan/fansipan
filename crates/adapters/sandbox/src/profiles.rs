@@ -1,11 +1,15 @@
-//! Simulated markets: which instruments the sandbox lists and the rules each
-//! trades under. The rules are data on every [`Listing`], the same shape a
-//! real adapter publishes for its venue; nothing in core knows a market by
-//! name. Prices are made up and only roughly in range for each symbol.
+//! Simulated markets: which instruments the sandbox lists, the rules each
+//! trades under, and each exchange's trading day. The rules are data on
+//! every [`Listing`] and [`MarketDay`], the same shape a real adapter
+//! publishes for its venue; nothing in core knows a market by name. Prices
+//! are made up and only roughly in range for each symbol.
 
-use model::{Decimal, InstrumentId, InstrumentInfo, PriceBand, TickTable, UnixNanos};
+use model::{
+    Decimal, InstrumentId, InstrumentInfo, NamedOrderType, OrderKind, OrderType, PriceBand,
+    SessionPhase, TickTable, TimeInForce, UnixNanos,
+};
 
-use crate::{Listing, SimVenue};
+use crate::{Clock, Listing, MarketDay, Phase, SimVenue, TradingDay};
 
 /// A market to simulate: listings plus the account and risk defaults that
 /// make sense at its price level.
@@ -18,6 +22,11 @@ pub struct MarketProfile {
     pub max_order_quantity: Decimal,
     pub max_order_notional: Decimal,
     pub listings: Vec<Listing>,
+    /// Each exchange's trading day. An exchange without one trades
+    /// continuously and publishes no session.
+    pub markets: Vec<MarketDay>,
+    /// The markets' offset from UTC, in minutes, for real-hours clocks.
+    pub utc_offset_minutes: i32,
 }
 
 /// The ids [`MarketProfile::by_id`] knows.
@@ -36,13 +45,29 @@ impl MarketProfile {
         }
     }
 
-    /// A venue with every listing of this profile.
+    /// A venue with every listing of this profile, trading continuously.
     pub fn venue(&self) -> SimVenue {
         let venue = SimVenue::new(self.starting_cash);
         for listing in &self.listings {
             venue.list_with(listing.clone());
         }
         venue
+    }
+
+    /// A venue with every listing of this profile, whose exchanges keep
+    /// their trading days on `clock`.
+    pub fn venue_on(&self, clock: Clock) -> SimVenue {
+        self.venue().with_day(TradingDay {
+            clock,
+            markets: self.markets.clone(),
+        })
+    }
+
+    /// Real hours in this profile's markets' time zone.
+    pub fn real_clock(&self) -> Clock {
+        Clock::Real {
+            utc_offset_minutes: self.utc_offset_minutes,
+        }
     }
 }
 
@@ -83,6 +108,91 @@ fn listing(
         band,
         display_size,
     })
+}
+
+fn named(kind: OrderKind, time_in_force: TimeInForce, name: &str) -> NamedOrderType {
+    NamedOrderType::new(OrderType::new(kind, time_in_force), name)
+}
+
+fn phase(
+    (hour, minute): (u32, u32),
+    phase: SessionPhase,
+    name: Option<&str>,
+    order_types: &[&NamedOrderType],
+) -> Phase {
+    Phase {
+        start: hour * 60 + minute,
+        phase,
+        name: name.map(str::to_string),
+        order_types: order_types.iter().map(|t| (*t).clone()).collect(),
+    }
+}
+
+/// Vietnam's trading days, as the exchanges published them after HOSE moved
+/// to the KRX system in May 2025:
+/// - HOSE: an ATO auction at 9:00 (ATO, LO); continuous trading from 9:15
+///   (LO, MTL, which replaced MP), a lunch break 11:30-13:00; an ATC auction
+///   at 14:30 (ATC, LO); then negotiated deals only, until 15:00.
+/// - HNX: no opening auction; continuous trading from 9:00 (LO, MTL, MOK,
+///   MAK); the same break; an ATC auction at 14:30 (ATC, LO); a PLO session
+///   at the closing price, 14:45-15:00.
+/// - UPCoM: continuous trading 9:00-15:00 (LO only), with the break.
+///
+/// Orders entered during the break wait for the afternoon. Negotiated deals
+/// are not simulated.
+fn vietnam_days() -> Vec<MarketDay> {
+    use OrderKind::{Limit, Market, MarketToLimit};
+    use SessionPhase::{AfterClose, Break, ClosingAuction, Continuous, OpeningAuction};
+    let lo = named(Limit, TimeInForce::Day, "LO");
+    let mtl = named(MarketToLimit, TimeInForce::Day, "MTL");
+    let mok = named(Market, TimeInForce::FillOrKill, "MOK");
+    let mak = named(Market, TimeInForce::ImmediateOrCancel, "MAK");
+    let ato = named(Market, TimeInForce::AtOpen, "ATO");
+    let atc = named(Market, TimeInForce::AtClose, "ATC");
+    let plo = named(Market, TimeInForce::AfterClose, "PLO");
+    let closed = |at| phase(at, SessionPhase::Closed, None, &[]);
+    let lunch = phase((11, 30), Break, None, &[&lo]);
+    let day = |market: &str, phases: Vec<Phase>| MarketDay {
+        market: market.to_string(),
+        phases,
+    };
+    vec![
+        day(
+            "HOSE",
+            vec![
+                closed((0, 0)),
+                phase((9, 0), OpeningAuction, Some("ATO"), &[&ato, &lo]),
+                phase((9, 15), Continuous, None, &[&lo, &mtl]),
+                lunch.clone(),
+                phase((13, 0), Continuous, None, &[&lo, &mtl]),
+                phase((14, 30), ClosingAuction, Some("ATC"), &[&atc, &lo]),
+                phase((14, 45), AfterClose, None, &[]),
+                closed((15, 0)),
+            ],
+        ),
+        day(
+            "HNX",
+            vec![
+                closed((0, 0)),
+                phase((9, 0), Continuous, None, &[&lo, &mtl, &mok, &mak]),
+                lunch.clone(),
+                phase((13, 0), Continuous, None, &[&lo, &mtl, &mok, &mak]),
+                phase((14, 30), ClosingAuction, Some("ATC"), &[&atc, &lo]),
+                phase((14, 45), AfterClose, Some("PLO"), &[&plo]),
+                closed((15, 0)),
+            ],
+        ),
+        day(
+            "UPCOM",
+            vec![
+                closed((0, 0)),
+                phase((9, 0), Continuous, None, &[&lo]),
+                lunch,
+                phase((13, 0), Continuous, None, &[&lo]),
+                closed((15, 0)),
+            ],
+        ),
+    ]
 }
 
 /// Vietnam's three boards. HOSE's tick widens with price (10 VND below
@@ -167,6 +277,8 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         max_order_quantity: dec(500_000, 0),
         max_order_notional: dec(20_000_000_000, 0),
         listings,
+        markets: vietnam_days(),
+        utc_offset_minutes: 7 * 60,
     })
 }
 
@@ -205,6 +317,8 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         max_order_quantity: dec(1_000, 0),
         max_order_notional: dec(250_000, 0),
         listings,
+        markets: Vec::new(),
+        utc_offset_minutes: -5 * 60,
     })
 }
 
@@ -267,5 +381,22 @@ mod tests {
         let err = MarketProfile::by_id("mars", "sim").unwrap_err();
 
         assert!(err.contains("vn, us"));
+    }
+
+    #[test]
+    fn every_vietnamese_exchange_has_a_trading_day() {
+        let profile = vietnam("sim").unwrap();
+
+        for listing in &profile.listings {
+            assert!(
+                profile
+                    .markets
+                    .iter()
+                    .any(|day| day.market == listing.info.exchange),
+                "{}",
+                listing.info.id
+            );
+        }
+        assert!(united_states("sim").unwrap().markets.is_empty());
     }
 }

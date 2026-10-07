@@ -485,12 +485,31 @@ fn a_step_down_from_a_tier_boundary_lands_on_the_price_just_below() {
 }
 
 #[test]
-fn an_order_type_the_sandbox_does_not_simulate_is_rejected() {
+fn a_market_without_a_schedule_takes_no_auction_orders() {
     let venue = venue("1000", "10");
-    let ioc = NewOrder::new(
+    let at_open = NewOrder::new(
         aaa(),
         Side::Buy,
         d("1"),
+        OrderType::new(OrderKind::Market, TimeInForce::AtOpen),
+        None,
+    );
+
+    let events = submit(&venue, SubmitOrder::new(ClientOrderId(1), at_open));
+
+    assert!(matches!(
+        &order_events(&events)[..],
+        [OrderEvent::Rejected { reason }] if reason.contains("no auctions")
+    ));
+}
+
+#[test]
+fn a_market_without_a_schedule_cancels_what_an_ioc_order_cannot_take() {
+    let venue = venue("100000", "10");
+    let ioc = NewOrder::new(
+        aaa(),
+        Side::Buy,
+        d("150"),
         OrderType::new(OrderKind::Market, TimeInForce::ImmediateOrCancel),
         None,
     );
@@ -498,7 +517,11 @@ fn an_order_type_the_sandbox_does_not_simulate_is_rejected() {
     let events = submit(&venue, SubmitOrder::new(ClientOrderId(1), ioc));
 
     assert!(matches!(
-        order_events(&events)[..],
-        [OrderEvent::Rejected { .. }]
+        &order_events(&events)[..],
+        [
+            OrderEvent::Accepted { .. },
+            OrderEvent::Filled { quantity, .. },
+            OrderEvent::Cancelled
+        ] if *quantity == TOP_OF_BOOK_SIZE
     ));
 }

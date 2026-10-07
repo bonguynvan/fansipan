@@ -18,6 +18,9 @@ services:
       - "127.0.0.1:6080:6080"
     environment:
       FANSIPAN_SANDBOX_MARKET: ${FANSIPAN_SANDBOX_MARKET:-vn}
+      # real: the market's real trading hours. Anything else: a demo day
+      # that runs every phase every 15 minutes.
+      FANSIPAN_SANDBOX_CLOCK: ${FANSIPAN_SANDBOX_CLOCK:-demo}
       # The chart's clock: TZ=Asia/Ho_Chi_Minh docker compose up
       TZ: ${TZ:-UTC}
     volumes:

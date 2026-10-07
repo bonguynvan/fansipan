@@ -17,6 +17,7 @@
 mod book;
 mod listing;
 mod matching;
+mod session;
 #[cfg(test)]
 mod tests;
 
@@ -27,12 +28,14 @@ use std::time::Duration;
 use bus::Event;
 use model::{
     AccountState, CancelOrder, ClientOrderId, Decimal, ExecutionReport, InstrumentId, OrderEvent,
-    Position, Quote, SubmitOrder, UnixNanos,
+    Position, Quote, SessionPhase, SubmitOrder, UnixNanos,
 };
+
+use crate::day::TradingDay;
 
 use book::{print, Book};
 use listing::walk_ticks;
-use matching::{match_resting, submit_locked};
+use matching::{match_resting, phase_of, submit_locked};
 
 pub use book::{Tick, DEPTH_LEVELS};
 pub use listing::{Listing, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
@@ -40,6 +43,12 @@ pub use listing::{Listing, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
 struct Resting {
     order: SubmitOrder,
     remaining: Decimal,
+    /// The price it trades at as a maker: its own limit, or the price a
+    /// market-to-limit order traded at. `None` for an order that waits for
+    /// an auction to price it.
+    limit: Option<Decimal>,
+    /// The price per share kept back from cash while a buy rests.
+    reserve: Decimal,
 }
 
 struct VenueState {
@@ -49,6 +58,12 @@ struct VenueState {
     positions: BTreeMap<InstrumentId, Position>,
     next_venue_id: u64,
     next_fill_id: u64,
+    /// The markets' schedules; `None` trades every market continuously.
+    day: Option<TradingDay>,
+    /// Each scheduled market's phase as of the last [`SimVenue::advance`].
+    phases: BTreeMap<String, SessionPhase>,
+    /// Each instrument's price at its last closing auction.
+    closes: BTreeMap<InstrumentId, Decimal>,
 }
 
 /// Cheap to clone; every clone is the same venue.
@@ -67,8 +82,26 @@ impl SimVenue {
                 positions: BTreeMap::new(),
                 next_venue_id: 1,
                 next_fill_id: 1,
+                day: None,
+                phases: BTreeMap::new(),
+                closes: BTreeMap::new(),
             })),
         }
+    }
+
+    /// Runs the venue's markets on `day`: each in the phase the day's clock
+    /// says, taking only that phase's order types.
+    pub fn with_day(self, day: TradingDay) -> Self {
+        self.state().day = Some(day);
+        self
+    }
+
+    /// Moves each scheduled market to its phase at `now`, and sends what
+    /// that did to `sink`: an ended auction's fills, the close's cancels,
+    /// and the new session. Call it before each beat's prices move.
+    pub fn advance(&self, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
+        let mut state = self.state();
+        session::advance(&mut state, now).into_iter().for_each(sink);
     }
 
     /// A panic inside one venue call can at worst leave one simulated fill
@@ -209,8 +242,10 @@ impl SimVenue {
         Some(tick)
     }
 
-    /// One beat of the simulated market for `instrument`: a step drawn by
-    /// [`walk_ticks`] from `seed`, applied as [`SimVenue::step_ticks`] does.
+    /// One beat of the simulated market for `instrument`: a step drawn from
+    /// `seed`, applied as [`SimVenue::step_ticks`] does. Prices only move in
+    /// continuous trading: `None` while the instrument's market is in an
+    /// auction, a break, or closed, or if it is not listed.
     pub fn walk(
         &self,
         instrument: &InstrumentId,
@@ -221,6 +256,9 @@ impl SimVenue {
         let ticks = {
             let state = self.state();
             let book = state.books.get(instrument)?;
+            if phase_of(&state, &book.listing.info.exchange, now) != SessionPhase::Continuous {
+                return None;
+            }
             walk_ticks(
                 seed,
                 book.mid,

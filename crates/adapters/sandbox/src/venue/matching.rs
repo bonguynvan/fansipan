@@ -1,10 +1,17 @@
 //! Orders against the simulated book: checks, immediate fills, resting
 //! orders, and the account they move.
+//!
+//! What an order does depends on its type and on the phase its market is
+//! in. In continuous trading the book shows `display_size` at the touch,
+//! and that is all an order can take at once, except a market order for
+//! the day, which sweeps. During an auction or a break, orders queue; an
+//! auction's end matches them ([`super::session`]). After the close, a
+//! PLO-style order fills at the closing price.
 
 use bus::Event;
 use model::{
-    Decimal, FillId, InstrumentId, OrderEvent, OrderType, Position, Quote, Side, SubmitOrder,
-    UnixNanos, VenueOrderId,
+    Decimal, FillId, InstrumentId, OrderEvent, OrderKind, Position, Quote, SessionPhase, Side,
+    SubmitOrder, TimeInForce, UnixNanos, VenueOrderId,
 };
 
 use super::listing::{Listing, TOP_OF_BOOK_SIZE};
@@ -33,6 +40,46 @@ fn rule_breach(listing: &Listing, order: &SubmitOrder) -> Option<String> {
     None
 }
 
+/// Why the market would refuse this order type now, if it would. A market
+/// with no schedule trades continuously and has no auctions.
+fn type_refusal(
+    state: &VenueState,
+    market: &str,
+    order: &SubmitOrder,
+    now: UnixNanos,
+) -> Option<String> {
+    let Some(phase) = state.day.as_ref().and_then(|day| day.phase(market, now)) else {
+        let session_only = matches!(
+            order.order_type.time_in_force,
+            TimeInForce::AtOpen | TimeInForce::AtClose | TimeInForce::AfterClose
+        );
+        return session_only.then(|| format!("{market} has no auctions or after-close session"));
+    };
+    if phase
+        .order_types
+        .iter()
+        .any(|offered| offered.order_type == order.order_type)
+    {
+        return None;
+    }
+    let taken: Vec<&str> = phase.order_types.iter().map(|t| t.name.as_str()).collect();
+    Some(if taken.is_empty() {
+        format!("{market} takes no orders now")
+    } else {
+        format!("{market} takes only {} now", taken.join(", "))
+    })
+}
+
+/// The phase `market` trades in at `now`: continuous for a market with no
+/// schedule.
+pub(super) fn phase_of(state: &VenueState, market: &str, now: UnixNanos) -> SessionPhase {
+    state
+        .day
+        .as_ref()
+        .and_then(|day| day.phase(market, now))
+        .map_or(SessionPhase::Continuous, |phase| phase.phase)
+}
+
 pub(super) fn submit_locked(
     state: &mut VenueState,
     order: SubmitOrder,
@@ -47,22 +94,31 @@ pub(super) fn submit_locked(
     if order.quantity <= Decimal::ZERO {
         return reject("quantity must be positive".into());
     }
-    if order.order_type != OrderType::LIMIT && order.order_type != OrderType::MARKET {
-        return reject("the sandbox takes only limit and market orders for the day".into());
-    }
-    if order.order_type != OrderType::LIMIT && order.order_type != OrderType::MARKET {
-        return reject("the sandbox takes only limit and market orders for the day".into());
-    }
     if let Some(reason) = rule_breach(&book.listing, &order) {
+        return reject(reason);
+    }
+    let market = book.listing.info.exchange.clone();
+    if let Some(reason) = type_refusal(state, &market, &order, now) {
         return reject(reason);
     }
     let quote = book.quote(&order.instrument, now);
     let display_size = book.listing.display_size;
     let touch = touch_price(&quote, order.side);
+    let close = state
+        .closes
+        .get(&order.instrument)
+        .copied()
+        .unwrap_or(book.mid);
+    let phase = phase_of(state, &market, now);
+    let after_close = phase == SessionPhase::AfterClose;
 
     // Every later fill of this order trades at or inside `worst_price`, so
     // bounding its value here keeps the plain arithmetic in `fill` safe.
-    let worst_price = order.limit_price.unwrap_or(touch);
+    let worst_price = match (after_close, order.limit_price) {
+        (true, _) => close,
+        (false, Some(limit)) => limit,
+        (false, None) => touch,
+    };
     let notional = order
         .quantity
         .checked_mul(worst_price)
@@ -87,22 +143,66 @@ pub(super) fn submit_locked(
         OrderEvent::Accepted { venue_order_id },
         now,
     )];
+    match phase {
+        SessionPhase::Continuous => {
+            events.extend(trade_now(state, order, touch, display_size, now));
+        }
+        SessionPhase::AfterClose => {
+            let quantity = order.quantity;
+            events.extend(fill(state, &order, quantity, close, now));
+        }
+        // Auctions and breaks collect orders; nothing trades until they end.
+        _ => state.resting.push(Resting {
+            limit: order.limit_price,
+            reserve: worst_price,
+            remaining: order.quantity,
+            order,
+        }),
+    }
+    events
+}
 
+/// An order arriving in continuous trading: it takes what its type allows
+/// of what is shown at the touch, then rests or is cancelled.
+fn trade_now(
+    state: &mut VenueState,
+    order: SubmitOrder,
+    touch: Decimal,
+    shown: Decimal,
+    now: UnixNanos,
+) -> Vec<Event> {
     let marketable = order
         .limit_price
         .is_none_or(|limit| crosses(order.side, limit, touch));
-    let mut remaining = order.quantity;
-    if marketable {
-        // A market order sweeps; a marketable limit takes what is shown.
-        let quantity = match order.limit_price {
-            None => remaining,
-            Some(_) => remaining.min(display_size),
-        };
-        events.extend(fill(state, &order, quantity, touch, now));
-        remaining -= quantity;
+    let quantity = order.quantity;
+    let taken = match (order.order_type.kind, order.order_type.time_in_force) {
+        _ if !marketable => Decimal::ZERO,
+        (_, TimeInForce::FillOrKill) if quantity > shown => Decimal::ZERO,
+        (_, TimeInForce::FillOrKill) => quantity,
+        (OrderKind::Market, TimeInForce::Day) => quantity,
+        _ => quantity.min(shown),
+    };
+    let mut events = Vec::new();
+    if taken > Decimal::ZERO {
+        events.extend(fill(state, &order, taken, touch, now));
     }
-    if remaining > Decimal::ZERO {
-        state.resting.push(Resting { order, remaining });
+    let remaining = quantity - taken;
+    if remaining <= Decimal::ZERO {
+        return events;
+    }
+    // The rest of a market-to-limit order rests at the price it traded at.
+    let resting_limit = match order.order_type.kind {
+        OrderKind::MarketToLimit => Some(touch),
+        _ => order.limit_price,
+    };
+    match (order.order_type.time_in_force, resting_limit) {
+        (TimeInForce::Day, Some(limit)) => state.resting.push(Resting {
+            limit: Some(limit),
+            reserve: limit,
+            remaining,
+            order,
+        }),
+        _ => events.push(report(order.order_id, OrderEvent::Cancelled, now)),
     }
     events
 }
@@ -115,14 +215,14 @@ fn touch_price(quote: &Quote, side: Side) -> Decimal {
     }
 }
 
-fn crosses(side: Side, limit: Decimal, touch: Decimal) -> bool {
+pub(super) fn crosses(side: Side, limit: Decimal, touch: Decimal) -> bool {
     match side {
         Side::Buy => limit >= touch,
         Side::Sell => limit <= touch,
     }
 }
 
-/// Cash not already promised to resting buy orders at their limit price.
+/// Cash not already promised to resting buy orders at their reserved price.
 /// `None` only if the reservations themselves overflow.
 fn available_cash(state: &VenueState) -> Option<Decimal> {
     state
@@ -130,9 +230,7 @@ fn available_cash(state: &VenueState) -> Option<Decimal> {
         .iter()
         .filter(|r| r.order.side == Side::Buy)
         .try_fold(state.cash, |available, r| {
-            let reserved = r
-                .remaining
-                .checked_mul(r.order.limit_price.unwrap_or_default())?;
+            let reserved = r.remaining.checked_mul(r.reserve)?;
             available.checked_sub(reserved)
         })
 }
@@ -151,7 +249,7 @@ pub(super) fn match_resting(state: &mut VenueState, quote: &Quote, now: UnixNano
         if resting.order.instrument != quote.instrument {
             continue;
         }
-        let Some(limit) = resting.order.limit_price else {
+        let Some(limit) = resting.limit else {
             continue;
         };
         if !crosses(
@@ -176,7 +274,7 @@ pub(super) fn match_resting(state: &mut VenueState, quote: &Quote, now: UnixNano
 }
 
 /// Books one fill and returns the execution report plus the account update.
-fn fill(
+pub(super) fn fill(
     state: &mut VenueState,
     order: &SubmitOrder,
     quantity: Decimal,
