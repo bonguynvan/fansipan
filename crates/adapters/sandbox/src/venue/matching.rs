@@ -224,10 +224,11 @@ pub(super) fn amend_locked(
             "the new quantity must be above the {filled} already filled"
         ));
     }
-    let Some(limit) = amend.limit_price.or(state.resting[index].limit) else {
+    let resting_order = &state.resting[index].order;
+    let (Some(limit), OrderKind::Limit) = (amend.limit_price, resting_order.order_type.kind) else {
         return refuse("only a limit order can be amended".into());
     };
-    let mut amended = state.resting[index].order.clone();
+    let mut amended = resting_order.clone();
     amended.quantity = amend.quantity;
     amended.limit_price = Some(limit);
     let Some(book) = state.books.get(&amended.instrument) else {
@@ -239,7 +240,19 @@ pub(super) fn amend_locked(
     if let Some(reason) = rule_breach(&book.listing, &amended) {
         return refuse(reason);
     }
+    let market = book.listing.info.exchange.clone();
+    if let Some(reason) = type_refusal(state, &market, &amended, now) {
+        return refuse(reason);
+    }
     let remaining = amend.quantity - filled;
+    // As at submit: bounding the order's value keeps the plain arithmetic in
+    // `fill` safe, whichever side it is.
+    let in_range = remaining.checked_mul(limit).is_some_and(|n| {
+        state.cash.checked_add(n).is_some() && state.cash.checked_sub(n).is_some()
+    });
+    if !in_range {
+        return refuse("order value is out of range".into());
+    }
     match amended.side {
         Side::Buy => {
             let available = available_cash(state)

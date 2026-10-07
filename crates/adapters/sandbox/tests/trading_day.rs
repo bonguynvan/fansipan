@@ -554,3 +554,21 @@ fn an_amendment_the_exchange_would_refuse_is_refused() {
     );
     assert_eq!(reason(&unknown), "order is not open on the venue");
 }
+
+#[test]
+fn an_amendment_is_refused_in_a_phase_that_does_not_take_its_type() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("62000")),
+        at(MORNING),
+    );
+
+    let closed = amend(&venue, 1, "200", "62000", at(CLOSED));
+
+    assert!(matches!(
+        reports(&closed).pop(),
+        Some((1, OrderEvent::AmendRejected { reason })) if reason == "HOSE takes no orders now"
+    ));
+}

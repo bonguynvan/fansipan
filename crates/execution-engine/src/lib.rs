@@ -109,6 +109,19 @@ impl std::error::Error for ApplyError {}
 struct Tracked {
     order: Order,
     applied_fills: HashSet<FillId>,
+    /// The total quantity an amendment in flight asks for.
+    amending_to: Option<Decimal>,
+}
+
+impl Tracked {
+    /// What the order may still sell or buy: its remaining quantity, or more
+    /// while an amendment for more is in flight, since the venue may take it.
+    fn exposure(&self) -> Decimal {
+        let remaining = self.order.remaining();
+        self.amending_to.map_or(remaining, |to| {
+            remaining.max(to - self.order.filled_quantity)
+        })
+    }
 }
 
 pub struct ExecutionEngine {
@@ -167,9 +180,11 @@ impl ExecutionEngine {
     fn working_sells(&self, instrument: &InstrumentId) -> Decimal {
         self.orders
             .values()
-            .map(|t| &t.order)
-            .filter(|o| &o.instrument == instrument && o.side == Side::Sell && o.status.is_open())
-            .map(Order::remaining)
+            .filter(|t| {
+                let o = &t.order;
+                &o.instrument == instrument && o.side == Side::Sell && o.status.is_open()
+            })
+            .map(Tracked::exposure)
             .sum()
     }
 
@@ -235,6 +250,7 @@ impl ExecutionEngine {
             Tracked {
                 order: order.clone(),
                 applied_fills: HashSet::new(),
+                amending_to: None,
             },
         );
         order
@@ -334,6 +350,7 @@ impl ExecutionEngine {
         };
         if let Some(tracked) = self.orders.get_mut(&id) {
             tracked.order = pending.clone();
+            tracked.amending_to = Some(quantity);
         }
         Ok(pending)
     }
@@ -385,6 +402,9 @@ impl ExecutionEngine {
             lifecycle::apply(&tracked.order, &report.event).map_err(ApplyError::Transition)?;
         if let OrderEvent::Filled { fill_id, .. } = &report.event {
             tracked.applied_fills.insert(fill_id.clone());
+        }
+        if next.status != OrderStatus::PendingAmend {
+            tracked.amending_to = None;
         }
         tracked.order = next;
         Ok(tracked.order.clone())
@@ -951,5 +971,44 @@ mod tests {
         ));
         assert!(engine.amend(id, d("6"), d("5")).is_ok());
         assert_eq!(calls.lock().unwrap().amended.len(), 1);
+    }
+
+    #[test]
+    fn a_sell_amended_up_counts_at_its_new_size_until_the_venue_answers() {
+        let (mut engine, _) = engine();
+        let instrument = InstrumentId::new("sim", "AAA");
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(
+            InstrumentInfo::new(instrument.clone(), Decimal::ONE, ticks).with_short_selling(false),
+        );
+        let held = model::Position::new(instrument.clone(), d("8"), d("5"));
+        engine.set_account(AccountState::new(d("1000"), vec![held]));
+        let sell =
+            |quantity: &str| NewOrder::limit(instrument.clone(), Side::Sell, d(quantity), d("5"));
+        let first = engine.submit(sell("4")).id;
+        engine
+            .apply(&report(
+                first,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+        engine.amend(first, d("8"), d("5")).unwrap();
+
+        // Eight held, eight asked for by the amendment in flight: none left.
+        let second = engine.submit(sell("4"));
+        engine
+            .apply(&report(
+                first,
+                OrderEvent::AmendRejected {
+                    reason: "no".into(),
+                },
+            ))
+            .unwrap();
+        let third = engine.submit(sell("4"));
+
+        assert_eq!(second.status, OrderStatus::Denied);
+        assert_eq!(third.status, OrderStatus::Submitted);
     }
 }
