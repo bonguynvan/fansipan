@@ -278,7 +278,7 @@ fn not_connected() -> AdapterError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{ClientOrderId, Decimal, Side};
+    use model::{ClientOrderId, Decimal, NewOrder, Side};
     use std::sync::mpsc;
     use std::time::Instant;
 
@@ -459,13 +459,10 @@ mod tests {
     fn execution_client_refuses_orders_before_connect() {
         let mut client = SandboxExecutionClient::new(listed(&["AAA"]));
 
-        let result = client.submit_order(SubmitOrder {
-            order_id: ClientOrderId(1),
-            instrument: InstrumentId::new("sim", "AAA"),
-            side: Side::Buy,
-            quantity: Decimal::ONE,
-            limit_price: None,
-        });
+        let result = client.submit_order(SubmitOrder::new(
+            ClientOrderId(1),
+            NewOrder::market(InstrumentId::new("sim", "AAA"), Side::Buy, Decimal::ONE),
+        ));
 
         assert_eq!(result, Err(not_connected()));
     }

@@ -25,7 +25,7 @@ pub struct Trade {
     pub instrument: InstrumentId,
     pub price: Decimal,
     pub quantity: Decimal,
-    /// The aggressor's side.
-    pub side: Side,
+    /// The aggressor's side, when the venue says. Many venues' tapes do not.
+    pub side: Option<Side>,
     pub ts_event: UnixNanos,
 }

@@ -89,11 +89,9 @@ impl Desk {
 
     fn buy(&mut self, quantity: &str, limit: Option<&str>) -> ClientOrderId {
         self.exec
-            .submit(NewOrder {
-                instrument: aaa(),
-                side: Side::Buy,
-                quantity: d(quantity),
-                limit_price: limit.map(d),
+            .submit(match limit {
+                Some(price) => NewOrder::limit(aaa(), Side::Buy, d(quantity), d(price)),
+                None => NewOrder::market(aaa(), Side::Buy, d(quantity)),
             })
             .id
     }

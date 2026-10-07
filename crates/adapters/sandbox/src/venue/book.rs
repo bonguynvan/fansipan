@@ -77,7 +77,7 @@ pub(super) fn print(book: &Book, before: Decimal, quote: &Quote, now: UnixNanos)
         instrument: quote.instrument.clone(),
         price,
         quantity: book.listing.lots(price, 7),
-        side,
+        side: Some(side),
         ts_event: now,
     })
 }

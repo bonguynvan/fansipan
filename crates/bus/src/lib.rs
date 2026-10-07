@@ -4,7 +4,8 @@
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
 use model::{
-    AccountState, ConnectionStatus, Depth, ExecutionReport, InstrumentInfo, PriceBand, Quote, Trade,
+    AccountState, ConnectionStatus, Depth, ExecutionReport, InstrumentInfo, PriceBand, Quote,
+    SessionStatus, Trade,
 };
 
 /// Everything an adapter can tell core. There is deliberately no variant
@@ -28,6 +29,9 @@ pub enum Event {
     Depth(Depth),
     /// One of the adapter's connections changed: lost, degraded, back.
     Connection(ConnectionStatus),
+    /// A market moved to another phase of its trading day, which changes the
+    /// order types it takes.
+    Session(SessionStatus),
 }
 
 /// Handle an adapter uses to push events onto the bus.
@@ -99,7 +103,7 @@ mod tests {
             instrument: InstrumentId::new("T", "X"),
             price: Decimal::ONE,
             quantity: Decimal::ONE,
-            side: Side::Buy,
+            side: Some(Side::Buy),
             ts_event: UnixNanos(0),
         }
     }

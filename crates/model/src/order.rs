@@ -1,6 +1,6 @@
 use rust_decimal::Decimal;
 
-use crate::{ClientOrderId, FillId, InstrumentId, UnixNanos, VenueOrderId};
+use crate::{ClientOrderId, FillId, InstrumentId, OrderType, UnixNanos, VenueOrderId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
@@ -41,33 +41,96 @@ impl OrderStatus {
 /// What the user (or a strategy) asked for. Carries no id: the execution
 /// engine assigns one when it creates the order.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct NewOrder {
     pub instrument: InstrumentId,
     pub side: Side,
     pub quantity: Decimal,
-    /// `None` is a market order.
+    pub order_type: OrderType,
+    /// Set for a `Limit` order, `None` for every other kind.
     pub limit_price: Option<Decimal>,
+}
+
+impl NewOrder {
+    /// Any order type. `limit_price` must be set exactly when the type is a
+    /// limit order; risk denies an order where it is not.
+    pub fn new(
+        instrument: InstrumentId,
+        side: Side,
+        quantity: Decimal,
+        order_type: OrderType,
+        limit_price: Option<Decimal>,
+    ) -> Self {
+        Self {
+            instrument,
+            side,
+            quantity,
+            order_type,
+            limit_price,
+        }
+    }
+
+    /// A limit order for the day.
+    pub fn limit(instrument: InstrumentId, side: Side, quantity: Decimal, price: Decimal) -> Self {
+        Self::new(instrument, side, quantity, OrderType::LIMIT, Some(price))
+    }
+
+    /// A market order for the day.
+    pub fn market(instrument: InstrumentId, side: Side, quantity: Decimal) -> Self {
+        Self::new(instrument, side, quantity, OrderType::MARKET, None)
+    }
 }
 
 /// The order an adapter is asked to place: a risk-cleared [`NewOrder`] plus
 /// the id every execution report for it must carry.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct SubmitOrder {
     pub order_id: ClientOrderId,
     pub instrument: InstrumentId,
     pub side: Side,
     pub quantity: Decimal,
+    pub order_type: OrderType,
+    /// Set for a `Limit` order, `None` for every other kind.
     pub limit_price: Option<Decimal>,
+}
+
+impl SubmitOrder {
+    pub fn new(order_id: ClientOrderId, order: NewOrder) -> Self {
+        Self {
+            order_id,
+            instrument: order.instrument,
+            side: order.side,
+            quantity: order.quantity,
+            order_type: order.order_type,
+            limit_price: order.limit_price,
+        }
+    }
 }
 
 /// Everything most venues need to cancel: our id, theirs if the venue
 /// already accepted the order, and the instrument (some venues key cancels
 /// by symbol plus venue id).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct CancelOrder {
     pub order_id: ClientOrderId,
     pub venue_order_id: Option<VenueOrderId>,
     pub instrument: InstrumentId,
+}
+
+impl CancelOrder {
+    pub fn new(
+        order_id: ClientOrderId,
+        venue_order_id: Option<VenueOrderId>,
+        instrument: InstrumentId,
+    ) -> Self {
+        Self {
+            order_id,
+            venue_order_id,
+            instrument,
+        }
+    }
 }
 
 /// The execution engine's view of one order. Adapters never build or mutate
@@ -79,6 +142,7 @@ pub struct Order {
     pub instrument: InstrumentId,
     pub side: Side,
     pub quantity: Decimal,
+    pub order_type: OrderType,
     pub limit_price: Option<Decimal>,
     pub status: OrderStatus,
     pub filled_quantity: Decimal,

@@ -12,7 +12,8 @@ use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
 use model::{
     CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal, ExecutionReport, FillId,
-    InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent, OrderStatus, PriceBand, SubmitOrder,
+    InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent, OrderStatus, PriceBand,
+    SessionStatus, SubmitOrder,
 };
 
 pub use lifecycle::TransitionError;
@@ -75,6 +76,9 @@ pub struct ExecutionEngine {
     /// Market rules as the adapter published them, for risk.
     instruments: HashMap<InstrumentId, InstrumentInfo>,
     bands: HashMap<InstrumentId, PriceBand>,
+    /// Each market's phase of the day and the order types it takes, by the
+    /// market's name as `InstrumentInfo::exchange` gives it.
+    sessions: HashMap<String, SessionStatus>,
     connection: Option<ConnectionStatus>,
 }
 
@@ -87,6 +91,7 @@ impl ExecutionEngine {
             next_id: 1,
             instruments: HashMap::new(),
             bands: HashMap::new(),
+            sessions: HashMap::new(),
             connection: None,
         }
     }
@@ -99,6 +104,11 @@ impl ExecutionEngine {
     /// Records today's price band for risk to apply.
     pub fn set_band(&mut self, band: PriceBand) {
         self.bands.insert(band.instrument.clone(), band);
+    }
+
+    /// Records a market's current session for risk to apply.
+    pub fn set_session(&mut self, session: SessionStatus) {
+        self.sessions.insert(session.market.clone(), session);
     }
 
     /// A connect that succeeds means up (the contract), so a report from
@@ -125,6 +135,7 @@ impl ExecutionEngine {
             instrument: request.instrument.clone(),
             side: request.side,
             quantity: request.quantity,
+            order_type: request.order_type,
             limit_price: request.limit_price,
             status: OrderStatus::Submitted,
             filled_quantity: Decimal::ZERO,
@@ -132,26 +143,22 @@ impl ExecutionEngine {
             reason: None,
         };
 
-        let cleared = risk::check(&request, &self.limits).and_then(|()| {
-            risk::check_market_rules(
-                &request,
-                self.instruments.get(&request.instrument),
-                self.bands.get(&request.instrument),
-            )
-        });
+        let info = self.instruments.get(&request.instrument);
+        let cleared = risk::check(&request, &self.limits)
+            .and_then(|()| {
+                risk::check_market_rules(&request, info, self.bands.get(&request.instrument))
+            })
+            .and_then(|()| {
+                let session = info.and_then(|info| self.sessions.get(&info.exchange));
+                risk::check_session(&request, session)
+            });
         let order = match cleared {
             Err(reject) => Order {
                 status: OrderStatus::Denied,
                 reason: Some(reject.to_string()),
                 ..pending
             },
-            Ok(()) => match self.client.submit_order(SubmitOrder {
-                order_id: id,
-                instrument: request.instrument,
-                side: request.side,
-                quantity: request.quantity,
-                limit_price: request.limit_price,
-            }) {
+            Ok(()) => match self.client.submit_order(SubmitOrder::new(id, request)) {
                 Ok(()) => pending,
                 Err(e) => Order {
                     status: OrderStatus::Rejected,
@@ -187,11 +194,11 @@ impl ExecutionEngine {
         }
 
         self.client
-            .cancel_order(CancelOrder {
-                order_id: id,
-                venue_order_id: order.venue_order_id.clone(),
-                instrument: order.instrument.clone(),
-            })
+            .cancel_order(CancelOrder::new(
+                id,
+                order.venue_order_id.clone(),
+                order.instrument.clone(),
+            ))
             .map_err(CancelError::Adapter)?;
 
         tracked.order = Order {
@@ -314,12 +321,12 @@ mod tests {
     }
 
     fn buy(quantity: &str) -> NewOrder {
-        NewOrder {
-            instrument: InstrumentId::new("sim", "AAA"),
-            side: Side::Buy,
-            quantity: d(quantity),
-            limit_price: Some(d("5")),
-        }
+        NewOrder::limit(
+            InstrumentId::new("sim", "AAA"),
+            Side::Buy,
+            d(quantity),
+            d("5"),
+        )
     }
 
     fn report(id: ClientOrderId, event: OrderEvent) -> ExecutionReport {
@@ -558,5 +565,29 @@ mod tests {
         engine.connect(bus::Bus::new().handle()).unwrap();
 
         assert_eq!(engine.connection(), None);
+    }
+
+    #[test]
+    fn a_type_the_market_does_not_take_now_never_reaches_the_adapter() {
+        let (mut engine, calls) = engine();
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(
+            InstrumentInfo::new(InstrumentId::new("sim", "AAA"), Decimal::ONE, ticks)
+                .with_exchange("HOSE"),
+        );
+        engine.set_session(model::SessionStatus::new(
+            "HOSE",
+            model::SessionPhase::Break,
+            UnixNanos(0),
+        ));
+
+        let order = engine.submit(buy("1"));
+
+        assert_eq!(order.status, OrderStatus::Denied);
+        assert_eq!(
+            order.reason.as_deref(),
+            Some("HOSE is in a break and takes no orders now")
+        );
+        assert!(calls.lock().unwrap().submitted.is_empty());
     }
 }

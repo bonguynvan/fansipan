@@ -8,7 +8,8 @@
 use data_engine::{Bar, DataEngine};
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
-    InstrumentInfo, Order, OrderStatus, Quote, Side,
+    InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
+    SessionStatus, Side, TimeInForce,
 };
 use serde::Serialize;
 
@@ -25,6 +26,8 @@ pub struct Snapshot {
     pub account: AccountDto,
     /// Both of the venue's connections.
     pub connections: Vec<ConnectionDto>,
+    /// Each market's phase of the day, for markets the adapter reported.
+    pub sessions: Vec<SessionDto>,
 }
 
 /// Which market the terminal is wired to, so the front end can pick
@@ -242,6 +245,10 @@ pub struct OrderDto {
     pub side: &'static str,
     pub quantity: String,
     pub filled_quantity: String,
+    /// "limit", "market", or "marketToLimit".
+    pub kind: &'static str,
+    /// "day", "ioc", "fok", "atOpen", "atClose", or "afterClose".
+    pub time_in_force: &'static str,
     pub limit_price: Option<String>,
     pub avg_fill_price: Option<String>,
     pub status: &'static str,
@@ -263,6 +270,8 @@ impl From<&Order> for OrderDto {
             },
             quantity: order.quantity.to_string(),
             filled_quantity: order.filled_quantity.to_string(),
+            kind: kind_label(order.order_type.kind),
+            time_in_force: time_in_force_label(order.order_type.time_in_force),
             limit_price: order.limit_price.map(|p| p.to_string()),
             avg_fill_price: order.avg_fill_price.map(|p| p.to_string()),
             status: status_label(order.status),
@@ -284,6 +293,98 @@ fn status_label(status: OrderStatus) -> &'static str {
         OrderStatus::Denied => "denied",
         _ => "unknown",
     }
+}
+
+/// One market's phase of the day, and the order types it takes in it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct SessionDto {
+    pub market: String,
+    /// "preOpen", "openingAuction", "continuous", "break", "closingAuction",
+    /// "afterClose", "closed", or "unknown".
+    pub phase: &'static str,
+    /// The venue's own name for the phase, e.g. "ATO".
+    pub name: Option<String>,
+    pub order_types: Vec<OrderTypeDto>,
+}
+
+/// An order type the market takes now, under the venue's name for it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct OrderTypeDto {
+    pub kind: &'static str,
+    pub time_in_force: &'static str,
+    pub name: String,
+}
+
+impl From<&SessionStatus> for SessionDto {
+    fn from(session: &SessionStatus) -> Self {
+        Self {
+            market: session.market.clone(),
+            phase: match session.phase {
+                SessionPhase::PreOpen => "preOpen",
+                SessionPhase::OpeningAuction => "openingAuction",
+                SessionPhase::Continuous => "continuous",
+                SessionPhase::Break => "break",
+                SessionPhase::ClosingAuction => "closingAuction",
+                SessionPhase::AfterClose => "afterClose",
+                SessionPhase::Closed => "closed",
+                _ => "unknown",
+            },
+            name: session.name.clone(),
+            order_types: session.order_types.iter().map(OrderTypeDto::from).collect(),
+        }
+    }
+}
+
+impl From<&NamedOrderType> for OrderTypeDto {
+    fn from(offered: &NamedOrderType) -> Self {
+        Self {
+            kind: kind_label(offered.order_type.kind),
+            time_in_force: time_in_force_label(offered.order_type.time_in_force),
+            name: offered.name.clone(),
+        }
+    }
+}
+
+fn kind_label(kind: OrderKind) -> &'static str {
+    match kind {
+        OrderKind::Limit => "limit",
+        OrderKind::Market => "market",
+        OrderKind::MarketToLimit => "marketToLimit",
+        _ => "unknown",
+    }
+}
+
+fn time_in_force_label(time_in_force: TimeInForce) -> &'static str {
+    match time_in_force {
+        TimeInForce::Day => "day",
+        TimeInForce::ImmediateOrCancel => "ioc",
+        TimeInForce::FillOrKill => "fok",
+        TimeInForce::AtOpen => "atOpen",
+        TimeInForce::AtClose => "atClose",
+        TimeInForce::AfterClose => "afterClose",
+        _ => "unknown",
+    }
+}
+
+/// The order type the front end names by its labels; `None` for a label
+/// this shell does not know.
+pub fn parse_order_type(kind: &str, time_in_force: &str) -> Option<OrderType> {
+    let kind = match kind {
+        "limit" => OrderKind::Limit,
+        "market" => OrderKind::Market,
+        "marketToLimit" => OrderKind::MarketToLimit,
+        _ => return None,
+    };
+    let time_in_force = match time_in_force {
+        "day" => TimeInForce::Day,
+        "ioc" => TimeInForce::ImmediateOrCancel,
+        "fok" => TimeInForce::FillOrKill,
+        "atOpen" => TimeInForce::AtOpen,
+        "atClose" => TimeInForce::AtClose,
+        "afterClose" => TimeInForce::AfterClose,
+        _ => return None,
+    };
+    Some(OrderType::new(kind, time_in_force))
 }
 
 /// One of the venue's connections, for the status badge.
@@ -396,6 +497,7 @@ mod tests {
             instrument: InstrumentId::new("sim", "AAA"),
             side: Side::Sell,
             quantity: Decimal::TEN,
+            order_type: OrderType::MARKET,
             limit_price: None,
             status: OrderStatus::PendingCancel,
             filled_quantity: Decimal::ZERO,

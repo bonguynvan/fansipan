@@ -34,7 +34,7 @@ pub use execution_engine::RiskLimits;
 use batch::{Batch, BatchDto};
 use dto::{
     AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, MarketDto, OrderDto, QuoteDto,
-    Snapshot,
+    SessionDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -166,21 +166,42 @@ fn parse_decimal(field: &str, raw: &str) -> Result<Decimal, String> {
         .map_err(|_| format!("{field}: \"{raw}\" is not a number"))
 }
 
-fn new_order(
-    venue: &str,
-    symbol: &str,
-    side: &str,
-    quantity: &str,
-    limit_price: Option<&str>,
-) -> Result<NewOrder, String> {
-    Ok(NewOrder {
-        instrument: InstrumentId::new(venue, symbol),
-        side: parse_side(side)?,
-        quantity: parse_decimal("quantity", quantity)?,
-        limit_price: limit_price
-            .map(|raw| parse_decimal("limit price", raw))
-            .transpose()?,
-    })
+/// The order type as the ticket named it. Without a kind, a price makes a
+/// limit order and no price a market one; without a time in force, it is
+/// for the day.
+fn parse_type(
+    kind: Option<&str>,
+    time_in_force: Option<&str>,
+    priced: bool,
+) -> Result<model::OrderType, String> {
+    let kind = kind.unwrap_or(if priced { "limit" } else { "market" });
+    let time_in_force = time_in_force.unwrap_or("day");
+    dto::parse_order_type(kind, time_in_force)
+        .ok_or_else(|| format!("unknown order type: {kind} {time_in_force}"))
+}
+
+/// What the ticket asked for, parsed exactly.
+struct Ticket<'a> {
+    symbol: &'a str,
+    side: &'a str,
+    quantity: &'a str,
+    limit_price: Option<&'a str>,
+    kind: Option<&'a str>,
+    time_in_force: Option<&'a str>,
+}
+
+fn new_order(venue: &str, ticket: &Ticket<'_>) -> Result<NewOrder, String> {
+    let limit_price = ticket
+        .limit_price
+        .map(|raw| parse_decimal("limit price", raw))
+        .transpose()?;
+    Ok(NewOrder::new(
+        InstrumentId::new(venue, ticket.symbol),
+        parse_side(ticket.side)?,
+        parse_decimal("quantity", ticket.quantity)?,
+        parse_type(ticket.kind, ticket.time_in_force, limit_price.is_some())?,
+        limit_price,
+    ))
 }
 
 /// Everything the front end needs to start, numbered against the batches.
@@ -189,7 +210,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     // from `pending` before the state below was read, so it holds nothing
     // newer than this snapshot and the front end can drop it.
     let seq = shell.flushed.load(Ordering::SeqCst);
-    let (instruments, boards, quotes, data_connection) = {
+    let (instruments, boards, quotes, data_connection, sessions) = {
         let data = lock(&shell.data)?;
         let known: BTreeSet<&InstrumentId> = data
             .instruments()
@@ -204,6 +225,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
                 .collect(),
             data.quotes().map(QuoteDto::from).collect(),
             ConnectionDto::of(Connection::MarketData, data.connection()),
+            data.sessions().map(SessionDto::from).collect(),
         )
     };
     let (orders, orders_connection) = {
@@ -223,6 +245,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         orders,
         account,
         connections: vec![data_connection, orders_connection],
+        sessions,
     })
 }
 
@@ -283,17 +306,18 @@ fn place_order(
     side: String,
     quantity: String,
     limit_price: Option<String>,
+    kind: Option<String>,
+    time_in_force: Option<String>,
 ) -> Result<OrderDto, String> {
-    submit(
-        &shell,
-        new_order(
-            &shell.venue,
-            &symbol,
-            &side,
-            &quantity,
-            limit_price.as_deref(),
-        )?,
-    )
+    let ticket = Ticket {
+        symbol: &symbol,
+        side: &side,
+        quantity: &quantity,
+        limit_price: limit_price.as_deref(),
+        kind: kind.as_deref(),
+        time_in_force: time_in_force.as_deref(),
+    };
+    submit(&shell, new_order(&shell.venue, &ticket)?)
 }
 
 #[tauri::command]
@@ -381,6 +405,13 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
         Event::AccountUpdate(account) => {
             *lock(&shell.account)? = account.clone();
             lock(&shell.pending)?.account(AccountDto::from(account));
+        }
+        // A session goes to both engines: the data engine to show it, the
+        // execution engine to check orders against what the market takes.
+        Event::Session(session) => {
+            lock(&shell.data)?.on_session(session);
+            lock(&shell.exec)?.set_session(session.clone());
+            lock(&shell.pending)?.session(SessionDto::from(session));
         }
         // Each engine keeps the status of its own connection.
         Event::Connection(status) => {
@@ -560,7 +591,25 @@ mod tests {
             instruments: vec![],
             boards: vec![],
             connections: vec![],
+            sessions: vec![],
         })
+    }
+
+    /// A ticket with no order type named, as the ticket sends one today.
+    fn ticket<'a>(
+        symbol: &'a str,
+        side: &'a str,
+        quantity: &'a str,
+        limit_price: Option<&'a str>,
+    ) -> Ticket<'a> {
+        Ticket {
+            symbol,
+            side,
+            quantity,
+            limit_price,
+            kind: None,
+            time_in_force: None,
+        }
     }
 
     #[test]
@@ -569,7 +618,11 @@ mod tests {
         let events = bus.subscribe();
         let shell = connect(&bus, &profile("us"));
 
-        let placed = submit(&shell, new_order(VENUE, "AAPL", "buy", "1", None).unwrap()).unwrap();
+        let placed = submit(
+            &shell,
+            new_order(VENUE, &ticket("AAPL", "buy", "1", None)).unwrap(),
+        )
+        .unwrap();
         for event in events.try_iter() {
             route(&shell, &event).unwrap();
         }
@@ -598,7 +651,7 @@ mod tests {
 
     #[test]
     fn order_input_is_parsed_exactly() {
-        let order = new_order(VENUE, "AAPL", "buy", " 10 ", Some("190.10")).unwrap();
+        let order = new_order(VENUE, &ticket("AAPL", "buy", " 10 ", Some("190.10"))).unwrap();
 
         assert_eq!(order.quantity, Decimal::TEN);
         assert_eq!(order.limit_price, Some(Decimal::new(19_010, 2)));
@@ -607,7 +660,7 @@ mod tests {
 
     #[test]
     fn market_orders_have_no_limit_price() {
-        let order = new_order(VENUE, "AAPL", "sell", "1", None).unwrap();
+        let order = new_order(VENUE, &ticket("AAPL", "sell", "1", None)).unwrap();
 
         assert_eq!(order.side, Side::Sell);
         assert_eq!(order.limit_price, None);
@@ -616,15 +669,15 @@ mod tests {
     #[test]
     fn malformed_input_is_refused_with_the_field_named() {
         assert_eq!(
-            new_order(VENUE, "AAPL", "buy", "ten", None).unwrap_err(),
+            new_order(VENUE, &ticket("AAPL", "buy", "ten", None)).unwrap_err(),
             "quantity: \"ten\" is not a number"
         );
         assert_eq!(
-            new_order(VENUE, "AAPL", "buy", "1", Some("")).unwrap_err(),
+            new_order(VENUE, &ticket("AAPL", "buy", "1", Some(""))).unwrap_err(),
             "limit price: \"\" is not a number"
         );
         assert_eq!(
-            new_order(VENUE, "AAPL", "hold", "1", None).unwrap_err(),
+            new_order(VENUE, &ticket("AAPL", "hold", "1", None)).unwrap_err(),
             "unknown side: hold"
         );
     }
@@ -700,11 +753,11 @@ mod tests {
 
         let odd_lot = submit(
             &shell,
-            new_order(VENUE, "VNM", "buy", "150", Some("62500")).unwrap(),
+            new_order(VENUE, &ticket("VNM", "buy", "150", Some("62500"))).unwrap(),
         );
         let above_ceiling = submit(
             &shell,
-            new_order(VENUE, "VNM", "buy", "100", Some("66900")).unwrap(),
+            new_order(VENUE, &ticket("VNM", "buy", "100", Some("66900"))).unwrap(),
         );
 
         assert_eq!(odd_lot.unwrap().status, "denied");
@@ -724,7 +777,7 @@ mod tests {
                 instrument: InstrumentId::new(VENUE, "VNM"),
                 price: Decimal::new(63_100, 0),
                 quantity: Decimal::new(300, 0),
-                side: Side::Buy,
+                side: Some(Side::Buy),
                 ts_event: UnixNanos(1),
             }),
         )
@@ -788,5 +841,51 @@ mod tests {
             detail: None,
         };
         assert_eq!(snapshot_of(&shell).unwrap().connections, vec![up, reported]);
+    }
+
+    #[test]
+    fn the_ticket_can_name_any_order_type_and_defaults_by_price() {
+        let ato = Ticket {
+            kind: Some("market"),
+            time_in_force: Some("atOpen"),
+            ..ticket("VNM", "buy", "100", None)
+        };
+        let typed = new_order(VENUE, &ato).unwrap();
+        let limit = new_order(VENUE, &ticket("VNM", "buy", "100", Some("62500"))).unwrap();
+        let odd = Ticket {
+            kind: Some("stop"),
+            ..ticket("VNM", "buy", "100", None)
+        };
+
+        assert_eq!(
+            typed.order_type,
+            model::OrderType::new(model::OrderKind::Market, model::TimeInForce::AtOpen)
+        );
+        assert_eq!(limit.order_type, model::OrderType::LIMIT);
+        assert_eq!(
+            new_order(VENUE, &odd).unwrap_err(),
+            "unknown order type: stop day"
+        );
+    }
+
+    #[test]
+    fn a_session_reaches_the_batch_and_the_snapshot_and_gates_orders() {
+        let vn = profile("vn");
+        let shell = connect(&Bus::new(), &vn);
+        announce(&shell, &vn);
+        take_pending(&shell);
+        let closed = model::SessionStatus::new("HOSE", model::SessionPhase::Closed, UnixNanos(1));
+
+        route(&shell, &Event::Session(closed)).unwrap();
+
+        let session = take_pending(&shell).sessions.remove(0);
+        assert_eq!((session.market.as_str(), session.phase), ("HOSE", "closed"));
+        assert_eq!(snapshot_of(&shell).unwrap().sessions, vec![session]);
+        let denied = submit(
+            &shell,
+            new_order(VENUE, &ticket("VNM", "buy", "100", Some("62500"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(denied.status, "denied");
     }
 }

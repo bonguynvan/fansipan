@@ -3,8 +3,8 @@
 
 use bus::Event;
 use model::{
-    Decimal, FillId, InstrumentId, OrderEvent, Position, Quote, Side, SubmitOrder, UnixNanos,
-    VenueOrderId,
+    Decimal, FillId, InstrumentId, OrderEvent, OrderType, Position, Quote, Side, SubmitOrder,
+    UnixNanos, VenueOrderId,
 };
 
 use super::listing::{Listing, TOP_OF_BOOK_SIZE};
@@ -46,6 +46,12 @@ pub(super) fn submit_locked(
     };
     if order.quantity <= Decimal::ZERO {
         return reject("quantity must be positive".into());
+    }
+    if order.order_type != OrderType::LIMIT && order.order_type != OrderType::MARKET {
+        return reject("the sandbox takes only limit and market orders for the day".into());
+    }
+    if order.order_type != OrderType::LIMIT && order.order_type != OrderType::MARKET {
+        return reject("the sandbox takes only limit and market orders for the day".into());
     }
     if let Some(reason) = rule_breach(&book.listing, &order) {
         return reject(reason);

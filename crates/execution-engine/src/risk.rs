@@ -1,13 +1,15 @@
 //! Pre-trade checks. Runs before any order reaches an ExecutionClient.
 //!
 //! Two families: this terminal's own limits ([`check`]), and the market's
-//! rules for the instrument ([`check_market_rules`]: lot size, tick size,
-//! daily price band) as the adapter published them. An order a venue would
-//! refuse for breaking its rules is refused here first, with a reason.
+//! rules as the adapter published them: for the instrument
+//! ([`check_market_rules`]: lot size, tick size, daily price band), and for
+//! the moment ([`check_session`]: the order types its market takes in the
+//! current phase of the day). An order a venue would refuse for breaking its
+//! rules is refused here first, with a reason.
 
 use std::fmt;
 
-use model::{Decimal, InstrumentInfo, NewOrder, PriceBand};
+use model::{Decimal, InstrumentInfo, NewOrder, PriceBand, SessionPhase, SessionStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RiskLimits {
@@ -20,13 +22,36 @@ pub struct RiskLimits {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RiskReject {
     QuantityNotPositive,
-    QuantityTooLarge { max: Decimal },
+    QuantityTooLarge {
+        max: Decimal,
+    },
+    /// A limit order with no limit price.
+    LimitPriceMissing,
+    /// A price on an order whose kind takes none, such as a market order.
+    PriceOnUnpricedOrder,
     LimitPriceNotPositive,
-    NotionalTooLarge { max: Decimal },
-    NotLotMultiple { lot: Decimal },
-    PriceNotOnTick { tick: Decimal },
-    PriceAboveCeiling { ceiling: Decimal },
-    PriceBelowFloor { floor: Decimal },
+    NotionalTooLarge {
+        max: Decimal,
+    },
+    NotLotMultiple {
+        lot: Decimal,
+    },
+    PriceNotOnTick {
+        tick: Decimal,
+    },
+    PriceAboveCeiling {
+        ceiling: Decimal,
+    },
+    PriceBelowFloor {
+        floor: Decimal,
+    },
+    /// The instrument's market does not take this order type in the current
+    /// phase of its day. `accepted` are the venue's names for what it takes.
+    TypeNotTaken {
+        market: String,
+        phase: String,
+        accepted: Vec<String>,
+    },
 }
 
 impl fmt::Display for RiskReject {
@@ -36,6 +61,8 @@ impl fmt::Display for RiskReject {
             Self::QuantityTooLarge { max } => {
                 write!(f, "quantity is above the per-order limit of {max}")
             }
+            Self::LimitPriceMissing => f.write_str("a limit order needs a limit price"),
+            Self::PriceOnUnpricedOrder => f.write_str("only a limit order takes a price"),
             Self::LimitPriceNotPositive => f.write_str("limit price must be greater than zero"),
             Self::NotionalTooLarge { max } => {
                 write!(f, "order value is above the per-order limit of {max}")
@@ -52,6 +79,20 @@ impl fmt::Display for RiskReject {
             Self::PriceBelowFloor { floor } => {
                 write!(f, "limit price is below today's floor of {floor}")
             }
+            Self::TypeNotTaken {
+                market,
+                phase,
+                accepted,
+            } if accepted.is_empty() => write!(f, "{market} is in {phase} and takes no orders now"),
+            Self::TypeNotTaken {
+                market,
+                phase,
+                accepted,
+            } => write!(
+                f,
+                "{market} is in {phase} and takes only {} now",
+                accepted.join(", ")
+            ),
         }
     }
 }
@@ -64,6 +105,11 @@ pub fn check(order: &NewOrder, limits: &RiskLimits) -> Result<(), RiskReject> {
         return Err(RiskReject::QuantityTooLarge {
             max: limits.max_order_quantity,
         });
+    }
+    match (order.order_type.kind.is_priced(), order.limit_price) {
+        (true, None) => return Err(RiskReject::LimitPriceMissing),
+        (false, Some(_)) => return Err(RiskReject::PriceOnUnpricedOrder),
+        _ => {}
     }
     if let Some(price) = order.limit_price {
         if price <= Decimal::ZERO {
@@ -116,10 +162,45 @@ pub fn check_market_rules(
     Ok(())
 }
 
+/// The order type against what the instrument's market takes now, where
+/// the adapter published the market's session. No session, no check: the
+/// venue's own refusal is then the guard.
+pub fn check_session(order: &NewOrder, session: Option<&SessionStatus>) -> Result<(), RiskReject> {
+    let Some(session) = session else {
+        return Ok(());
+    };
+    if session.accepts(order.order_type).is_some() {
+        return Ok(());
+    }
+    Err(RiskReject::TypeNotTaken {
+        market: session.market.clone(),
+        phase: session
+            .name
+            .clone()
+            .unwrap_or_else(|| phase_words(session.phase).to_string()),
+        accepted: session.order_types.iter().map(|t| t.name.clone()).collect(),
+    })
+}
+
+fn phase_words(phase: SessionPhase) -> &'static str {
+    match phase {
+        SessionPhase::PreOpen => "pre-open",
+        SessionPhase::OpeningAuction => "its opening auction",
+        SessionPhase::Continuous => "continuous trading",
+        SessionPhase::Break => "a break",
+        SessionPhase::ClosingAuction => "its closing auction",
+        SessionPhase::AfterClose => "its after-close session",
+        SessionPhase::Closed => "a closed session",
+        _ => "an unknown phase",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{InstrumentId, Side, TickTable, UnixNanos};
+    use model::{
+        InstrumentId, NamedOrderType, OrderKind, OrderType, Side, TickTable, TimeInForce, UnixNanos,
+    };
 
     const LIMITS: RiskLimits = RiskLimits {
         max_order_quantity: Decimal::ONE_HUNDRED,
@@ -130,12 +211,12 @@ mod tests {
         raw.parse().expect("test decimal")
     }
 
+    /// A limit order with a price, a market order without.
     fn order(quantity: &str, limit_price: Option<&str>) -> NewOrder {
-        NewOrder {
-            instrument: InstrumentId::new("sim", "AAA"),
-            side: Side::Buy,
-            quantity: d(quantity),
-            limit_price: limit_price.map(d),
+        let instrument = InstrumentId::new("sim", "AAA");
+        match limit_price {
+            Some(price) => NewOrder::limit(instrument, Side::Buy, d(quantity), d(price)),
+            None => NewOrder::market(instrument, Side::Buy, d(quantity)),
         }
     }
 
@@ -287,10 +368,12 @@ mod tests {
     #[test]
     fn a_sell_must_be_a_whole_number_of_lots_too() {
         let (info, band) = vnm();
-        let sell = NewOrder {
-            side: Side::Sell,
-            ..order("150", Some("62500"))
-        };
+        let sell = NewOrder::limit(
+            InstrumentId::new("sim", "AAA"),
+            Side::Sell,
+            d("150"),
+            d("62500"),
+        );
 
         assert_eq!(
             check_market_rules(&sell, Some(&info), Some(&band)),
@@ -323,5 +406,79 @@ mod tests {
         let reason = RiskReject::QuantityTooLarge { max: d("1000") }.to_string();
 
         assert_eq!(reason, "quantity is above the per-order limit of 1000");
+    }
+
+    #[test]
+    fn a_price_goes_with_a_limit_order_and_no_other() {
+        let instrument = InstrumentId::new("sim", "AAA");
+        let unpriced_limit = NewOrder::new(
+            instrument.clone(),
+            Side::Buy,
+            d("1"),
+            OrderType::LIMIT,
+            None,
+        );
+        let priced_market = NewOrder::new(
+            instrument,
+            Side::Buy,
+            d("1"),
+            OrderType::MARKET,
+            Some(d("5")),
+        );
+
+        assert_eq!(
+            check(&unpriced_limit, &LIMITS),
+            Err(RiskReject::LimitPriceMissing)
+        );
+        assert_eq!(
+            check(&priced_market, &LIMITS),
+            Err(RiskReject::PriceOnUnpricedOrder)
+        );
+    }
+
+    fn ato_session() -> SessionStatus {
+        let ato = OrderType::new(OrderKind::Market, TimeInForce::AtOpen);
+        SessionStatus::new("HOSE", SessionPhase::OpeningAuction, UnixNanos(0))
+            .with_name("ATO")
+            .with_order_types([
+                NamedOrderType::new(ato, "ATO"),
+                NamedOrderType::new(OrderType::LIMIT, "LO"),
+            ])
+    }
+
+    #[test]
+    fn a_session_lets_through_the_types_it_takes() {
+        let ato = NewOrder::new(
+            InstrumentId::new("sim", "AAA"),
+            Side::Buy,
+            d("100"),
+            OrderType::new(OrderKind::Market, TimeInForce::AtOpen),
+            None,
+        );
+
+        assert_eq!(check_session(&ato, Some(&ato_session())), Ok(()));
+        assert_eq!(check_session(&order("100", None), None), Ok(()));
+    }
+
+    #[test]
+    fn a_session_refuses_other_types_and_says_what_it_takes() {
+        let reject = check_session(&order("100", None), Some(&ato_session())).unwrap_err();
+
+        assert_eq!(
+            reject.to_string(),
+            "HOSE is in ATO and takes only ATO, LO now"
+        );
+    }
+
+    #[test]
+    fn a_closed_market_takes_nothing() {
+        let closed = SessionStatus::new("HNX", SessionPhase::Closed, UnixNanos(0));
+
+        let reject = check_session(&order("100", Some("5")), Some(&closed)).unwrap_err();
+
+        assert_eq!(
+            reject.to_string(),
+            "HNX is in a closed session and takes no orders now"
+        );
     }
 }

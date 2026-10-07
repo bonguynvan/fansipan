@@ -10,7 +10,9 @@ mod connection;
 mod ids;
 mod market;
 mod order;
+mod order_type;
 mod rules;
+mod session;
 
 pub use rust_decimal::Decimal;
 
@@ -21,6 +23,8 @@ pub use market::{Quote, Trade};
 pub use order::{
     CancelOrder, ExecutionReport, NewOrder, Order, OrderEvent, OrderStatus, Side, SubmitOrder,
 };
+pub use order_type::{NamedOrderType, OrderKind, OrderType, TimeInForce};
 pub use rules::{
     BandError, BookLevel, Depth, InstrumentInfo, PriceBand, TickTable, TickTableError,
 };
+pub use session::{SessionPhase, SessionStatus};

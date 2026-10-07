@@ -15,7 +15,8 @@
 //! and screens need it before they subscribe.
 //!
 //! The engine also holds the market-data connection's status as the adapter
-//! last reported it, so a screen can tell a quiet market from a dead feed.
+//! last reported it, so a screen can tell a quiet market from a dead feed,
+//! and each market's session: the phase of its day and what it takes.
 
 mod bars;
 mod session;
@@ -26,7 +27,8 @@ use std::time::Duration;
 use adapter_api::{AdapterError, DataClient};
 use bus::BusHandle;
 use model::{
-    Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote, Trade,
+    Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote,
+    SessionStatus, Trade,
 };
 
 pub use bars::{Bar, BarSeries};
@@ -47,6 +49,7 @@ pub struct DataEngine {
     bands: HashMap<InstrumentId, PriceBand>,
     depth: HashMap<InstrumentId, Depth>,
     stats: HashMap<InstrumentId, SessionStats>,
+    sessions: BTreeMap<String, SessionStatus>,
     connection: Option<ConnectionStatus>,
 }
 
@@ -86,6 +89,7 @@ impl DataEngine {
             bands: HashMap::new(),
             depth: HashMap::new(),
             stats: HashMap::new(),
+            sessions: BTreeMap::new(),
             connection: None,
         }
     }
@@ -243,6 +247,17 @@ impl DataEngine {
         self.latest.values()
     }
 
+    /// Records a market's current session, replacing its last one.
+    pub fn on_session(&mut self, session: &SessionStatus) {
+        self.sessions
+            .insert(session.market.clone(), session.clone());
+    }
+
+    /// Every market's current session, ordered by market.
+    pub fn sessions(&self) -> impl Iterator<Item = &SessionStatus> {
+        self.sessions.values()
+    }
+
     /// Records a report on the market-data connection; returns whether kept.
     /// Reports on the adapter's other connections are not this engine's.
     pub fn on_connection(&mut self, status: &ConnectionStatus) -> bool {
@@ -347,7 +362,7 @@ mod tests {
             instrument: id(symbol),
             price: Decimal::from(price),
             quantity: Decimal::from(quantity),
-            side: model::Side::Buy,
+            side: Some(model::Side::Buy),
             ts_event: UnixNanos(0),
         }
     }
@@ -596,5 +611,29 @@ mod tests {
         engine.connect(bus::Bus::new().handle()).unwrap();
 
         assert_eq!(engine.connection(), None);
+    }
+
+    #[test]
+    fn keeps_each_markets_latest_session() {
+        let (mut engine, _) = engine();
+        let open = SessionStatus::new("HOSE", model::SessionPhase::Continuous, UnixNanos(1));
+        let closing = SessionStatus::new("HOSE", model::SessionPhase::ClosingAuction, UnixNanos(2));
+        let hnx = SessionStatus::new("HNX", model::SessionPhase::Continuous, UnixNanos(2));
+
+        engine.on_session(&open);
+        engine.on_session(&closing);
+        engine.on_session(&hnx);
+
+        let markets: Vec<(&str, model::SessionPhase)> = engine
+            .sessions()
+            .map(|s| (s.market.as_str(), s.phase))
+            .collect();
+        assert_eq!(
+            markets,
+            vec![
+                ("HNX", model::SessionPhase::Continuous),
+                ("HOSE", model::SessionPhase::ClosingAuction)
+            ]
+        );
     }
 }

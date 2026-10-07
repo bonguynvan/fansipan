@@ -181,7 +181,7 @@ fn event_name(event: &OrderEvent) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{ClientOrderId, FillId, InstrumentId, Side, VenueOrderId};
+    use model::{ClientOrderId, FillId, InstrumentId, OrderType, Side, VenueOrderId};
 
     fn d(raw: &str) -> Decimal {
         raw.parse().expect("test decimal")
@@ -194,6 +194,7 @@ mod tests {
             instrument: InstrumentId::new("sim", "AAA"),
             side: Side::Buy,
             quantity: d("10"),
+            order_type: OrderType::LIMIT,
             limit_price: Some(d("5")),
             status,
             filled_quantity: Decimal::ZERO,

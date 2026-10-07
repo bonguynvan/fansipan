@@ -1,6 +1,6 @@
 use model::{
-    CancelOrder, ClientOrderId, Decimal, InstrumentId, InstrumentInfo, OrderEvent, PriceBand,
-    Quote, Side, SubmitOrder, TickTable, UnixNanos,
+    CancelOrder, ClientOrderId, Decimal, InstrumentId, InstrumentInfo, NewOrder, OrderEvent,
+    OrderKind, OrderType, PriceBand, Quote, Side, SubmitOrder, TickTable, TimeInForce, UnixNanos,
 };
 
 use super::listing::{walk_ticks, PULL_RANGE};
@@ -22,14 +22,23 @@ fn venue(cash: &str, mid: &str) -> SimVenue {
     venue
 }
 
+/// A limit order with a price, a market order without.
+fn order_for(
+    id: u64,
+    instrument: InstrumentId,
+    side: Side,
+    quantity: &str,
+    limit: Option<&str>,
+) -> SubmitOrder {
+    let new = match limit {
+        Some(price) => NewOrder::limit(instrument, side, d(quantity), d(price)),
+        None => NewOrder::market(instrument, side, d(quantity)),
+    };
+    SubmitOrder::new(ClientOrderId(id), new)
+}
+
 fn order(id: u64, side: Side, quantity: &str, limit: Option<&str>) -> SubmitOrder {
-    SubmitOrder {
-        order_id: ClientOrderId(id),
-        instrument: aaa(),
-        side,
-        quantity: d(quantity),
-        limit_price: limit.map(d),
-    }
+    order_for(id, aaa(), side, quantity, limit)
 }
 
 fn submit(venue: &SimVenue, order: SubmitOrder) -> Vec<Event> {
@@ -172,11 +181,7 @@ fn marketable_limit_takes_only_the_displayed_size_now() {
 fn cancel_removes_a_resting_order() {
     let venue = venue("1000", "10");
     submit(&venue, order(1, Side::Buy, "1", Some("9")));
-    let request = CancelOrder {
-        order_id: ClientOrderId(1),
-        venue_order_id: None,
-        instrument: aaa(),
-    };
+    let request = CancelOrder::new(ClientOrderId(1), None, aaa());
 
     let first = cancel(&venue, &request);
     let second = cancel(&venue, &request);
@@ -409,13 +414,13 @@ fn history_stays_inside_the_band() {
 fn submit_vnm(venue: &SimVenue, quantity: &str, limit: Option<&str>) -> Vec<OrderEvent> {
     let mut out = Vec::new();
     venue.submit(
-        SubmitOrder {
-            order_id: ClientOrderId(1),
-            instrument: InstrumentId::new("sim", "VNM"),
-            side: Side::Buy,
-            quantity: d(quantity),
-            limit_price: limit.map(d),
-        },
+        order_for(
+            1,
+            InstrumentId::new("sim", "VNM"),
+            Side::Buy,
+            quantity,
+            limit,
+        ),
         NOW,
         &mut |e| out.push(e),
     );
@@ -477,4 +482,23 @@ fn a_step_down_from_a_tier_boundary_lands_on_the_price_just_below() {
 
     assert_eq!(tick.quote.ask, d("10000"));
     assert_eq!(tick.quote.bid, d("9980"));
+}
+
+#[test]
+fn an_order_type_the_sandbox_does_not_simulate_is_rejected() {
+    let venue = venue("1000", "10");
+    let ioc = NewOrder::new(
+        aaa(),
+        Side::Buy,
+        d("1"),
+        OrderType::new(OrderKind::Market, TimeInForce::ImmediateOrCancel),
+        None,
+    );
+
+    let events = submit(&venue, SubmitOrder::new(ClientOrderId(1), ioc));
+
+    assert!(matches!(
+        order_events(&events)[..],
+        [OrderEvent::Rejected { .. }]
+    ));
 }

@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::dto::{AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, QuoteDto};
+use crate::dto::{
+    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, QuoteDto, SessionDto,
+};
 
 #[derive(Default)]
 pub struct Batch {
@@ -21,6 +23,7 @@ pub struct Batch {
     instruments: BTreeMap<String, InstrumentDto>,
     boards: BTreeMap<String, BoardDto>,
     connections: BTreeMap<&'static str, ConnectionDto>,
+    sessions: BTreeMap<String, SessionDto>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -37,6 +40,7 @@ pub struct BatchDto {
     pub instruments: Vec<InstrumentDto>,
     pub boards: Vec<BoardDto>,
     pub connections: Vec<ConnectionDto>,
+    pub sessions: Vec<SessionDto>,
 }
 
 impl Batch {
@@ -72,6 +76,10 @@ impl Batch {
         self.connections.insert(connection.connection, connection);
     }
 
+    pub fn session(&mut self, session: SessionDto) {
+        self.sessions.insert(session.market.clone(), session);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.quotes.is_empty()
             && self.orders.is_empty()
@@ -80,6 +88,7 @@ impl Batch {
             && self.instruments.is_empty()
             && self.boards.is_empty()
             && self.connections.is_empty()
+            && self.sessions.is_empty()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -92,6 +101,7 @@ impl Batch {
             instruments: self.instruments.into_values().collect(),
             boards: self.boards.into_values().collect(),
             connections: self.connections.into_values().collect(),
+            sessions: self.sessions.into_values().collect(),
         }
     }
 }
