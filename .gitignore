@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 /crates/ui-shell/gen
 /crates/ui-shell/frontend/node_modules
