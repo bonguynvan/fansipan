@@ -99,6 +99,22 @@
 
   "watchlist.count.other": "{count} mã",
   "watchlist.hint": "Bấm vào một dòng để gửi mã tới mọi khung trong nhóm liên kết.",
+  "watchlist.list": "Danh mục",
+  "watchlist.all": "Tất cả mã",
+  "watchlist.name": "Tên danh mục",
+  "watchlist.new": "Tạo mới",
+  "watchlist.newName": "Danh mục {n}",
+  "watchlist.rename": "Đổi tên",
+  "watchlist.delete": "Xóa",
+  "watchlist.confirmDelete": "Xóa {name}?",
+  "watchlist.add": "Thêm mã vào danh mục này",
+  "watchlist.addPlaceholder": "Mã",
+  "watchlist.addButton": "Thêm",
+  "watchlist.notListed": "{symbol} không niêm yết trên thị trường này.",
+  "watchlist.already": "{symbol} đã có trong {name}.",
+  "watchlist.remove": "Bỏ {symbol}",
+  "watchlist.empty": "Chưa có mã. Thêm mã ở trên.",
+  "watchlist.saveFailed": "Chưa lưu được danh mục: {error}",
 
   "chart.caption": "Nến {timeframe} · giá giữa · khối lượng theo tick",
 

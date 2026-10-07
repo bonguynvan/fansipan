@@ -27,7 +27,7 @@ export function registerBuiltins() {
     title: "screen.watchlist.title",
     component: Watchlist,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { link: "a", list: "all" },
     description: "screen.watchlist.description",
   });
   registerScreen({

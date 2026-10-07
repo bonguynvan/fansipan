@@ -5,6 +5,7 @@
   import { connectionLines, summarize } from "./lib/connection.js";
   import { flushLinks, startLinks } from "./lib/links.svelte.js";
   import { startPicks } from "./lib/picks.svelte.js";
+  import { flushWatchlists } from "./lib/watchlists.svelte.js";
   import { mark, money } from "./lib/format.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
@@ -30,6 +31,7 @@
       flushLayout();
       flushLinks();
       flushLocale();
+      flushWatchlists();
     });
     return () => flushing.then((unlisten) => unlisten());
   });
