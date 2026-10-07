@@ -22,7 +22,7 @@ pub use ids::{ClientOrderId, FillId, InstrumentId, UnixNanos, VenueOrderId};
 pub use market::{Quote, Trade};
 pub use order::{
     AmendOrder, CancelOrder, ExecutionReport, NewOrder, Order, OrderEvent, OrderStatus, Side,
-    SubmitOrder,
+    SubmitOrder, VenueOrder, VenueOrderState,
 };
 pub use order_type::{NamedOrderType, OrderKind, OrderType, TimeInForce};
 pub use rules::{

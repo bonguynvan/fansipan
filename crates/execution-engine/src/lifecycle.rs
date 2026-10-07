@@ -229,6 +229,7 @@ fn event_name(event: &OrderEvent) -> &'static str {
         OrderEvent::CancelRejected { .. } => "CancelRejected",
         OrderEvent::Amended { .. } => "Amended",
         OrderEvent::AmendRejected { .. } => "AmendRejected",
+        OrderEvent::Snapshot(_) => "Snapshot",
         _ => "an unrecognised event",
     }
 }

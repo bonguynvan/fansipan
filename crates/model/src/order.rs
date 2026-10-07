@@ -236,4 +236,55 @@ pub enum OrderEvent {
     AmendRejected {
         reason: String,
     },
+    /// The venue's view of the order now, read back after a reconnect:
+    /// the execution engine catches up from it on missed fills and ends.
+    Snapshot(VenueOrder),
+}
+
+/// Where an order stands on the venue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VenueOrderState {
+    /// Still open: resting, or waiting for an auction.
+    Working,
+    Filled,
+    /// Ended without filling in full: cancelled, expired, or killed.
+    Cancelled,
+    Rejected {
+        reason: String,
+    },
+}
+
+/// One order as the venue holds it now: its state, and its cumulative fills.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct VenueOrder {
+    pub venue_order_id: Option<VenueOrderId>,
+    pub state: VenueOrderState,
+    /// Everything filled so far, not only what the stream missed.
+    pub filled_quantity: Decimal,
+    /// Over every fill so far; `None` until the first.
+    pub avg_fill_price: Option<Decimal>,
+}
+
+impl VenueOrder {
+    pub fn new(
+        state: VenueOrderState,
+        filled_quantity: Decimal,
+        avg_fill_price: Option<Decimal>,
+    ) -> Self {
+        Self {
+            venue_order_id: None,
+            state,
+            filled_quantity,
+            avg_fill_price,
+        }
+    }
+
+    pub fn with_venue_order_id(self, venue_order_id: VenueOrderId) -> Self {
+        Self {
+            venue_order_id: Some(venue_order_id),
+            ..self
+        }
+    }
 }

@@ -16,7 +16,7 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side, SubmitOrder,
 };
-use model::{AmendOrder, OrderKind};
+use model::{AmendOrder, OrderKind, VenueOrder, VenueOrderState};
 
 pub use lifecycle::TransitionError;
 pub use risk::{RiskLimits, RiskReject};
@@ -91,6 +91,10 @@ pub enum ApplyError {
     UnknownOrder(ClientOrderId),
     /// A fill already applied, typically replayed after a reconnect.
     DuplicateFill(FillId),
+    /// The venue's view of an order has fills core missed but no average
+    /// price to catch up at, or one that makes no sense against what core
+    /// already applied.
+    UnpricedCatchUp,
     Transition(TransitionError),
 }
 
@@ -99,6 +103,9 @@ impl fmt::Display for ApplyError {
         match self {
             Self::UnknownOrder(id) => write!(f, "report for unknown order {id}"),
             Self::DuplicateFill(fill) => write!(f, "fill {} already applied", fill.0),
+            Self::UnpricedCatchUp => {
+                f.write_str("the venue's view of the order has missed fills but no usable price")
+            }
             Self::Transition(e) => e.fmt(f),
         }
     }
@@ -387,6 +394,9 @@ impl ExecutionEngine {
 
     /// Applies one venue report. On error the order is left exactly as it was.
     pub fn apply(&mut self, report: &ExecutionReport) -> Result<Order, ApplyError> {
+        if let OrderEvent::Snapshot(venue) = &report.event {
+            return self.catch_up(report.order_id, venue);
+        }
         let tracked = self
             .orders
             .get_mut(&report.order_id)
@@ -402,6 +412,64 @@ impl ExecutionEngine {
             lifecycle::apply(&tracked.order, &report.event).map_err(ApplyError::Transition)?;
         if let OrderEvent::Filled { fill_id, .. } = &report.event {
             tracked.applied_fills.insert(fill_id.clone());
+        }
+        if next.status != OrderStatus::PendingAmend {
+            tracked.amending_to = None;
+        }
+        tracked.order = next;
+        Ok(tracked.order.clone())
+    }
+
+    /// Catches an order up with the venue's view of it, read back after a
+    /// reconnect: an acknowledgement the stream missed, the fills it missed
+    /// as one fill priced so the order's average matches the venue's, and
+    /// an end the stream missed. The missed fill's id is the cumulative
+    /// quantity it brings the order to, so the same view twice changes
+    /// nothing. Every step applies, or none does.
+    fn catch_up(&mut self, id: ClientOrderId, venue: &VenueOrder) -> Result<Order, ApplyError> {
+        let tracked = self.orders.get(&id).ok_or(ApplyError::UnknownOrder(id))?;
+        let mut next = tracked.order.clone();
+        let mut caught_up_fill = None;
+
+        if let (None, Some(venue_order_id)) = (&next.venue_order_id, &venue.venue_order_id) {
+            let accepted = OrderEvent::Accepted {
+                venue_order_id: venue_order_id.clone(),
+            };
+            next = lifecycle::apply(&next, &accepted).map_err(ApplyError::Transition)?;
+        }
+        if venue.filled_quantity > next.filled_quantity {
+            let fill_id = FillId(format!("catch-up:{id}:{}", venue.filled_quantity));
+            if !tracked.applied_fills.contains(&fill_id) {
+                let filled = OrderEvent::Filled {
+                    fill_id: fill_id.clone(),
+                    quantity: venue.filled_quantity - next.filled_quantity,
+                    price: catch_up_price(&next, venue).ok_or(ApplyError::UnpricedCatchUp)?,
+                };
+                next = lifecycle::apply(&next, &filled).map_err(ApplyError::Transition)?;
+                caught_up_fill = Some(fill_id);
+            }
+        }
+        let end = match &venue.state {
+            VenueOrderState::Cancelled => Some(OrderEvent::Cancelled),
+            VenueOrderState::Rejected { reason } if next.filled_quantity.is_zero() => {
+                Some(OrderEvent::Rejected {
+                    reason: reason.clone(),
+                })
+            }
+            // Fills happened, so the order cannot be rejected as a whole.
+            VenueOrderState::Rejected { .. } => Some(OrderEvent::Cancelled),
+            _ => None,
+        };
+        if let Some(end) = end.filter(|_| next.status.is_open()) {
+            next = lifecycle::apply(&next, &end).map_err(ApplyError::Transition)?;
+        }
+
+        let tracked = self
+            .orders
+            .get_mut(&id)
+            .ok_or(ApplyError::UnknownOrder(id))?;
+        if let Some(fill_id) = caught_up_fill {
+            tracked.applied_fills.insert(fill_id);
         }
         if next.status != OrderStatus::PendingAmend {
             tracked.amending_to = None;
@@ -434,6 +502,20 @@ impl ExecutionEngine {
     pub fn connection(&self) -> Option<&ConnectionStatus> {
         self.connection.as_ref()
     }
+}
+
+/// The price of the fills a stream missed: the one that makes the order's
+/// average match the venue's. `None` when the venue gives no average, or
+/// the numbers do not make a positive price.
+fn catch_up_price(order: &Order, venue: &VenueOrder) -> Option<Decimal> {
+    let missed = venue.filled_quantity.checked_sub(order.filled_quantity)?;
+    let venue_value = venue.avg_fill_price?.checked_mul(venue.filled_quantity)?;
+    let known_value = order
+        .avg_fill_price
+        .unwrap_or_default()
+        .checked_mul(order.filled_quantity)?;
+    let price = venue_value.checked_sub(known_value)?.checked_div(missed)?;
+    (price > Decimal::ZERO).then_some(price)
 }
 
 #[cfg(test)]
@@ -1010,5 +1092,111 @@ mod tests {
 
         assert_eq!(second.status, OrderStatus::Denied);
         assert_eq!(third.status, OrderStatus::Submitted);
+    }
+
+    fn snapshot(id: ClientOrderId, venue: VenueOrder) -> ExecutionReport {
+        report(id, OrderEvent::Snapshot(venue))
+    }
+
+    #[test]
+    fn missed_fills_are_caught_up_as_one_at_the_price_that_keeps_the_average() {
+        let (mut engine, _) = engine();
+        let id = resting(&mut engine, "10");
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Filled {
+                    fill_id: FillId("F1".into()),
+                    quantity: d("2"),
+                    price: d("5"),
+                },
+            ))
+            .unwrap();
+        // The venue filled 6 in all at an average of 5.5; core saw 2 at 5.
+        let view = VenueOrder::new(VenueOrderState::Working, d("6"), Some(d("5.5")));
+
+        let caught_up = engine.apply(&snapshot(id, view.clone())).unwrap();
+        let again = engine.apply(&snapshot(id, view)).unwrap();
+
+        assert_eq!(caught_up.filled_quantity, d("6"));
+        assert_eq!(caught_up.avg_fill_price, Some(d("5.5")));
+        assert_eq!(caught_up.status, OrderStatus::PartiallyFilled);
+        assert_eq!(again, caught_up);
+    }
+
+    #[test]
+    fn a_missed_ack_and_a_missed_end_are_caught_up() {
+        let (mut engine, _) = engine();
+        let unacked = engine.submit(buy("2")).id;
+        let cancelled = resting(&mut engine, "2");
+        let rejected = engine.submit(buy("2")).id;
+
+        let acked = engine
+            .apply(&snapshot(
+                unacked,
+                VenueOrder::new(VenueOrderState::Working, Decimal::ZERO, None)
+                    .with_venue_order_id(VenueOrderId("V9".into())),
+            ))
+            .unwrap();
+        let ended = engine
+            .apply(&snapshot(
+                cancelled,
+                VenueOrder::new(VenueOrderState::Cancelled, Decimal::ZERO, None),
+            ))
+            .unwrap();
+        let refused = engine
+            .apply(&snapshot(
+                rejected,
+                VenueOrder::new(
+                    VenueOrderState::Rejected {
+                        reason: "halted".into(),
+                    },
+                    Decimal::ZERO,
+                    None,
+                ),
+            ))
+            .unwrap();
+
+        assert_eq!(acked.status, OrderStatus::Accepted);
+        assert_eq!(acked.venue_order_id, Some(VenueOrderId("V9".into())));
+        assert_eq!(ended.status, OrderStatus::Cancelled);
+        assert_eq!(refused.status, OrderStatus::Rejected);
+        assert_eq!(refused.reason.as_deref(), Some("halted"));
+    }
+
+    #[test]
+    fn a_filled_order_the_stream_missed_ends_filled() {
+        let (mut engine, _) = engine();
+        let id = resting(&mut engine, "4");
+
+        let order = engine
+            .apply(&snapshot(
+                id,
+                VenueOrder::new(VenueOrderState::Filled, d("4"), Some(d("5"))),
+            ))
+            .unwrap();
+
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert_eq!(order.avg_fill_price, Some(d("5")));
+    }
+
+    #[test]
+    fn a_view_core_cannot_use_changes_nothing() {
+        let (mut engine, _) = engine();
+        let id = resting(&mut engine, "4");
+        let before = engine.order(id).cloned();
+
+        let unpriced = engine.apply(&snapshot(
+            id,
+            VenueOrder::new(VenueOrderState::Cancelled, d("2"), None),
+        ));
+        let unknown = engine.apply(&snapshot(
+            ClientOrderId(404),
+            VenueOrder::new(VenueOrderState::Working, Decimal::ZERO, None),
+        ));
+
+        assert_eq!(unpriced, Err(ApplyError::UnpricedCatchUp));
+        assert_eq!(unknown, Err(ApplyError::UnknownOrder(ClientOrderId(404))));
+        assert_eq!(engine.order(id).cloned(), before);
     }
 }
