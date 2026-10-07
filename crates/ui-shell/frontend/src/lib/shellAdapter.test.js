@@ -133,6 +133,27 @@ describe("ShellAdapter", () => {
     expect(events.filter((e) => e.type === "bar")).toEqual([]);
     expect(adapter.getConnectionState()).toBe("disconnected");
   });
+
+  it("announces an instrument's details to a chart already connected to it", () => {
+    const adapter = new ShellAdapter();
+    const heard = [];
+    adapter.on("symbolInfo", (event) => heard.push(event.data));
+    const vnm = {
+      symbol: "VNM",
+      name: "Vinamilk",
+      exchange: "HOSE",
+      currency: "VND",
+      ticks: [{ from: "0", tick: "10" }],
+    };
+
+    adapter.announce(vnm);
+    adapter.connect({ symbol: "VNM" });
+    adapter.announce({ ...vnm, symbol: "FPT" });
+    adapter.announce(vnm);
+
+    expect(heard).toEqual([expect.objectContaining({ symbol: "VNM", pricePrecision: 0, minTick: 10 })]);
+  });
+
   it("tells the chart each instrument's names and price steps", async () => {
     const vnm = {
       symbol: "VNM",

@@ -251,14 +251,6 @@
     min-height: 0;
   }
 
-  /* bo-grid 2.2 gives the group-header spacers of ungrouped columns the same
-     scoped class as its empty-state overlay, which is absolutely positioned,
-     so the spacers drop out of the row and every group shifts left. */
-  .board :global(.bo-grid .head-groups .hg.empty) {
-    position: static;
-    inset: auto;
-  }
-
   .board :global(.bo-grid .c.pb-ceiling) {
     color: var(--pb-ceiling);
   }

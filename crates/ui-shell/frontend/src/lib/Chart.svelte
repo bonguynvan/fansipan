@@ -14,6 +14,13 @@
   // to the engines; a button that does nothing is worse than no button.
   const features = { trading: false, alerts: false, screenshot: false };
   const indicators = [{ id: "ema", params: { period: 20 } }];
+
+  // The instrument's details may arrive after the chart connected, in the
+  // startup snapshot or a later batch.
+  $effect(() => {
+    const instrument = symbol ? market.instruments[symbol] : undefined;
+    if (instrument) adapter.announce(instrument);
+  });
 </script>
 
 <div class="chart">
@@ -24,19 +31,15 @@
 
   <div class="canvas">
     {#if symbol}
-      <!-- The chart asks for the instrument's price steps once, when it
-           mounts; one that mounted before they arrived mounts again. -->
-      {#key Boolean(market.instruments[symbol])}
-        <TradeCanvas
-          {symbol}
-          timeframe={BAR_TIMEFRAME}
-          theme="dark"
-          {adapter}
-          {features}
-          {indicators}
-          historyLimit={500}
-        />
-      {/key}
+      <TradeCanvas
+        {symbol}
+        timeframe={BAR_TIMEFRAME}
+        theme="dark"
+        {adapter}
+        {features}
+        {indicators}
+        historyLimit={500}
+      />
     {:else}
       <p class="dim empty">{t("feed.waiting")}</p>
     {/if}

@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@tradecanvas/chart": "^1.16.1",
-    "@tradecanvas/svelte": "^1.2.3",
-    "bo-grid": "^2.2.0",
+    "@tradecanvas/chart": "^1.17.0",
+    "@tradecanvas/svelte": "^1.2.4",
+    "bo-grid": "^2.2.1",
     "dockview-core": "^8.4.1"
   },
   "devDependencies": {

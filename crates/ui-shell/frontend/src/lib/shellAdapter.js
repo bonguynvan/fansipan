@@ -79,6 +79,17 @@ export class ShellAdapter {
     return symbolInfoOf(this.#describe(symbol));
   }
 
+  /**
+   * Tells a connected chart its symbol's details once they are known (the
+   * instrument row the shell sent), so it applies their price precision.
+   * Saying the same again changes nothing.
+   */
+  announce(instrument) {
+    if (this.#state !== "connected" || instrument?.symbol !== this.#symbol) return;
+    const info = symbolInfoOf(instrument);
+    if (info) this.#emit("symbolInfo", info);
+  }
+
   async fetchHistory(symbol, _timeframe, limit) {
     const bars = await invoke("bars", { symbol, limit: limit ?? null });
     return bars.map(toChartBar);
