@@ -83,6 +83,8 @@ struct Board {
     lot: Decimal,
     /// Whether a sell may take more than the settled holding.
     short_selling: bool,
+    /// The order types an odd lot may be; none for no odd lots.
+    odd_lot_types: &'static [OrderType],
 }
 
 fn dec(units: i64, scale: u32) -> Decimal {
@@ -101,7 +103,8 @@ fn listing(
         .with_name(name)
         .with_exchange(board.code)
         .with_currency(currency)
-        .with_short_selling(board.short_selling);
+        .with_short_selling(board.short_selling)
+        .with_odd_lot_types(board.odd_lot_types.iter().copied());
     let band = match board.band {
         Some(fraction) => {
             PriceBand::from_fraction(id, reference, fraction, &board.ticks, UnixNanos::default())
@@ -201,7 +204,8 @@ fn vietnam_days() -> Vec<MarketDay> {
     ]
 }
 
-/// Vietnam's three boards. HOSE's tick widens with price (10 VND below
+/// Vietnam's three boards. Odd lots (1 to 99 shares) trade as limit orders
+/// only. HOSE's tick widens with price (10 VND below
 /// 10,000, 50 below 50,000, then 100); HNX and UPCoM tick at 100. Daily
 /// limits are 7%, 10% and 15% of the reference price. Shares trade in lots
 /// of 100.
@@ -219,6 +223,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         band: Some(dec(7, 2)),
         lot,
         short_selling: false,
+        odd_lot_types: &[OrderType::LIMIT],
     };
     let hnx = Board {
         code: "HNX",
@@ -226,6 +231,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         band: Some(dec(10, 2)),
         lot,
         short_selling: false,
+        odd_lot_types: &[OrderType::LIMIT],
     };
     let upcom = Board {
         code: "UPCOM",
@@ -233,6 +239,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         band: Some(dec(15, 2)),
         lot,
         short_selling: false,
+        odd_lot_types: &[OrderType::LIMIT],
     };
     let display = dec(10_000, 0);
     let on = |board: &Board, entries: &[(&str, &str, i64)]| -> Result<Vec<Listing>, String> {
@@ -300,6 +307,7 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         band: None,
         lot: Decimal::ONE,
         short_selling: true,
+        odd_lot_types: &[],
     };
     let listings = [
         ("AAPL", "Apple", 19_000),

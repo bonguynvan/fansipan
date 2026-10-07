@@ -12,7 +12,8 @@
 use std::fmt;
 
 use model::{
-    Decimal, InstrumentInfo, NewOrder, Position, PriceBand, SessionPhase, SessionStatus, Side,
+    Decimal, InstrumentInfo, NewOrder, OrderKind, OrderType, Position, PriceBand, SessionPhase,
+    SessionStatus, Side, TimeInForce,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,6 +40,15 @@ pub enum RiskReject {
     },
     NotLotMultiple {
         lot: Decimal,
+    },
+    /// Neither whole lots nor an odd lot, where the market takes odd lots.
+    NotLotsOrOddLot {
+        lot: Decimal,
+    },
+    /// An odd lot of a type the market does not take odd lots as.
+    OddLotType {
+        lot: Decimal,
+        allowed: Vec<String>,
     },
     PriceNotOnTick {
         tick: Decimal,
@@ -82,6 +92,15 @@ impl fmt::Display for RiskReject {
             Self::NotLotMultiple { lot } => {
                 write!(f, "quantity must be a multiple of the lot size, {lot}")
             }
+            Self::NotLotsOrOddLot { lot } => write!(
+                f,
+                "quantity must be whole lots of {lot}, or an odd lot below {lot}"
+            ),
+            Self::OddLotType { lot, allowed } => write!(
+                f,
+                "an odd lot (fewer than {lot}) can only be {}",
+                allowed.join(" or ")
+            ),
             Self::PriceNotOnTick { tick } => {
                 write!(f, "limit price must be a multiple of the tick size, {tick}")
             }
@@ -159,8 +178,18 @@ pub fn check_market_rules(
     band: Option<&PriceBand>,
 ) -> Result<(), RiskReject> {
     if let Some(info) = info {
-        if !info.is_lot_multiple(order.quantity) {
-            return Err(RiskReject::NotLotMultiple { lot: info.lot_size });
+        if !info.takes_quantity(order.quantity, order.order_type) {
+            let lot = info.lot_size;
+            return Err(if info.odd_lot_types.is_empty() {
+                RiskReject::NotLotMultiple { lot }
+            } else if info.is_odd_lot(order.quantity) {
+                RiskReject::OddLotType {
+                    lot,
+                    allowed: info.odd_lot_types.iter().map(|t| type_words(*t)).collect(),
+                }
+            } else {
+                RiskReject::NotLotsOrOddLot { lot }
+            });
         }
     }
     let Some(price) = order.limit_price else {
@@ -230,6 +259,26 @@ pub fn check_sellable(
         unsettled: held - settled,
         working,
     })
+}
+
+/// An order type in words, for a reason: "a limit order for the day".
+fn type_words(order_type: OrderType) -> String {
+    let kind = match order_type.kind {
+        OrderKind::Limit => "a limit order",
+        OrderKind::Market => "a market order",
+        OrderKind::MarketToLimit => "a market-to-limit order",
+        _ => "an order of another kind",
+    };
+    let time_in_force = match order_type.time_in_force {
+        TimeInForce::Day => "for the day",
+        TimeInForce::ImmediateOrCancel => "immediate or cancel",
+        TimeInForce::FillOrKill => "fill or kill",
+        TimeInForce::AtOpen => "at the open",
+        TimeInForce::AtClose => "at the close",
+        TimeInForce::AfterClose => "after the close",
+        _ => "of another time in force",
+    };
+    format!("{kind} {time_in_force}")
 }
 
 fn phase_words(phase: SessionPhase) -> &'static str {
@@ -587,6 +636,42 @@ mod tests {
         assert_eq!(
             check_sellable(&order("100", None), Some(&no_short_selling()), None, d("0")),
             Ok(())
+        );
+    }
+
+    fn odd_lots_as_limits() -> InstrumentInfo {
+        let ticks = TickTable::flat(d("100")).unwrap();
+        InstrumentInfo::new(InstrumentId::new("sim", "AAA"), d("100"), ticks)
+            .with_odd_lot_types([OrderType::LIMIT])
+    }
+
+    #[test]
+    fn an_odd_lot_passes_as_a_type_the_market_takes_odd_lots_as() {
+        let info = odd_lots_as_limits();
+
+        assert_eq!(
+            check_market_rules(&order("50", Some("62500")), Some(&info), None),
+            Ok(())
+        );
+        assert_eq!(
+            check_market_rules(&order("50", None), Some(&info), None)
+                .unwrap_err()
+                .to_string(),
+            "an odd lot (fewer than 100) can only be a limit order for the day"
+        );
+    }
+
+    #[test]
+    fn a_mixed_quantity_is_neither_lots_nor_an_odd_lot() {
+        assert_eq!(
+            check_market_rules(
+                &order("150", Some("62500")),
+                Some(&odd_lots_as_limits()),
+                None
+            )
+            .unwrap_err()
+            .to_string(),
+            "quantity must be whole lots of 100, or an odd lot below 100"
         );
     }
 }

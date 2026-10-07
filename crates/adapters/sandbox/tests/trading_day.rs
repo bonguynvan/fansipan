@@ -448,3 +448,32 @@ fn nothing_held_cannot_be_sold_where_short_selling_is_forbidden() {
         Some("not enough settled shares: 0 can be sold now")
     );
 }
+
+#[test]
+fn an_odd_lot_trades_as_a_limit_order_only() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    let mtl = typed(OrderKind::MarketToLimit, TimeInForce::Day);
+
+    let limit = submit(
+        &venue,
+        order(1, "VNM", "50", OrderType::LIMIT, Some("62600")),
+        at(MORNING),
+    );
+    let market = submit(&venue, order(2, "VNM", "50", mtl, None), at(MORNING));
+    let mixed = submit(
+        &venue,
+        order(3, "VNM", "150", OrderType::LIMIT, Some("62600")),
+        at(MORNING),
+    );
+
+    assert_eq!(fills(&limit, 1), vec![(d("50"), d("62600"))]);
+    assert_eq!(
+        refusal(&market).as_deref(),
+        Some("an odd lot must be one of the market's odd-lot order types")
+    );
+    assert_eq!(
+        refusal(&mixed).as_deref(),
+        Some("quantity must be a multiple of the lot size, 100")
+    );
+}

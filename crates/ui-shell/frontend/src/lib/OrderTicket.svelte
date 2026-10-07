@@ -116,7 +116,9 @@
     <button class="side sell" class:active={side === "sell"} onclick={() => (side = "sell")}>{t("side.sell")}</button>
   </div>
 
-  <form onsubmit={submit}>
+  <!-- novalidate: the quantity steps in lots, but an odd lot is a valid
+       order on some markets; risk judges the quantity and says why. -->
+  <form onsubmit={submit} novalidate>
     <label>
       <span>
         {t("ticket.quantity")}

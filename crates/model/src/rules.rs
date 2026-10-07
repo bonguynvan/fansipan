@@ -7,7 +7,7 @@ use std::fmt;
 
 use rust_decimal::{Decimal, RoundingStrategy};
 
-use crate::{InstrumentId, UnixNanos};
+use crate::{InstrumentId, OrderType, UnixNanos};
 
 /// The smallest price increment as a function of price: a ladder of
 /// `(from, tick)` steps. A flat-tick market has one step; a market whose tick
@@ -191,6 +191,10 @@ pub struct InstrumentInfo {
     /// Whether a sell may take more than the settled holding. Vietnam
     /// forbids it for retail accounts; a US margin account allows it.
     pub short_selling: bool,
+    /// The order types an odd lot (above zero, below one lot) may be.
+    /// Empty when the market takes no odd lots; Vietnam takes them as limit
+    /// orders for the day.
+    pub odd_lot_types: Vec<OrderType>,
 }
 
 impl InstrumentInfo {
@@ -203,6 +207,7 @@ impl InstrumentInfo {
             lot_size,
             ticks,
             short_selling: true,
+            odd_lot_types: Vec::new(),
         }
     }
 
@@ -234,8 +239,27 @@ impl InstrumentInfo {
         }
     }
 
+    pub fn with_odd_lot_types(self, order_types: impl IntoIterator<Item = OrderType>) -> Self {
+        Self {
+            odd_lot_types: order_types.into_iter().collect(),
+            ..self
+        }
+    }
+
     pub fn is_lot_multiple(&self, quantity: Decimal) -> bool {
         self.lot_size <= Decimal::ZERO || (quantity % self.lot_size).is_zero()
+    }
+
+    /// Above zero and below one lot.
+    pub fn is_odd_lot(&self, quantity: Decimal) -> bool {
+        quantity > Decimal::ZERO && quantity < self.lot_size
+    }
+
+    /// Whether the market takes an order for `quantity` of this type: whole
+    /// lots, or an odd lot of a type it takes odd lots as.
+    pub fn takes_quantity(&self, quantity: Decimal, order_type: OrderType) -> bool {
+        self.is_lot_multiple(quantity)
+            || (self.is_odd_lot(quantity) && self.odd_lot_types.contains(&order_type))
     }
 }
 
@@ -547,5 +571,18 @@ mod tests {
         assert!(info.is_lot_multiple(d("300")));
         assert!(!info.is_lot_multiple(d("150")));
         assert_eq!(info.name, "VNM");
+    }
+
+    #[test]
+    fn an_odd_lot_is_taken_only_as_the_types_the_market_allows() {
+        let ticks = TickTable::flat(d("100")).unwrap();
+        let info = InstrumentInfo::new(InstrumentId::new("sim", "VNM"), d("100"), ticks)
+            .with_odd_lot_types([OrderType::LIMIT]);
+
+        assert!(info.takes_quantity(d("300"), OrderType::MARKET));
+        assert!(info.takes_quantity(d("50"), OrderType::LIMIT));
+        assert!(!info.takes_quantity(d("50"), OrderType::MARKET));
+        assert!(!info.takes_quantity(d("150"), OrderType::LIMIT));
+        assert!(!info.is_odd_lot(d("0")));
     }
 }

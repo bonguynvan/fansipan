@@ -21,11 +21,18 @@ const AVG_PRICE_DP: u32 = 8;
 
 /// Why the venue would refuse this order under the listing's rules, if it would.
 fn rule_breach(listing: &Listing, order: &SubmitOrder) -> Option<String> {
-    if !listing.info.is_lot_multiple(order.quantity) {
-        return Some(format!(
-            "quantity must be a multiple of the lot size, {}",
-            listing.info.lot_size
-        ));
+    let info = &listing.info;
+    if !info.takes_quantity(order.quantity, order.order_type) {
+        return Some(
+            if info.is_odd_lot(order.quantity) && !info.odd_lot_types.is_empty() {
+                "an odd lot must be one of the market's odd-lot order types".into()
+            } else {
+                format!(
+                    "quantity must be a multiple of the lot size, {}",
+                    info.lot_size
+                )
+            },
+        );
     }
     let price = order.limit_price?;
     if !listing.ticks().is_on_tick(price) {
