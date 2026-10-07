@@ -16,6 +16,7 @@
     accepted: "amber",
     submitted: "amber",
     cancelling: "neutral",
+    amending: "amber",
     cancelled: "neutral",
     rejected: "down",
     denied: "down",

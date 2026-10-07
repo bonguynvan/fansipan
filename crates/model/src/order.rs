@@ -21,6 +21,8 @@ pub enum OrderStatus {
     Filled,
     /// A cancel was sent; the venue has not confirmed it yet.
     PendingCancel,
+    /// An amendment was sent; the venue has not answered yet.
+    PendingAmend,
     Cancelled,
     /// The venue (or the adapter) refused the order.
     Rejected,
@@ -33,7 +35,11 @@ impl OrderStatus {
     pub fn is_open(self) -> bool {
         matches!(
             self,
-            Self::Submitted | Self::Accepted | Self::PartiallyFilled | Self::PendingCancel
+            Self::Submitted
+                | Self::Accepted
+                | Self::PartiallyFilled
+                | Self::PendingCancel
+                | Self::PendingAmend
         )
     }
 }
@@ -133,6 +139,36 @@ impl CancelOrder {
     }
 }
 
+/// New terms for a working order: its new total quantity (what has filled
+/// stays filled) and its new limit price.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct AmendOrder {
+    pub order_id: ClientOrderId,
+    pub venue_order_id: Option<VenueOrderId>,
+    pub instrument: InstrumentId,
+    pub quantity: Decimal,
+    pub limit_price: Option<Decimal>,
+}
+
+impl AmendOrder {
+    pub fn new(
+        order_id: ClientOrderId,
+        venue_order_id: Option<VenueOrderId>,
+        instrument: InstrumentId,
+        quantity: Decimal,
+        limit_price: Option<Decimal>,
+    ) -> Self {
+        Self {
+            order_id,
+            venue_order_id,
+            instrument,
+            quantity,
+            limit_price,
+        }
+    }
+}
+
 /// The execution engine's view of one order. Adapters never build or mutate
 /// this; they emit [`ExecutionReport`]s and the engine derives it.
 #[derive(Debug, Clone, PartialEq)]
@@ -188,6 +224,16 @@ pub enum OrderEvent {
     /// The venue refused a cancel, typically because the order already
     /// filled or was never open there.
     CancelRejected {
+        reason: String,
+    },
+    /// The venue changed the order to these terms: its total quantity and
+    /// its limit price.
+    Amended {
+        quantity: Decimal,
+        limit_price: Option<Decimal>,
+    },
+    /// The venue refused to change the order; it stands as it was.
+    AmendRejected {
         reason: String,
     },
 }

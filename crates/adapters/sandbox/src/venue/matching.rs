@@ -10,8 +10,8 @@
 
 use bus::Event;
 use model::{
-    Decimal, FillId, InstrumentId, OrderEvent, OrderKind, Position, Quote, SessionPhase, Side,
-    SubmitOrder, TimeInForce, UnixNanos, VenueOrderId,
+    AmendOrder, Decimal, FillId, InstrumentId, OrderEvent, OrderKind, Position, Quote,
+    SessionPhase, Side, SubmitOrder, TimeInForce, UnixNanos, VenueOrderId,
 };
 
 use super::listing::{Listing, TOP_OF_BOOK_SIZE};
@@ -189,6 +189,90 @@ pub(super) fn submit_locked(
         }),
     }
     events
+}
+
+/// Changes a resting order to new terms, as an exchange does: the listing's
+/// rules apply to them, a buy's cash must cover them, a sell may not exceed
+/// the settled shares where short selling is forbidden, and what has filled
+/// stays filled. The order keeps resting; the walk fills it if its new price
+/// is reached.
+pub(super) fn amend_locked(
+    state: &mut VenueState,
+    amend: &AmendOrder,
+    now: UnixNanos,
+) -> Vec<Event> {
+    let refuse = |reason: String| {
+        vec![report(
+            amend.order_id,
+            OrderEvent::AmendRejected { reason },
+            now,
+        )]
+    };
+    let Some(index) = state
+        .resting
+        .iter()
+        .position(|r| r.order.order_id == amend.order_id)
+    else {
+        return refuse("order is not open on the venue".into());
+    };
+    let (filled, own_remaining, own_reserve) = {
+        let r = &state.resting[index];
+        (r.order.quantity - r.remaining, r.remaining, r.reserve)
+    };
+    if amend.quantity <= filled {
+        return refuse(format!(
+            "the new quantity must be above the {filled} already filled"
+        ));
+    }
+    let Some(limit) = amend.limit_price.or(state.resting[index].limit) else {
+        return refuse("only a limit order can be amended".into());
+    };
+    let mut amended = state.resting[index].order.clone();
+    amended.quantity = amend.quantity;
+    amended.limit_price = Some(limit);
+    let Some(book) = state.books.get(&amended.instrument) else {
+        return refuse(format!(
+            "{} is not listed on this venue",
+            amended.instrument
+        ));
+    };
+    if let Some(reason) = rule_breach(&book.listing, &amended) {
+        return refuse(reason);
+    }
+    let remaining = amend.quantity - filled;
+    match amended.side {
+        Side::Buy => {
+            let available = available_cash(state)
+                .zip(own_remaining.checked_mul(own_reserve))
+                .and_then(|(free, own)| free.checked_add(own));
+            let needed = remaining.checked_mul(limit);
+            if !matches!((needed, available), (Some(n), Some(a)) if n <= a) {
+                return refuse("insufficient cash for the new terms".into());
+            }
+        }
+        Side::Sell if !book.listing.info.short_selling => {
+            let sellable = sellable(state, &amended.instrument) + own_remaining;
+            if remaining > sellable {
+                return refuse(format!(
+                    "not enough settled shares: {sellable} can be sold now"
+                ));
+            }
+        }
+        Side::Sell => {}
+    }
+    let resting = &mut state.resting[index];
+    resting.order = amended;
+    resting.limit = Some(limit);
+    resting.reserve = limit;
+    resting.remaining = remaining;
+    vec![report(
+        amend.order_id,
+        OrderEvent::Amended {
+            quantity: amend.quantity,
+            limit_price: Some(limit),
+        },
+        now,
+    )]
 }
 
 /// An order arriving in continuous trading: it takes what its type allows

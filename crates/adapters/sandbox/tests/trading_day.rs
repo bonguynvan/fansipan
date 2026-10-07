@@ -5,8 +5,8 @@
 use bus::Event;
 use fansipan_sandbox::{Clock, MarketDay, MarketProfile, Phase, SimVenue, TradingDay};
 use model::{
-    CancelOrder, ClientOrderId, Decimal, InstrumentId, NamedOrderType, NewOrder, OrderEvent,
-    OrderKind, OrderType, SessionPhase, Side, SubmitOrder, TimeInForce, UnixNanos,
+    AmendOrder, CancelOrder, ClientOrderId, Decimal, InstrumentId, NamedOrderType, NewOrder,
+    OrderEvent, OrderKind, OrderType, SessionPhase, Side, SubmitOrder, TimeInForce, UnixNanos,
 };
 
 const SECOND: u64 = 1_000_000_000;
@@ -476,4 +476,81 @@ fn an_odd_lot_trades_as_a_limit_order_only() {
         refusal(&mixed).as_deref(),
         Some("quantity must be a multiple of the lot size, 100")
     );
+}
+
+fn amend(
+    venue: &SimVenue,
+    order_id: u64,
+    quantity: &str,
+    price: &str,
+    now: UnixNanos,
+) -> Vec<Event> {
+    let mut out = Vec::new();
+    let amendment = AmendOrder::new(
+        ClientOrderId(order_id),
+        None,
+        id("VNM"),
+        d(quantity),
+        Some(d(price)),
+    );
+    venue.amend(&amendment, now, &mut |e| out.push(e));
+    out
+}
+
+#[test]
+fn a_resting_order_takes_new_terms_and_fills_at_its_new_price() {
+    let venue = venue();
+    let now = at(MORNING);
+    advance(&venue, now);
+    submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("62000")),
+        now,
+    );
+
+    let amended = amend(&venue, 1, "200", "62600", now);
+    let mut moved = Vec::new();
+    venue.step(&id("VNM"), Decimal::ZERO, now, &mut |e| moved.push(e));
+
+    assert_eq!(
+        reports(&amended),
+        vec![(
+            1,
+            OrderEvent::Amended {
+                quantity: d("200"),
+                limit_price: Some(d("62600"))
+            }
+        )]
+    );
+    assert_eq!(fills(&moved, 1), vec![(d("200"), d("62600"))]);
+}
+
+#[test]
+fn an_amendment_the_exchange_would_refuse_is_refused() {
+    let venue = venue();
+    let now = at(MORNING);
+    advance(&venue, now);
+    submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("62000")),
+        now,
+    );
+
+    let off_tick = amend(&venue, 1, "100", "62050", now);
+    let mixed = amend(&venue, 1, "150", "62000", now);
+    let unknown = amend(&venue, 9, "100", "62000", now);
+
+    let reason = |events: &[Event]| match reports(events).pop() {
+        Some((_, OrderEvent::AmendRejected { reason })) => reason,
+        other => panic!("not refused: {other:?}"),
+    };
+    assert_eq!(
+        reason(&off_tick),
+        "price must be a multiple of the tick size, 100"
+    );
+    assert_eq!(
+        reason(&mixed),
+        "quantity must be a multiple of the lot size, 100"
+    );
+    assert_eq!(reason(&unknown), "order is not open on the venue");
 }

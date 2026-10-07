@@ -48,7 +48,7 @@ pub fn apply(order: &Order, event: &OrderEvent) -> Result<Order, TransitionError
         // channel than fills and cancels, so it can arrive after either.
         // Keep the status, learn the venue's id.
         (
-            S::PartiallyFilled | S::PendingCancel | S::Filled | S::Cancelled,
+            S::PartiallyFilled | S::PendingCancel | S::PendingAmend | S::Filled | S::Cancelled,
             OrderEvent::Accepted { venue_order_id },
         ) => Ok(Order {
             venue_order_id: Some(known_or(order, venue_order_id)),
@@ -57,27 +57,31 @@ pub fn apply(order: &Order, event: &OrderEvent) -> Result<Order, TransitionError
 
         // Once anything has traded, the order cannot be "rejected" as a
         // whole; that would erase fills the account already reflects.
-        (S::Submitted | S::Accepted | S::PendingCancel, OrderEvent::Rejected { reason })
-            if order.filled_quantity.is_zero() =>
-        {
-            Ok(Order {
-                status: S::Rejected,
-                reason: Some(reason.clone()),
-                ..order.clone()
-            })
-        }
+        (
+            S::Submitted | S::Accepted | S::PendingCancel | S::PendingAmend,
+            OrderEvent::Rejected { reason },
+        ) if order.filled_quantity.is_zero() => Ok(Order {
+            status: S::Rejected,
+            reason: Some(reason.clone()),
+            ..order.clone()
+        }),
 
         // A fill is applied whenever it arrives, even after a cancel was
         // confirmed: the venue traded, so the money moved.
         (
-            S::Submitted | S::Accepted | S::PartiallyFilled | S::PendingCancel | S::Cancelled,
+            S::Submitted
+            | S::Accepted
+            | S::PartiallyFilled
+            | S::PendingCancel
+            | S::PendingAmend
+            | S::Cancelled,
             OrderEvent::Filled {
                 quantity, price, ..
             },
         ) => fill(order, *quantity, *price),
 
         (
-            S::Submitted | S::Accepted | S::PartiallyFilled | S::PendingCancel,
+            S::Submitted | S::Accepted | S::PartiallyFilled | S::PendingCancel | S::PendingAmend,
             OrderEvent::Cancelled,
         )
         | (S::Cancelled, OrderEvent::Cancelled) => Ok(Order {
@@ -93,6 +97,26 @@ pub fn apply(order: &Order, event: &OrderEvent) -> Result<Order, TransitionError
         // The usual race: the cancel crossed a final fill on the wire. The
         // order already reached a final state; the refusal changes nothing.
         (_, OrderEvent::CancelRejected { reason }) => Ok(Order {
+            reason: Some(reason.clone()),
+            ..order.clone()
+        }),
+
+        // The venue's new terms. Taken from a resting order too: some venues
+        // amend on their own, after a corporate action for instance.
+        (
+            S::Accepted | S::PartiallyFilled | S::PendingAmend | S::PendingCancel,
+            OrderEvent::Amended {
+                quantity,
+                limit_price,
+            },
+        ) => amended(order, *quantity, *limit_price),
+        (S::PendingAmend, OrderEvent::AmendRejected { reason }) => Ok(Order {
+            status: resting_status(order),
+            reason: Some(reason.clone()),
+            ..order.clone()
+        }),
+        // The amendment crossed a final fill or a cancel; the order stands.
+        (_, OrderEvent::AmendRejected { reason }) => Ok(Order {
             reason: Some(reason.clone()),
             ..order.clone()
         }),
@@ -133,7 +157,7 @@ fn fill(order: &Order, quantity: Decimal, price: Decimal) -> Result<Order, Trans
         OrderStatus::Filled
     } else if matches!(
         order.status,
-        OrderStatus::PendingCancel | OrderStatus::Cancelled
+        OrderStatus::PendingCancel | OrderStatus::PendingAmend | OrderStatus::Cancelled
     ) {
         order.status
     } else {
@@ -144,6 +168,35 @@ fn fill(order: &Order, quantity: Decimal, price: Decimal) -> Result<Order, Trans
         status,
         filled_quantity,
         avg_fill_price: Some(avg_fill_price),
+        ..order.clone()
+    })
+}
+
+/// The order on the venue's new terms. A cancel already sent stays pending;
+/// otherwise the order rests, or is filled if the new quantity is what has
+/// already traded.
+fn amended(
+    order: &Order,
+    quantity: Decimal,
+    limit_price: Option<Decimal>,
+) -> Result<Order, TransitionError> {
+    if quantity < order.filled_quantity {
+        return Err(TransitionError::Invalid {
+            from: order.status,
+            event: "Amended below the filled quantity".into(),
+        });
+    }
+    let status = if order.status == OrderStatus::PendingCancel {
+        OrderStatus::PendingCancel
+    } else if quantity == order.filled_quantity {
+        OrderStatus::Filled
+    } else {
+        resting_status(order)
+    };
+    Ok(Order {
+        quantity,
+        limit_price,
+        status,
         ..order.clone()
     })
 }
@@ -174,6 +227,8 @@ fn event_name(event: &OrderEvent) -> &'static str {
         OrderEvent::Filled { .. } => "Filled",
         OrderEvent::Cancelled => "Cancelled",
         OrderEvent::CancelRejected { .. } => "CancelRejected",
+        OrderEvent::Amended { .. } => "Amended",
+        OrderEvent::AmendRejected { .. } => "AmendRejected",
         _ => "an unrecognised event",
     }
 }
@@ -440,5 +495,79 @@ mod tests {
     #[test]
     fn denied_orders_accept_no_fills() {
         assert!(apply(&order(OrderStatus::Denied), &filled("1", "5")).is_err());
+    }
+
+    fn amended_to(quantity: &str, price: &str) -> OrderEvent {
+        OrderEvent::Amended {
+            quantity: d(quantity),
+            limit_price: Some(d(price)),
+        }
+    }
+
+    #[test]
+    fn an_amendment_takes_the_venues_terms_and_rests_again() {
+        let pending = order(OrderStatus::PendingAmend);
+
+        let next = apply(&pending, &amended_to("20", "6")).unwrap();
+
+        assert_eq!(next.status, OrderStatus::Submitted);
+        assert_eq!((next.quantity, next.limit_price), (d("20"), Some(d("6"))));
+    }
+
+    #[test]
+    fn an_amendment_after_a_partial_fill_keeps_the_fill() {
+        let partial = Order {
+            filled_quantity: d("4"),
+            ..order(OrderStatus::PendingAmend)
+        };
+
+        let next = apply(&partial, &amended_to("8", "5")).unwrap();
+        let down_to_filled = apply(&partial, &amended_to("4", "5")).unwrap();
+
+        assert_eq!(next.status, OrderStatus::PartiallyFilled);
+        assert_eq!(next.remaining(), d("4"));
+        assert_eq!(down_to_filled.status, OrderStatus::Filled);
+        assert!(apply(&partial, &amended_to("3", "5")).is_err());
+    }
+
+    #[test]
+    fn a_refused_amendment_leaves_the_order_where_it_was() {
+        let pending = Order {
+            venue_order_id: Some(VenueOrderId("V1".into())),
+            ..order(OrderStatus::PendingAmend)
+        };
+        let refused = OrderEvent::AmendRejected {
+            reason: "price outside the band".into(),
+        };
+
+        let next = apply(&pending, &refused).unwrap();
+
+        assert_eq!(next.status, OrderStatus::Accepted);
+        assert_eq!((next.quantity, next.limit_price), (d("10"), Some(d("5"))));
+        assert_eq!(next.reason.as_deref(), Some("price outside the band"));
+    }
+
+    #[test]
+    fn a_fill_during_an_amendment_keeps_it_pending() {
+        let next = apply(
+            &order(OrderStatus::PendingAmend),
+            &OrderEvent::Filled {
+                fill_id: FillId("F1".into()),
+                quantity: d("3"),
+                price: d("5"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(next.status, OrderStatus::PendingAmend);
+        assert_eq!(next.filled_quantity, d("3"));
+    }
+
+    #[test]
+    fn an_amendment_answered_after_a_cancel_was_sent_keeps_the_cancel_pending() {
+        let next = apply(&order(OrderStatus::PendingCancel), &amended_to("20", "6")).unwrap();
+
+        assert_eq!(next.status, OrderStatus::PendingCancel);
+        assert_eq!(next.quantity, d("20"));
     }
 }

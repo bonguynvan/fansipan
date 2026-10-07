@@ -84,6 +84,7 @@
   "status.partial": "khớp một phần",
   "status.filled": "đã khớp",
   "status.cancelling": "đang hủy",
+  "status.amending": "đang sửa",
   "status.cancelled": "đã hủy",
   "status.rejected": "bị từ chối",
   "status.denied": "bị chặn",

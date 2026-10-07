@@ -11,7 +11,7 @@ pub use bus;
 pub use model;
 
 use bus::BusHandle;
-use model::{AccountState, CancelOrder, InstrumentId, SubmitOrder};
+use model::{AccountState, AmendOrder, CancelOrder, InstrumentId, SubmitOrder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdapterError {
@@ -83,4 +83,21 @@ pub trait ExecutionClient: Send {
     fn account_state(&mut self) -> Result<AccountState, AdapterError>;
 
     fn disconnect(&mut self) -> Result<(), AdapterError>;
+
+    /// This client's amendments, if its venue can change a working order.
+    /// The default says it cannot, which is the truth for an adapter that
+    /// does not implement [`OrderAmender`]: core then refuses amendments
+    /// before they reach it.
+    fn amender(&mut self) -> Option<&mut dyn OrderAmender> {
+        None
+    }
+}
+
+/// Changes a working order's quantity or price, for a venue that can. An
+/// adapter implements it on its execution client and returns itself from
+/// [`ExecutionClient::amender`].
+pub trait OrderAmender: Send {
+    /// Ask the venue to amend. Returning `Ok` means "handed off": the answer
+    /// arrives later as `OrderEvent::Amended` or `OrderEvent::AmendRejected`.
+    fn amend_order(&mut self, amend: AmendOrder) -> Result<(), AdapterError>;
 }

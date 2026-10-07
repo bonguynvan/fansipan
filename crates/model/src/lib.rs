@@ -21,7 +21,8 @@ pub use connection::{Connection, ConnectionState, ConnectionStatus};
 pub use ids::{ClientOrderId, FillId, InstrumentId, UnixNanos, VenueOrderId};
 pub use market::{Quote, Trade};
 pub use order::{
-    CancelOrder, ExecutionReport, NewOrder, Order, OrderEvent, OrderStatus, Side, SubmitOrder,
+    AmendOrder, CancelOrder, ExecutionReport, NewOrder, Order, OrderEvent, OrderStatus, Side,
+    SubmitOrder,
 };
 pub use order_type::{NamedOrderType, OrderKind, OrderType, TimeInForce};
 pub use rules::{

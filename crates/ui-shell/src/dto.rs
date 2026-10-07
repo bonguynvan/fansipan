@@ -288,6 +288,7 @@ fn status_label(status: OrderStatus) -> &'static str {
         OrderStatus::PartiallyFilled => "partial",
         OrderStatus::Filled => "filled",
         OrderStatus::PendingCancel => "cancelling",
+        OrderStatus::PendingAmend => "amending",
         OrderStatus::Cancelled => "cancelled",
         OrderStatus::Rejected => "rejected",
         OrderStatus::Denied => "denied",

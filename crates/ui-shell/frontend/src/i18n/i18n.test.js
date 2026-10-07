@@ -74,7 +74,7 @@ describe("catalogs", () => {
   });
 
   it("every order status and side has a label", () => {
-    const ids = ["submitted", "accepted", "partial", "filled", "cancelling", "cancelled", "rejected", "denied", "unknown"]
+    const ids = ["submitted", "accepted", "partial", "filled", "cancelling", "amending", "cancelled", "rejected", "denied", "unknown"]
       .map((status) => `status.${status}`)
       .concat(["side.buy", "side.sell"]);
 

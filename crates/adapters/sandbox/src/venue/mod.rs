@@ -27,15 +27,15 @@ use std::time::Duration;
 
 use bus::Event;
 use model::{
-    AccountState, CancelOrder, ClientOrderId, Decimal, ExecutionReport, InstrumentId, OrderEvent,
-    Position, Quote, SessionPhase, SubmitOrder, UnixNanos,
+    AccountState, AmendOrder, CancelOrder, ClientOrderId, Decimal, ExecutionReport, InstrumentId,
+    OrderEvent, Position, Quote, SessionPhase, SubmitOrder, UnixNanos,
 };
 
 use crate::day::TradingDay;
 
 use book::{print, Book};
 use listing::walk_ticks;
-use matching::{match_resting, phase_of, submit_locked};
+use matching::{amend_locked, match_resting, phase_of, submit_locked};
 
 pub use book::{Tick, DEPTH_LEVELS};
 pub use listing::{Listing, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
@@ -324,6 +324,15 @@ impl SimVenue {
     pub fn submit(&self, order: SubmitOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
         submit_locked(&mut state, order, now)
+            .into_iter()
+            .for_each(sink);
+    }
+
+    /// Amending something that is not resting is answered with
+    /// `AmendRejected`, never an error: the order may simply have filled.
+    pub fn amend(&self, amend: &AmendOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
+        let mut state = self.state();
+        amend_locked(&mut state, amend, now)
             .into_iter()
             .for_each(sink);
     }

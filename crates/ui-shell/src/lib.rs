@@ -276,6 +276,21 @@ fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
     Ok(order)
 }
 
+fn amend(
+    shell: &Shell,
+    id: u64,
+    quantity: Decimal,
+    limit_price: Decimal,
+) -> Result<OrderDto, String> {
+    let mut exec = lock(&shell.exec)?;
+    let order = exec
+        .amend(ClientOrderId(id), quantity, limit_price)
+        .map(|o| OrderDto::from(&o))
+        .map_err(|e| e.to_string())?;
+    lock(&shell.pending)?.order(order.clone());
+    Ok(order)
+}
+
 #[tauri::command]
 fn snapshot(shell: State<'_, Shell>) -> Result<Snapshot, String> {
     snapshot_of(&shell)
@@ -322,6 +337,23 @@ fn place_order(
 #[tauri::command]
 fn cancel_order(shell: State<'_, Shell>, id: u64) -> Result<OrderDto, String> {
     cancel(&shell, id)
+}
+
+/// A resting limit order's new total quantity and price. The new terms pass
+/// risk as a new order would; the venue's answer arrives in a later batch.
+#[tauri::command]
+fn amend_order(
+    shell: State<'_, Shell>,
+    id: u64,
+    quantity: String,
+    limit_price: String,
+) -> Result<OrderDto, String> {
+    amend(
+        &shell,
+        id,
+        parse_decimal("quantity", &quantity)?,
+        parse_decimal("limit price", &limit_price)?,
+    )
 }
 
 /// Routes one bus event to the engine that owns it and queues what changed
@@ -517,6 +549,7 @@ pub fn run(venue: Venue) -> ExitCode {
             bars,
             place_order,
             cancel_order,
+            amend_order,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -886,5 +919,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(denied.status, "denied");
+    }
+
+    #[test]
+    fn an_amendment_reaches_the_venue_and_its_answer_the_batch() {
+        let bus = Bus::new();
+        let events = bus.subscribe();
+        let shell = connect(&bus, &profile("us"));
+        let placed = submit(
+            &shell,
+            new_order(VENUE, &ticket("AAPL", "buy", "1", Some("100"))).unwrap(),
+        )
+        .unwrap();
+        for event in events.try_iter() {
+            route(&shell, &event).unwrap();
+        }
+
+        let pending = amend(&shell, placed.id, Decimal::TWO, Decimal::new(101, 0)).unwrap();
+        for event in events.try_iter() {
+            route(&shell, &event).unwrap();
+        }
+
+        assert_eq!(pending.status, "amending");
+        let batch = take_pending(&shell);
+        let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
+        assert_eq!(
+            (
+                order.status,
+                order.quantity.as_str(),
+                order.limit_price.as_deref()
+            ),
+            ("accepted", "2", Some("101"))
+        );
+        assert!(amend(&shell, 404, Decimal::ONE, Decimal::ONE)
+            .unwrap_err()
+            .contains("no order 404"));
     }
 }

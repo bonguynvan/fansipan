@@ -16,6 +16,7 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side, SubmitOrder,
 };
+use model::{AmendOrder, OrderKind};
 
 pub use lifecycle::TransitionError;
 pub use risk::{RiskLimits, RiskReject};
@@ -39,6 +40,47 @@ impl fmt::Display for CancelError {
 }
 
 impl std::error::Error for CancelError {}
+
+/// Why an amendment was not sent. The order stands as it was.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AmendError {
+    UnknownOrder(ClientOrderId),
+    /// Not resting on the venue, or a cancel or another amendment is in
+    /// flight.
+    NotAmendable(OrderStatus),
+    /// Only a limit order has a price to change.
+    NotALimitOrder,
+    /// The new quantity is not above what has already filled.
+    BelowFilled(Decimal),
+    /// The adapter's venue cannot amend orders.
+    Unsupported,
+    /// Risk refused the new terms.
+    Denied(RiskReject),
+    Adapter(AdapterError),
+}
+
+impl fmt::Display for AmendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownOrder(id) => write!(f, "no order {id} in this session"),
+            Self::NotAmendable(status) => {
+                write!(f, "order is {status:?}, it cannot be amended now")
+            }
+            Self::NotALimitOrder => f.write_str("only a limit order can be amended"),
+            Self::BelowFilled(filled) => {
+                write!(
+                    f,
+                    "the new quantity must be above the {filled} already filled"
+                )
+            }
+            Self::Unsupported => f.write_str("this venue does not amend orders"),
+            Self::Denied(reject) => write!(f, "denied by risk: {reject}"),
+            Self::Adapter(e) => write!(f, "amendment not sent: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for AmendError {}
 
 /// Why an execution report changed nothing.
 #[derive(Debug, Clone, PartialEq)]
@@ -171,23 +213,7 @@ impl ExecutionEngine {
             reason: None,
         };
 
-        let info = self.instruments.get(&request.instrument);
-        let cleared = risk::check(&request, &self.limits)
-            .and_then(|()| {
-                risk::check_market_rules(&request, info, self.bands.get(&request.instrument))
-            })
-            .and_then(|()| {
-                let session = info.and_then(|info| self.sessions.get(&info.exchange));
-                risk::check_session(&request, session)
-            })
-            .and_then(|()| {
-                risk::check_sellable(
-                    &request,
-                    info,
-                    self.account.position(&request.instrument),
-                    self.working_sells(&request.instrument),
-                )
-            });
+        let cleared = self.clear(&request, None);
         let order = match cleared {
             Err(reject) => Order {
                 status: OrderStatus::Denied,
@@ -212,6 +238,104 @@ impl ExecutionEngine {
             },
         );
         order
+    }
+
+    /// Every risk check for `terms`: this terminal's limits, then the
+    /// market's rules, session, and the holding a sell may take. For an
+    /// amendment, `amending` is the order as it stands: the sell check then
+    /// counts only the shares the new terms leave to sell, against working
+    /// sells other than this order.
+    fn clear(&self, terms: &NewOrder, amending: Option<&Order>) -> Result<(), RiskReject> {
+        let info = self.instruments.get(&terms.instrument);
+        let (to_sell, others_working) = match amending {
+            Some(order) => (
+                terms.quantity - order.filled_quantity,
+                self.working_sells(&terms.instrument) - order.remaining(),
+            ),
+            None => (terms.quantity, self.working_sells(&terms.instrument)),
+        };
+        let selling = NewOrder::new(
+            terms.instrument.clone(),
+            terms.side,
+            to_sell,
+            terms.order_type,
+            terms.limit_price,
+        );
+        risk::check(terms, &self.limits)
+            .and_then(|()| risk::check_market_rules(terms, info, self.bands.get(&terms.instrument)))
+            .and_then(|()| {
+                let session = info.and_then(|info| self.sessions.get(&info.exchange));
+                risk::check_session(terms, session)
+            })
+            .and_then(|()| {
+                risk::check_sellable(
+                    &selling,
+                    info,
+                    self.account.position(&terms.instrument),
+                    others_working,
+                )
+            })
+    }
+
+    /// Asks the adapter to change a resting limit order to `quantity` (its
+    /// new total; what has filled stays filled) at `limit_price`. The new
+    /// terms pass every risk check a new order would. On success the order
+    /// is `PendingAmend` until the venue answers; on any error it stands as
+    /// it was.
+    pub fn amend(
+        &mut self,
+        id: ClientOrderId,
+        quantity: Decimal,
+        limit_price: Decimal,
+    ) -> Result<Order, AmendError> {
+        let current = self
+            .orders
+            .get(&id)
+            .map(|t| t.order.clone())
+            .ok_or(AmendError::UnknownOrder(id))?;
+        if !matches!(
+            current.status,
+            OrderStatus::Accepted | OrderStatus::PartiallyFilled
+        ) {
+            return Err(AmendError::NotAmendable(current.status));
+        }
+        if current.order_type.kind != OrderKind::Limit {
+            return Err(AmendError::NotALimitOrder);
+        }
+        if quantity <= current.filled_quantity {
+            return Err(AmendError::BelowFilled(current.filled_quantity));
+        }
+        if self.client.amender().is_none() {
+            return Err(AmendError::Unsupported);
+        }
+        let terms = NewOrder::new(
+            current.instrument.clone(),
+            current.side,
+            quantity,
+            current.order_type,
+            Some(limit_price),
+        );
+        self.clear(&terms, Some(&current))
+            .map_err(AmendError::Denied)?;
+        let amender = self.client.amender().ok_or(AmendError::Unsupported)?;
+        amender
+            .amend_order(AmendOrder::new(
+                id,
+                current.venue_order_id.clone(),
+                current.instrument.clone(),
+                quantity,
+                Some(limit_price),
+            ))
+            .map_err(AmendError::Adapter)?;
+
+        let pending = Order {
+            status: OrderStatus::PendingAmend,
+            ..current
+        };
+        if let Some(tracked) = self.orders.get_mut(&id) {
+            tracked.order = pending.clone();
+        }
+        Ok(pending)
     }
 
     /// Asks the adapter to cancel. Cancelling an order that already has a
@@ -302,11 +426,20 @@ mod tests {
     struct Calls {
         submitted: Vec<SubmitOrder>,
         cancelled: Vec<CancelOrder>,
+        amended: Vec<AmendOrder>,
     }
 
     struct RecordingClient {
         calls: Arc<Mutex<Calls>>,
         refuse_with: Option<AdapterError>,
+        amends: bool,
+    }
+
+    impl adapter_api::OrderAmender for RecordingClient {
+        fn amend_order(&mut self, amend: AmendOrder) -> Result<(), AdapterError> {
+            self.calls.lock().unwrap().amended.push(amend);
+            Ok(())
+        }
     }
 
     impl ExecutionClient for RecordingClient {
@@ -333,6 +466,13 @@ mod tests {
         fn disconnect(&mut self) -> Result<(), AdapterError> {
             Ok(())
         }
+        fn amender(&mut self) -> Option<&mut dyn adapter_api::OrderAmender> {
+            if self.amends {
+                Some(self)
+            } else {
+                None
+            }
+        }
     }
 
     fn d(raw: &str) -> Decimal {
@@ -344,6 +484,7 @@ mod tests {
         let client = RecordingClient {
             calls: calls.clone(),
             refuse_with,
+            amends: true,
         };
         let limits = RiskLimits {
             max_order_quantity: d("10"),
@@ -563,6 +704,7 @@ mod tests {
         engine.client = Box::new(RecordingClient {
             calls,
             refuse_with: Some(AdapterError::recoverable("socket closed")),
+            amends: true,
         });
 
         let result = engine.cancel(id);
@@ -671,5 +813,143 @@ mod tests {
             Some("only 1 can be sold now: 10 held, 6 not settled yet, 3 in working sell orders")
         );
         assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+    }
+
+    /// An order the venue has accepted, at 5.
+    fn resting(engine: &mut ExecutionEngine, quantity: &str) -> ClientOrderId {
+        let id = engine.submit(buy(quantity)).id;
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn an_amendment_goes_to_the_venue_and_waits_for_its_answer() {
+        let (mut engine, calls) = engine();
+        let id = resting(&mut engine, "2");
+
+        let order = engine.amend(id, d("4"), d("6")).unwrap();
+
+        assert_eq!(order.status, OrderStatus::PendingAmend);
+        assert_eq!((order.quantity, order.limit_price), (d("2"), Some(d("5"))));
+        let sent = &calls.lock().unwrap().amended[0];
+        assert_eq!(
+            (sent.order_id, sent.quantity, sent.limit_price),
+            (id, d("4"), Some(d("6")))
+        );
+        assert_eq!(sent.venue_order_id, Some(VenueOrderId("V1".into())));
+    }
+
+    #[test]
+    fn an_amendment_that_cannot_go_leaves_the_order_as_it_was() {
+        let (mut engine, calls) = engine();
+        let id = resting(&mut engine, "2");
+        let unacked = engine.submit(buy("1")).id;
+        let market = engine
+            .submit(NewOrder::market(
+                InstrumentId::new("sim", "AAA"),
+                Side::Buy,
+                d("1"),
+            ))
+            .id;
+
+        assert_eq!(
+            engine.amend(id, d("11"), d("5")),
+            Err(AmendError::Denied(RiskReject::QuantityTooLarge {
+                max: d("10")
+            }))
+        );
+        assert_eq!(
+            engine.amend(unacked, d("2"), d("5")),
+            Err(AmendError::NotAmendable(OrderStatus::Submitted))
+        );
+        assert_eq!(
+            engine.amend(market, d("2"), d("5")),
+            Err(AmendError::NotAmendable(OrderStatus::Submitted))
+        );
+        assert_eq!(
+            engine.amend(ClientOrderId(99), d("2"), d("5")),
+            Err(AmendError::UnknownOrder(ClientOrderId(99)))
+        );
+        assert_eq!(
+            engine.order(id).map(|o| o.status),
+            Some(OrderStatus::Accepted)
+        );
+        assert!(calls.lock().unwrap().amended.is_empty());
+    }
+
+    #[test]
+    fn an_amendment_needs_a_limit_order_above_its_fills_and_a_venue_that_amends() {
+        let (mut engine, _) = engine();
+        let id = resting(&mut engine, "4");
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Filled {
+                    fill_id: FillId("F1".into()),
+                    quantity: d("3"),
+                    price: d("5"),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            engine.amend(id, d("3"), d("5")),
+            Err(AmendError::BelowFilled(d("3")))
+        );
+
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let client = RecordingClient {
+            calls,
+            refuse_with: None,
+            amends: false,
+        };
+        let limits = RiskLimits {
+            max_order_quantity: d("10"),
+            max_order_notional: d("1000"),
+        };
+        let mut plain = ExecutionEngine::new(Box::new(client), limits);
+        let other = resting(&mut plain, "2");
+        assert_eq!(
+            plain.amend(other, d("3"), d("5")),
+            Err(AmendError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn an_amended_sell_counts_its_own_shares_once() {
+        let (mut engine, calls) = engine();
+        let instrument = InstrumentId::new("sim", "AAA");
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(
+            InstrumentInfo::new(instrument.clone(), Decimal::ONE, ticks).with_short_selling(false),
+        );
+        let held = model::Position::new(instrument.clone(), d("6"), d("5"));
+        engine.set_account(AccountState::new(d("1000"), vec![held]));
+        let id = engine
+            .submit(NewOrder::limit(instrument, Side::Sell, d("4"), d("5")))
+            .id;
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+
+        // Six held, this sell's own four among them: 7 is too many, 6 is not.
+        assert!(matches!(
+            engine.amend(id, d("7"), d("5")),
+            Err(AmendError::Denied(RiskReject::NotEnoughToSell { .. }))
+        ));
+        assert!(engine.amend(id, d("6"), d("5")).is_ok());
+        assert_eq!(calls.lock().unwrap().amended.len(), 1);
     }
 }

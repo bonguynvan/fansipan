@@ -84,6 +84,7 @@
   "status.partial": "partial",
   "status.filled": "filled",
   "status.cancelling": "cancelling",
+  "status.amending": "amending",
   "status.cancelled": "cancelled",
   "status.rejected": "rejected",
   "status.denied": "denied",

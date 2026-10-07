@@ -19,11 +19,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use adapter_api::{AdapterError, DataClient, ExecutionClient};
+use adapter_api::{AdapterError, DataClient, ExecutionClient, OrderAmender};
 use bus::{BusHandle, Event};
 use model::{
-    AccountState, CancelOrder, Connection, ConnectionState, ConnectionStatus, InstrumentId,
-    SubmitOrder, UnixNanos,
+    AccountState, AmendOrder, CancelOrder, Connection, ConnectionState, ConnectionStatus,
+    InstrumentId, SubmitOrder, UnixNanos,
 };
 
 pub use day::{Clock, MarketDay, Phase, TradingDay};
@@ -259,6 +259,18 @@ impl ExecutionClient for SandboxExecutionClient {
         if let Some(bus) = self.bus.take() {
             bus.publish(down(Connection::Orders));
         }
+        Ok(())
+    }
+
+    fn amender(&mut self) -> Option<&mut dyn OrderAmender> {
+        Some(self)
+    }
+}
+
+impl OrderAmender for SandboxExecutionClient {
+    fn amend_order(&mut self, amend: AmendOrder) -> Result<(), AdapterError> {
+        let bus = self.bus()?;
+        self.venue.amend(&amend, now(), &mut |e| bus.publish(e));
         Ok(())
     }
 }
