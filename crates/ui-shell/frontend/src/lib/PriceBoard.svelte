@@ -4,18 +4,18 @@
   // reference, ceiling and floor. Bands and ticks come from the adapter;
   // this screen only resolves tones and lays them out.
   import { Grid, tradecanvasTheme } from "bo-grid";
-  import { darkToneColors, sessionStateAt, toneColor } from "bo-grid/trading";
+  import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
   import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
   import { boardRows, exchangesOf } from "./board.js";
   import { tickDecimals, tickTable } from "./ticks.js";
+  import { phaseName } from "./orderTypes.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params, panel } = $props();
 
   const TONES = ["ceiling", "floor", "ref", "up", "down"];
-  const SESSION_REFRESH_MS = 5_000;
   const PRICE_WIDTH = 58;
   const SIZE_WIDTH = 70;
 
@@ -34,16 +34,12 @@
     })),
   );
 
-  let now = $state(Date.now());
-  $effect(() => {
-    if (!preset.schedule) return;
-    const timer = setInterval(() => (now = Date.now()), SESSION_REFRESH_MS);
-    return () => clearInterval(timer);
-  });
-  const session = $derived(
-    preset.schedule
-      ? sessionStateAt(new Date(now), preset.schedule, preset.timeZone ? { timeZone: preset.timeZone } : undefined)
-      : null,
+  // Each shown market's phase of the day, as the adapter reports it: the
+  // filtered exchange's, or every market's on "All".
+  const sessions = $derived(
+    exchange
+      ? [market.sessions[exchange]].filter(Boolean)
+      : exchanges.map((code) => market.sessions[code]).filter(Boolean),
   );
 
   /** Linked: the whole group follows. Unlinked: only this panel remembers it. */
@@ -118,11 +114,11 @@
       {/each}
     </div>
 
-    {#if session}
-      <span class="session session-{session}" title={t("board.sessionHint")}>
-        <span class="dot"></span>{t(`session.${session}`)}
+    {#each sessions as session (session.market)}
+      <span class="session session-{session.phase}" title={t("board.sessionHint")}>
+        <span class="dot"></span>{exchange ? "" : `${session.market} `}{phaseName(session, t)}
       </span>
-    {/if}
+    {/each}
 
     {#if scale !== 1}
       <span class="dim unit">
@@ -220,8 +216,9 @@
     box-shadow: 0 0 6px var(--up);
   }
 
-  .session-ato .dot,
-  .session-atc .dot {
+  .session-openingAuction .dot,
+  .session-closingAuction .dot,
+  .session-afterClose .dot {
     background: var(--accent);
     box-shadow: 0 0 6px var(--accent);
   }

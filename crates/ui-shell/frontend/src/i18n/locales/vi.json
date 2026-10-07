@@ -89,9 +89,6 @@
   "status.denied": "bị chặn",
   "status.unknown": "không rõ",
 
-  "orderType.market": "Thị trường",
-  "orderType.limit": "LO {price}",
-
   "feed.waiting": "Đang chờ giá đầu tiên…",
 
   "watchlist.count.other": "{count} mã",
@@ -102,8 +99,6 @@
   "ticket.side": "Chiều",
   "ticket.quantity": "Khối lượng",
   "ticket.type": "Loại lệnh",
-  "ticket.market": "Thị trường",
-  "ticket.limit": "Giới hạn",
   "ticket.limitPrice": "Giá đặt",
   "ticket.reference": "Giá tham khảo",
   "ticket.notional": "Giá trị ước tính",
@@ -116,6 +111,8 @@
   "ticket.band": "Sàn {floor} · Trần {ceiling}",
   "ticket.tickUp": "Tăng một bước giá",
   "ticket.tickDown": "Giảm một bước giá",
+  "ticket.phase": "{market}: {phase}",
+  "ticket.noOrders": "{market} không nhận lệnh lúc này.",
 
   "orders.summary": "{working} đang chờ · {total} trong phiên",
   "orders.empty": "Chưa có lệnh. Hãy đặt lệnh từ khung Đặt lệnh.",
@@ -151,12 +148,29 @@
   "board.tone.down": "Giảm",
   "board.unit": "Đơn vị giá: {scale} {currency}",
   "board.waiting": "Đang chờ giá…",
-  "board.sessionHint": "Phiên giao dịch thường của sàn, theo giờ của sàn. Sàn giả lập giao dịch mọi lúc.",
+  "board.sessionHint": "Giai đoạn giao dịch của sàn, theo sàn báo.",
 
-  "session.pre-open": "Trước phiên",
-  "session.ato": "ATO",
   "session.continuous": "Liên tục",
-  "session.break": "Nghỉ trưa",
-  "session.atc": "ATC",
-  "session.closed": "Đóng cửa"
+  "session.break": "Nghỉ giữa phiên",
+  "session.closed": "Đóng cửa",
+  "session.preOpen": "Trước phiên",
+  "session.openingAuction": "Phiên mở cửa",
+  "session.closingAuction": "Phiên đóng cửa",
+  "session.afterClose": "Sau đóng cửa",
+  "session.unknown": "Không rõ",
+
+  "order.typeAndPrice": "{type} {price}",
+
+  "orderKind.limit": "Giới hạn",
+  "orderKind.market": "Thị trường",
+  "orderKind.marketToLimit": "Thị trường sang giới hạn",
+  "orderKind.unknown": "Loại không rõ",
+
+  "timeInForce.day": "Trong ngày",
+  "timeInForce.ioc": "IOC",
+  "timeInForce.fok": "FOK",
+  "timeInForce.atOpen": "Mở cửa",
+  "timeInForce.atClose": "Đóng cửa",
+  "timeInForce.afterClose": "Sau đóng cửa",
+  "timeInForce.unknown": "Không rõ"
 }

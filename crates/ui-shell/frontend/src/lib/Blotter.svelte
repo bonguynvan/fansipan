@@ -4,6 +4,8 @@
   import { blotterError } from "./orders.svelte.js";
   import { price, quantity } from "./format.js";
   import { market } from "./market.svelte.js";
+  import { venueNameOf } from "./sessions.js";
+  import { orderTypeName } from "./orderTypes.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   const orders = $derived(market.orderList);
@@ -28,8 +30,8 @@
     { type: "number", key: "id", header: t("column.id"), width: 44, decimals: 0 },
     { type: "text", key: "symbol", header: t("column.symbol"), width: 64 },
     { type: "badge", key: "sideText", header: t("column.side"), width: 64, tones: byText("side", { buy: "up", sell: "down" }) },
-    { type: "text", key: "kind", header: t("column.type"), width: 120 },
-    { type: "text", key: "filled", header: t("column.filled"), width: 100, align: "right", flash: "change" },
+    { type: "text", key: "kind", header: t("column.type"), width: 150, tooltip: true },
+    { type: "text", key: "filled", header: t("column.filled"), width: 124, align: "right", flash: "change" },
     { type: "text", key: "avg", header: t("column.avg"), width: 92, align: "right", format: (v, row) => price(v, row && market.priceDecimals(row.symbol)) },
     { type: "badge", key: "statusText", header: t("column.status"), width: 116, tones: byText("status", STATUS_TONES), flash: "change" },
     { type: "text", key: "reason", header: t("column.reason"), width: 220, tooltip: true },
@@ -41,9 +43,7 @@
       id: o.id,
       symbol: o.symbol,
       sideText: t(`side.${o.side}`),
-      kind: o.limit_price
-        ? t("orderType.limit", { price: price(o.limit_price, market.priceDecimals(o.symbol)) })
-        : t("orderType.market"),
+      kind: typeText(o),
       filled: `${quantity(o.filled_quantity)}/${quantity(o.quantity)}`,
       avg: o.avg_fill_price,
       status: o.status,
@@ -52,6 +52,15 @@
       open: o.open,
     })),
   );
+
+  /** The order's type as its market names it, with the limit price if it has one. */
+  function typeText(order) {
+    const name = venueNameOf(order, market.instruments[order.symbol]?.exchange, market.typeNames);
+    const type = orderTypeName({ ...order, name }, t);
+    return order.limit_price
+      ? t("order.typeAndPrice", { type, price: price(order.limit_price, market.priceDecimals(order.symbol)) })
+      : type;
+  }
 
   const working = $derived(orders.filter((o) => o.open).length);
 </script>

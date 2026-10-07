@@ -81,6 +81,19 @@ describe("catalogs", () => {
     expect(ids.filter((id) => !(id in english))).toEqual([]);
   });
 
+  it("every order kind, time in force, and session phase has a label", () => {
+    const ids = ["limit", "market", "marketToLimit", "unknown"]
+      .map((kind) => `orderKind.${kind}`)
+      .concat(["day", "ioc", "fok", "atOpen", "atClose", "afterClose", "unknown"].map((tif) => `timeInForce.${tif}`))
+      .concat(
+        ["preOpen", "openingAuction", "continuous", "break", "closingAuction", "afterClose", "closed", "unknown"].map(
+          (phase) => `session.${phase}`,
+        ),
+      );
+
+    expect(ids.filter((id) => !(id in english))).toEqual([]);
+  });
+
   it("every connection and connection state has a label", () => {
     const states = ["up", "degraded", "reconnecting", "down", "unknown"];
     const ids = ["marketData", "orders", "unknown"]

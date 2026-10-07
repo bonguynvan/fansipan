@@ -35,6 +35,7 @@ export function createSync(apply) {
         instruments: snap.instruments ?? [],
         boards: snap.boards ?? [],
         connections: snap.connections ?? [],
+        sessions: snap.sessions ?? [],
       });
       lastSeq = snap.seq;
       synced = true;

@@ -3,7 +3,6 @@
 // rename one that has shipped. Titles and descriptions are message ids
 // (see src/i18n/locales).
 
-import { VN_HOSE_SCHEDULE } from "bo-grid/trading";
 import { registerLayout, registerScreen } from "./registry.js";
 import { registerMarketPreset } from "../lib/markets.js";
 import Watchlist from "../lib/Watchlist.svelte";
@@ -112,14 +111,11 @@ export function registerBuiltins() {
   });
 
   // Vietnamese boards quote in thousands of dong, to two places on every
-  // exchange. The badge follows HOSE's schedule, the largest board; HNX
-  // and UPCoM run close to it.
+  // exchange. Each exchange's session comes from the adapter (ADR 0009).
   registerMarketPreset({
     id: "vn",
     priceScale: 1000,
     priceDecimals: 2,
-    schedule: VN_HOSE_SCHEDULE,
-    timeZone: "Asia/Ho_Chi_Minh",
     layout: "board",
   });
 }

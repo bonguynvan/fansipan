@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { onBatch, startBridge } from "./bridge.js";
 import { withConnections } from "./connection.js";
+import { withSessions, withTypeNames } from "./sessions.js";
 import { createSync } from "./sync.js";
 import { tickDecimals, tickTable } from "./ticks.js";
 import { TREND_BARS, toCandle, withBars, withHistory } from "./trends.js";
@@ -24,6 +25,10 @@ class Market {
   boards = $state.raw({});
   /** The venue's connections (`marketData`, `orders`) as the adapter last reported them. */
   connections = $state.raw({});
+  /** Each market's phase of the day and the order types it takes now, keyed by market. */
+  sessions = $state.raw({});
+  /** Every order type name a market's sessions have given, kept after they move on. */
+  typeNames = $state.raw({});
   /** `{ id, title, currency }` of the market the shell is wired to; null until the snapshot is in. */
   info = $state.raw(null);
   ready = $state(false);
@@ -43,6 +48,8 @@ class Market {
     if (batch.instruments.length) this.instruments = { ...this.instruments, ...bySymbol(batch.instruments) };
     if (batch.boards.length) this.boards = { ...this.boards, ...bySymbol(batch.boards) };
     this.connections = withConnections(this.connections, batch.connections);
+    this.sessions = withSessions(this.sessions, batch.sessions);
+    this.typeNames = withTypeNames(this.typeNames, batch.sessions);
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */

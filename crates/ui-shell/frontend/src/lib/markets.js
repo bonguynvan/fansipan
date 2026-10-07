@@ -14,10 +14,6 @@ const FALLBACK = Object.freeze({
   priceScale: 1,
   /** Decimal places a board shows prices with; null to follow each instrument's tick. */
   priceDecimals: null,
-  /** `bo-grid/trading` session windows for the board's session badge, or null for none. */
-  schedule: null,
-  /** IANA zone the schedule's times are in. */
-  timeZone: null,
   /** Layout a fresh main window opens with; null for the default layout. */
   layout: null,
 });
@@ -29,8 +25,6 @@ const presets = new Map();
  * @param {string} preset.id   The market id the shell reports (e.g. "vn").
  * @param {number} [preset.priceScale]
  * @param {number|null} [preset.priceDecimals]
- * @param {Array<{start: string, end: string, state: string}>|null} [preset.schedule]
- * @param {string|null} [preset.timeZone]
  * @param {string|null} [preset.layout]
  */
 export function registerMarketPreset(preset) {
@@ -42,9 +36,6 @@ export function registerMarketPreset(preset) {
   if (!(merged.priceScale > 0)) throw new Error(`market preset "${preset.id}": priceScale must be positive`);
   if (merged.priceDecimals !== null && !(Number.isInteger(merged.priceDecimals) && merged.priceDecimals >= 0)) {
     throw new Error(`market preset "${preset.id}": priceDecimals must be a whole number or null`);
-  }
-  if (merged.schedule !== null && !Array.isArray(merged.schedule)) {
-    throw new Error(`market preset "${preset.id}": schedule must be an array of session windows or null`);
   }
   presets.set(preset.id, Object.freeze(merged));
 }

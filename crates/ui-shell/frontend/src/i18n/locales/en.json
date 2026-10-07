@@ -89,9 +89,6 @@
   "status.denied": "denied",
   "status.unknown": "unknown",
 
-  "orderType.market": "MKT",
-  "orderType.limit": "LMT {price}",
-
   "feed.waiting": "Waiting for the first quotes…",
 
   "watchlist.count.one": "{count} instrument",
@@ -103,8 +100,6 @@
   "ticket.side": "Side",
   "ticket.quantity": "Quantity",
   "ticket.type": "Type",
-  "ticket.market": "Market",
-  "ticket.limit": "Limit",
   "ticket.limitPrice": "Limit price",
   "ticket.reference": "Reference",
   "ticket.notional": "Est. notional",
@@ -117,6 +112,8 @@
   "ticket.band": "Floor {floor} · Ceiling {ceiling}",
   "ticket.tickUp": "One tick up",
   "ticket.tickDown": "One tick down",
+  "ticket.phase": "{market}: {phase}",
+  "ticket.noOrders": "{market} takes no orders now.",
 
   "orders.summary": "{working} working · {total} this session",
   "orders.empty": "No orders yet. Place one from an order ticket.",
@@ -153,12 +150,29 @@
   "board.tone.down": "Down",
   "board.unit": "Prices in {scale} {currency}",
   "board.waiting": "Waiting for the first prices…",
-  "board.sessionHint": "The exchange's regular session, by its own clock. The sandbox trades at any hour.",
+  "board.sessionHint": "The exchange's phase of the day, as the venue reports it.",
 
-  "session.pre-open": "Pre-open",
-  "session.ato": "ATO",
   "session.continuous": "Continuous",
-  "session.break": "Lunch break",
-  "session.atc": "ATC",
-  "session.closed": "Closed"
+  "session.break": "Break",
+  "session.closed": "Closed",
+  "session.preOpen": "Pre-open",
+  "session.openingAuction": "Opening auction",
+  "session.closingAuction": "Closing auction",
+  "session.afterClose": "After close",
+  "session.unknown": "Unknown",
+
+  "order.typeAndPrice": "{type} {price}",
+
+  "orderKind.limit": "Limit",
+  "orderKind.market": "Market",
+  "orderKind.marketToLimit": "Market to limit",
+  "orderKind.unknown": "Unknown type",
+
+  "timeInForce.day": "Day",
+  "timeInForce.ioc": "IOC",
+  "timeInForce.fok": "FOK",
+  "timeInForce.atOpen": "At open",
+  "timeInForce.atClose": "At close",
+  "timeInForce.afterClose": "After close",
+  "timeInForce.unknown": "Unknown"
 }

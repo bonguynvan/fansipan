@@ -4,6 +4,8 @@
   import { symbolOf } from "./links.svelte.js";
   import { money, price, quantity as formatQuantity } from "./format.js";
   import { stepDown, stepUp, tickTable } from "./ticks.js";
+  import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
+  import { orderTypeName, phaseName } from "./orderTypes.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
@@ -17,6 +19,11 @@
   const lot = $derived(Number(instrument?.lot_size) || 1);
   const ticks = $derived(tickTable(instrument));
   const decimals = $derived(market.priceDecimals(selected));
+  // What the instrument's market takes now, as its session says; the
+  // usual two when the adapter publishes no session.
+  const exchange = $derived(instrument?.exchange ?? "");
+  const session = $derived(exchange ? market.sessions[exchange] : undefined);
+  const offered = $derived(orderTypesFor(exchange, market.sessions));
 
   // What was typed starts over when the symbol changes: a size or a price
   // meant for one instrument is wrong for the next, whose lots and prices
@@ -26,14 +33,17 @@
   /** What was typed; until then, one lot. */
   let typedQuantity = $derived(blankFor(selected));
   const quantity = $derived(typedQuantity ?? lot);
-  let orderType = $state("market");
+  /** The type asked for; shown while the market still takes it. */
+  let wantedType = $state(null);
+  const orderType = $derived(pickOrderType(offered, wantedType));
+  const priced = $derived(isPriced(orderType));
   let limitPrice = $derived(blankFor(selected));
   let message = $state(null);
   let busy = $state(false);
 
   const reference = $derived(quote ? Number(side === "buy" ? quote.ask : quote.bid) : null);
   // A limit order is valued at its limit, which is also what risk checks.
-  const valuedAt = $derived(orderType === "limit" && Number(limitPrice) > 0 ? Number(limitPrice) : reference);
+  const valuedAt = $derived(priced && Number(limitPrice) > 0 ? Number(limitPrice) : reference);
   const notional = $derived(valuedAt && quantity > 0 ? valuedAt * quantity : null);
 
   const REFUSED = new Set(["denied", "rejected"]);
@@ -45,15 +55,17 @@
     limitPrice = step(ticks, Number(limitPrice) || reference || 0);
   }
 
-  function onTypeChange() {
-    if (orderType === "limit" && (limitPrice === null || limitPrice === "") && reference) {
+  function chooseType(key) {
+    wantedType = key;
+    const chosen = offered.find((type) => typeKey(type) === key);
+    if (isPriced(chosen) && (limitPrice === null || limitPrice === "") && reference) {
       limitPrice = reference;
     }
   }
 
   async function submit(event) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || !orderType) return;
     busy = true;
     message = null;
     try {
@@ -61,7 +73,9 @@
         symbol: selected,
         side,
         quantity: asText(quantity),
-        limitPrice: orderType === "limit" ? asText(limitPrice) : null,
+        limitPrice: priced ? asText(limitPrice) : null,
+        kind: orderType.kind,
+        timeInForce: orderType.time_in_force,
       });
       message = REFUSED.has(order.status)
         ? { kind: "err", text: t(order.status === "denied" ? "ticket.denied" : "ticket.rejected", { reason: order.reason }) }
@@ -108,14 +122,22 @@
     </label>
 
     <label>
-      <span>{t("ticket.type")}</span>
-      <select bind:value={orderType} onchange={onTypeChange}>
-        <option value="market">{t("ticket.market")}</option>
-        <option value="limit">{t("ticket.limit")}</option>
-      </select>
+      <span>
+        {t("ticket.type")}
+        {#if session}<em class="hint">{t("ticket.phase", { market: exchange, phase: phaseName(session, t) })}</em>{/if}
+      </span>
+      {#if orderType}
+        <select value={typeKey(orderType)} onchange={(event) => chooseType(event.currentTarget.value)}>
+          {#each offered as type (typeKey(type))}
+            <option value={typeKey(type)}>{orderTypeName(type, t)}</option>
+          {/each}
+        </select>
+      {:else}
+        <p class="closed" role="status">{t("ticket.noOrders", { market: exchange })}</p>
+      {/if}
     </label>
 
-    {#if orderType === "limit"}
+    {#if priced}
       <label>
         <span>
           {t("ticket.limitPrice")}
@@ -129,7 +151,7 @@
           <!-- step="any": the browser measures steps from 0, which a ladder
                whose tiers start off a tick multiple would fail; risk checks
                the tick and says why. -->
-          <input class="num" type="number" min="0" step="any" bind:value={limitPrice} />
+          <input class="num" type="number" min="0" step="any" placeholder={reference ?? ""} bind:value={limitPrice} />
           <button type="button" aria-label={t("ticket.tickDown")} title={t("ticket.tickDown")} onclick={() => stepLimit(stepDown)}
             >−</button
           >
@@ -151,7 +173,7 @@
       </div>
     </dl>
 
-    <button class="submit {side}" type="submit" disabled={!selected || busy}>
+    <button class="submit {side}" type="submit" disabled={!selected || !orderType || busy}>
       {busy ? t("ticket.sending") : t("ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
     </button>
 
@@ -233,6 +255,16 @@
   select:focus {
     outline: none;
     border-color: var(--accent);
+  }
+
+  .closed {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px dashed var(--rule);
+    color: var(--text-dim);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
   }
 
   .hint {

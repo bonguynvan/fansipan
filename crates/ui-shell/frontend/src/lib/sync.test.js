@@ -64,4 +64,16 @@ describe("createSync", () => {
     expect(received[0].connections).toEqual([orders]);
     expect(received[1].connections).toEqual([]);
   });
+
+  it("hands on the snapshot's sessions as a batch", () => {
+    const received = [];
+    const sync = createSync((b) => received.push(b));
+    const hose = { market: "HOSE", phase: "openingAuction", name: "ATO", order_types: [] };
+
+    sync.snapshot({ ...snapshot(1), sessions: [hose] });
+    sync.snapshot(snapshot(2));
+
+    expect(received[0].sessions).toEqual([hose]);
+    expect(received[1].sessions).toEqual([]);
+  });
 });
