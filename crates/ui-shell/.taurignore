@@ -1,0 +1,7 @@
+# Vite hot-reloads the front end by itself. Without these, tauri dev also
+# rebuilds and restarts the Rust shell on every front-end edit, which
+# throws away the session's orders and positions. frontend/package.json
+# must stay visible: tauri finds the front end by it.
+frontend/src/
+frontend/node_modules/
+frontend/dist/

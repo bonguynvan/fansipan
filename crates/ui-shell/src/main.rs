@@ -6,12 +6,16 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod batch;
 mod dto;
 
+use std::mem;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
+use std::time::Duration;
 
 use adapter_api::AdapterError;
 use bus::{Bus, Event};
@@ -21,13 +25,18 @@ use model::{AccountState, ClientOrderId, Decimal, InstrumentId, NewOrder, Side};
 use sandbox::{SandboxDataClient, SandboxExecutionClient, SimVenue};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use dto::{AccountDto, OrderDto, QuoteDto, Snapshot, TickDto};
+use batch::{Batch, BatchDto};
+use dto::{AccountDto, BarDto, OrderDto, QuoteDto, Snapshot};
 
 const VENUE: &str = "sim";
 const STARTING_CASH: Decimal = Decimal::from_parts(100_000, 0, 0, false, 0);
 const MAX_ORDER_QUANTITY: Decimal = Decimal::from_parts(1_000, 0, 0, false, 0);
 const MAX_ORDER_NOTIONAL: Decimal = Decimal::from_parts(250_000, 0, 0, false, 0);
-const EVENT_NAME: &str = "bus-event";
+const EVENT_NAME: &str = "bus-batch";
+/// How often conflated changes go to the front end: fast enough that an
+/// order's fill feels immediate, slow enough that a burst costs one message.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+const DEFAULT_BAR_LIMIT: usize = 500;
 
 /// Symbol and opening mid in cents.
 const LISTINGS: [(&str, i64); 5] = [
@@ -38,10 +47,18 @@ const LISTINGS: [(&str, i64); 5] = [
     ("VNM", 6_250),
 ];
 
+/// Lock order: `exec` before `pending`. Every change to an order is queued
+/// in `pending` while `exec` is still held, so the batch receives order
+/// states in the order the engine produced them, whichever thread made the
+/// change. Nothing takes `pending` and then another lock.
 pub struct Shell {
     data: Mutex<DataEngine>,
     exec: Mutex<ExecutionEngine>,
     account: Mutex<AccountState>,
+    /// Changes not yet sent to the front end.
+    pending: Mutex<Batch>,
+    /// Number of the last batch taken from `pending`.
+    flushed: AtomicU64,
 }
 
 /// Engines only become poisoned if a bug panicked mid-update; the shell
@@ -86,78 +103,156 @@ fn new_order(
     })
 }
 
-#[tauri::command]
-fn snapshot(shell: State<'_, Shell>) -> Result<Snapshot, String> {
+/// Everything the front end needs to start, numbered against the batches.
+fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
+    // Read before any state: every batch numbered up to `seq` was taken
+    // from `pending` before the state below was read, so it holds nothing
+    // newer than this snapshot and the front end can drop it.
+    let seq = shell.flushed.load(Ordering::SeqCst);
     Ok(Snapshot {
+        seq,
         quotes: lock(&shell.data)?.quotes().map(QuoteDto::from).collect(),
         orders: lock(&shell.exec)?.orders().map(OrderDto::from).collect(),
         account: AccountDto::from(&*lock(&shell.account)?),
     })
 }
 
+/// Takes everything pending as the next numbered batch; `None` if nothing
+/// changed since the last one.
+fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
+    let batch = mem::take(&mut *lock(&shell.pending)?);
+    if batch.is_empty() {
+        return Ok(None);
+    }
+    let seq = shell.flushed.fetch_add(1, Ordering::SeqCst) + 1;
+    Ok(Some(batch.into_dto(seq)))
+}
+
+fn submit(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
+    let mut exec = lock(&shell.exec)?;
+    let order = OrderDto::from(&exec.submit(request));
+    lock(&shell.pending)?.order(order.clone());
+    Ok(order)
+}
+
+fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
+    let mut exec = lock(&shell.exec)?;
+    let order = exec
+        .cancel(ClientOrderId(id))
+        .map(|o| OrderDto::from(&o))
+        .map_err(|e| e.to_string())?;
+    lock(&shell.pending)?.order(order.clone());
+    Ok(order)
+}
+
+#[tauri::command]
+fn snapshot(shell: State<'_, Shell>) -> Result<Snapshot, String> {
+    snapshot_of(&shell)
+}
+
+/// The newest bars of one instrument, oldest first: a chart's history.
+#[tauri::command]
+fn bars(
+    shell: State<'_, Shell>,
+    symbol: String,
+    limit: Option<usize>,
+) -> Result<Vec<BarDto>, String> {
+    let limit = limit.unwrap_or(DEFAULT_BAR_LIMIT);
+    Ok(lock(&shell.data)?
+        .bars(&instrument(&symbol), limit)
+        .iter()
+        .map(|bar| BarDto::new(&symbol, bar))
+        .collect())
+}
+
 /// Returns the order as recorded, including a risk denial: a denied order is
 /// a result to show in the blotter, not a failed command.
 #[tauri::command]
 fn place_order(
-    app: AppHandle,
     shell: State<'_, Shell>,
     symbol: String,
     side: String,
     quantity: String,
     limit_price: Option<String>,
 ) -> Result<OrderDto, String> {
-    let request = new_order(&symbol, &side, &quantity, limit_price.as_deref())?;
-    let order = OrderDto::from(&lock(&shell.exec)?.submit(request));
-    let _ = app.emit(EVENT_NAME, TickDto::Order(order.clone()));
-    Ok(order)
+    submit(
+        &shell,
+        new_order(&symbol, &side, &quantity, limit_price.as_deref())?,
+    )
 }
 
 #[tauri::command]
-fn cancel_order(app: AppHandle, shell: State<'_, Shell>, id: u64) -> Result<OrderDto, String> {
-    let order = lock(&shell.exec)?
-        .cancel(ClientOrderId(id))
-        .map(|o| OrderDto::from(&o))
-        .map_err(|e| e.to_string())?;
-    let _ = app.emit(EVENT_NAME, TickDto::Order(order.clone()));
-    Ok(order)
+fn cancel_order(shell: State<'_, Shell>, id: u64) -> Result<OrderDto, String> {
+    cancel(&shell, id)
 }
 
-/// Routes each bus event to the engine that owns it, then tells the front
-/// end what changed.
-fn route(shell: &Shell, event: &Event) -> Result<Option<TickDto>, String> {
-    Ok(match event {
-        Event::Quote(quote) => lock(&shell.data)?
-            .on_quote(quote)
-            .then(|| TickDto::Quote(QuoteDto::from(quote))),
-        Event::Execution(report) => match lock(&shell.exec)?.apply(report) {
-            Ok(order) => Some(TickDto::Order(OrderDto::from(&order))),
-            Err(e) => {
-                eprintln!(
+/// Routes one bus event to the engine that owns it and queues what changed
+/// for the front end. Locks follow the order documented on [`Shell`].
+fn route(shell: &Shell, event: &Event) -> Result<(), String> {
+    match event {
+        Event::Quote(quote) => {
+            let update = {
+                let mut data = lock(&shell.data)?;
+                data.on_quote(quote).then(|| {
+                    let symbol = &quote.instrument.symbol;
+                    let bar = data
+                        .last_bar(&quote.instrument)
+                        .map(|bar| BarDto::new(symbol, bar));
+                    (QuoteDto::from(quote), bar)
+                })
+            };
+            if let Some((quote, bar)) = update {
+                let mut pending = lock(&shell.pending)?;
+                pending.quote(quote);
+                if let Some(bar) = bar {
+                    pending.bar(bar);
+                }
+            }
+        }
+        Event::Execution(report) => {
+            let mut exec = lock(&shell.exec)?;
+            match exec.apply(report) {
+                Ok(order) => lock(&shell.pending)?.order(OrderDto::from(&order)),
+                Err(e) => eprintln!(
                     "execution report for order {} ignored: {e}",
                     report.order_id
-                );
-                None
+                ),
             }
-        },
+        }
         Event::AccountUpdate(account) => {
             *lock(&shell.account)? = account.clone();
-            Some(TickDto::Account(AccountDto::from(account)))
+            lock(&shell.pending)?.account(AccountDto::from(account));
         }
-        _ => None,
-    })
+        _ => {}
+    }
+    Ok(())
 }
 
 fn pump(app: AppHandle, events: Receiver<Event>) {
     thread::spawn(move || {
         let shell = app.state::<Shell>();
         for event in events {
-            match route(&shell, &event) {
-                Ok(Some(tick)) => {
-                    let _ = app.emit(EVENT_NAME, tick);
+            if let Err(e) = route(&shell, &event) {
+                eprintln!("event pump stopped: {e}");
+                return;
+            }
+        }
+    });
+}
+
+/// Sends whatever changed since the last flush, as one message.
+fn flush(app: AppHandle) {
+    thread::spawn(move || {
+        let shell = app.state::<Shell>();
+        loop {
+            thread::sleep(FLUSH_INTERVAL);
+            match take_batch(&shell) {
+                Ok(Some(batch)) => {
+                    let _ = app.emit(EVENT_NAME, batch);
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("event pump stopped: {e}");
+                    eprintln!("front-end updates stopped: {e}");
                     return;
                 }
             }
@@ -190,6 +285,8 @@ fn connect_engines(bus: &Bus) -> Result<Shell, AdapterError> {
         data: Mutex::new(data),
         exec: Mutex::new(exec),
         account: Mutex::new(AccountState::default()),
+        pending: Mutex::new(Batch::default()),
+        flushed: AtomicU64::new(0),
     })
 }
 
@@ -208,10 +305,12 @@ fn main() -> ExitCode {
         .setup(move |app| {
             app.manage(shell);
             pump(app.handle().clone(), events);
+            flush(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            bars,
             place_order,
             cancel_order
         ])
@@ -229,6 +328,54 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use model::{Quote, UnixNanos};
+
+    fn shell() -> Shell {
+        connect_engines(&Bus::new()).unwrap()
+    }
+
+    fn take_pending(shell: &Shell) -> BatchDto {
+        take_batch(shell).unwrap().unwrap_or(BatchDto {
+            seq: 0,
+            quotes: vec![],
+            orders: vec![],
+            account: None,
+            bars: vec![],
+        })
+    }
+
+    #[test]
+    fn a_market_order_reaches_the_batch_as_filled() {
+        let bus = Bus::new();
+        let events = bus.subscribe();
+        let shell = connect_engines(&bus).unwrap();
+
+        let placed = submit(&shell, new_order("AAPL", "buy", "1", None).unwrap()).unwrap();
+        for event in events.try_iter() {
+            route(&shell, &event).unwrap();
+        }
+
+        let batch = take_pending(&shell);
+        let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
+        assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn batches_are_numbered_and_a_snapshot_carries_the_last_number() {
+        let shell = shell();
+        shell.pending.lock().unwrap().account(AccountDto {
+            cash: "1".into(),
+            positions: vec![],
+        });
+
+        let first = take_batch(&shell).unwrap().map(|b| b.seq);
+        let nothing = take_batch(&shell).unwrap();
+        let snapshot = snapshot_of(&shell).unwrap();
+
+        assert_eq!(first, Some(1));
+        assert!(nothing.is_none());
+        assert_eq!(snapshot.seq, 1);
+    }
 
     #[test]
     fn order_input_is_parsed_exactly() {
@@ -264,15 +411,37 @@ mod tests {
     }
 
     #[test]
-    fn a_report_for_an_unknown_order_produces_no_tick() {
-        let bus = Bus::new();
-        let shell = connect_engines(&bus).unwrap();
+    fn a_report_for_an_unknown_order_queues_nothing() {
+        let shell = shell();
         let report = Event::Execution(model::ExecutionReport {
             order_id: ClientOrderId(404),
             event: model::OrderEvent::Cancelled,
-            ts_event: model::UnixNanos(0),
+            ts_event: UnixNanos(0),
         });
 
-        assert!(matches!(route(&shell, &report), Ok(None)));
+        route(&shell, &report).unwrap();
+
+        assert!(take_pending(&shell).orders.is_empty());
+    }
+
+    #[test]
+    fn a_quote_queues_itself_and_the_bar_it_moved() {
+        let shell = shell();
+        let quote = Event::Quote(Quote {
+            instrument: instrument("AAPL"),
+            bid: Decimal::new(19_000, 2),
+            ask: Decimal::new(19_002, 2),
+            bid_size: Decimal::ONE,
+            ask_size: Decimal::ONE,
+            ts_event: UnixNanos(1_700_000_003_000_000_000),
+        });
+
+        route(&shell, &quote).unwrap();
+
+        let batch = take_pending(&shell);
+        assert_eq!(batch.quotes.len(), 1);
+        assert_eq!(batch.bars.len(), 1);
+        assert_eq!(batch.bars[0].close, "190.01");
+        assert_eq!(batch.bars[0].time_ms, 1_700_000_000_000);
     }
 }

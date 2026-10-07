@@ -1,42 +1,60 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { onBatch, startBridge } from "./lib/bridge.js";
+  import { createSync } from "./lib/sync.js";
   import Watchlist from "./lib/Watchlist.svelte";
+  import Chart from "./lib/Chart.svelte";
   import OrderTicket from "./lib/OrderTicket.svelte";
   import Portfolio from "./lib/Portfolio.svelte";
   import Blotter from "./lib/Blotter.svelte";
   import { mark, money } from "./lib/format.js";
+  import { TREND_BARS, toCandle, withBars, withHistory } from "./lib/trends.js";
 
-  let quotes = $state({});
-  let orders = $state({});
-  let account = $state({ cash: "0", positions: [] });
+  // Plain objects replaced on every change: cheap to diff, and what bo-grid
+  // expects for rows it flashes.
+  let quotes = $state.raw({});
+  let orders = $state.raw({});
+  let trends = $state.raw({});
+  let account = $state.raw({ cash: "0", positions: [] });
   let ready = $state(false);
   let selected = $state(null);
 
-  function applyTick(tick) {
-    if (tick.kind === "quote") {
-      quotes[tick.data.symbol] = tick.data;
-      selected ??= tick.data.symbol;
-    } else if (tick.kind === "order") {
-      orders[tick.data.id] = tick.data;
-    } else if (tick.kind === "account") {
-      account = tick.data;
+  function applyBatch(batch) {
+    if (batch.quotes.length) {
+      quotes = { ...quotes, ...Object.fromEntries(batch.quotes.map((q) => [q.symbol, q])) };
+      selected ??= batch.quotes[0].symbol;
     }
+    if (batch.orders.length) {
+      orders = { ...orders, ...Object.fromEntries(batch.orders.map((o) => [o.id, o])) };
+    }
+    if (batch.account) account = batch.account;
+    if (batch.bars.length) trends = withBars(trends, batch.bars);
   }
 
+  async function loadTrends(symbols) {
+    const loaded = await Promise.all(
+      symbols.map(async (symbol) => [
+        symbol,
+        (await invoke("bars", { symbol, limit: TREND_BARS })).map(toCandle),
+      ]),
+    );
+    // Batches keep arriving while history loads.
+    trends = withHistory(trends, loaded);
+  }
+
+  const sync = createSync(applyBatch);
+
   onMount(() => {
-    let unlisten;
+    const stop = onBatch(sync.batch);
     (async () => {
-      unlisten = await listen("bus-event", (event) => applyTick(event.payload));
+      await startBridge();
       const snap = await invoke("snapshot");
-      for (const q of snap.quotes) quotes[q.symbol] = q;
-      for (const o of snap.orders) orders[o.id] = o;
-      account = snap.account;
-      selected ??= snap.quotes[0]?.symbol ?? null;
+      sync.snapshot(snap);
+      await loadTrends(snap.quotes.map((q) => q.symbol));
       ready = true;
     })();
-    return () => unlisten?.();
+    return stop;
   });
 
   const symbols = $derived(Object.keys(quotes).sort());
@@ -67,20 +85,24 @@
   </header>
 
   <main>
-    <section class="pane watch">
-      <Watchlist {quotes} {symbols} bind:selected />
+    <section class="pane watch" aria-label="Watchlist">
+      <Watchlist {quotes} {trends} {symbols} bind:selected />
     </section>
 
-    <section class="pane ticket">
+    <section class="pane chart" aria-label="Chart">
+      <Chart symbol={selected} />
+    </section>
+
+    <section class="pane ticket" aria-label="Order ticket">
       <OrderTicket {selected} quote={selected ? quotes[selected] : null} />
     </section>
 
-    <section class="pane portfolio">
-      <Portfolio {account} {quotes} />
+    <section class="pane blotter" aria-label="Orders">
+      <Blotter orders={orderList} />
     </section>
 
-    <section class="pane blotter">
-      <Blotter orders={orderList} />
+    <section class="pane portfolio" aria-label="Account">
+      <Portfolio {account} {quotes} />
     </section>
   </main>
 </div>
@@ -158,10 +180,17 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 25%, transparent);
   }
 
+  /* Watchlist, chart, and ticket on top; the account under the watchlist
+     and the orders across the rest of the bottom, where every column fits.
+     The chart gets the space; the side columns stay at the width their
+     tables need. */
   main {
     display: grid;
-    grid-template-columns: minmax(360px, 1.4fr) minmax(300px, 1fr);
-    grid-template-rows: minmax(0, 1.3fr) minmax(0, 1fr);
+    grid-template-columns: minmax(380px, 25%) minmax(0, 1fr) minmax(360px, 24%);
+    grid-template-rows: minmax(0, 1.75fr) minmax(0, 1fr);
+    grid-template-areas:
+      "watch chart ticket"
+      "portfolio blotter blotter";
     gap: 1px;
     background: var(--rule);
     min-height: 0;
@@ -170,14 +199,13 @@
   .pane {
     background: var(--panel);
     min-height: 0;
-    overflow: auto;
+    min-width: 0;
+    overflow: hidden;
   }
 
-  .watch {
-    grid-row: 1 / span 2;
-  }
-
-  .blotter {
-    grid-column: 2;
-  }
+  .watch { grid-area: watch; }
+  .chart { grid-area: chart; }
+  .ticket { grid-area: ticket; overflow: auto; }
+  .blotter { grid-area: blotter; }
+  .portfolio { grid-area: portfolio; }
 </style>

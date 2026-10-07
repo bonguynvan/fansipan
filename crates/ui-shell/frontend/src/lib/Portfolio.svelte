@@ -1,12 +1,24 @@
 <script>
+  import { Grid, tradecanvasTheme } from "bo-grid";
   import { mark, money, price, quantity } from "./format.js";
 
   let { account, quotes } = $props();
+
+  const tone = (value) => (value > 0 ? "up" : value < 0 ? "down" : undefined);
+
+  const columns = [
+    { type: "text", key: "symbol", header: "Symbol", width: 66, minWidth: 62 },
+    { type: "text", key: "quantity", header: "Qty", width: 48, minWidth: 40, align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
+    { type: "text", key: "avg", header: "Avg", width: 78, minWidth: 72, align: "right", format: (v) => price(v) },
+    { type: "price", key: "mark", header: "Mark", width: 72, minWidth: 64, flash: "auto" },
+    { type: "number", key: "pnl", header: "P&L", width: 76, minWidth: 64, decimals: 2, cellClass: (v) => tone(v) },
+  ];
 
   const rows = $derived(
     account.positions.map((p) => {
       const last = mark(p, quotes[p.symbol]);
       return {
+        id: p.symbol,
         symbol: p.symbol,
         quantity: p.quantity,
         avg: p.avg_price,
@@ -23,44 +35,33 @@
     <span class="num">cash {money(account.cash)}</span>
   </header>
 
-  {#if rows.length === 0}
-    <p class="dim empty">No positions. Buy something from the ticket to see it here.</p>
-  {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th class="r">Qty</th>
-          <th class="r">Avg</th>
-          <th class="r">Mark</th>
-          <th class="r">P&amp;L</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each rows as row (row.symbol)}
-          <tr>
-            <td class="sym">{row.symbol}</td>
-            <td class="r num {Number(row.quantity) < 0 ? 'down' : ''}">{quantity(row.quantity)}</td>
-            <td class="r num">{price(row.avg)}</td>
-            <td class="r num">{price(row.mark)}</td>
-            <td class="r num {row.pnl >= 0 ? 'up' : 'down'}">{money(row.pnl)}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  {/if}
+  <div class="grid">
+    <Grid
+      {rows}
+      {columns}
+      height="100%"
+      theme={tradecanvasTheme}
+      fitColumns
+      cellSelection={false}
+      emptyMessage="No positions yet."
+    />
+  </div>
 </div>
 
 <style>
   .portfolio {
-    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    height: 100%;
+    min-height: 0;
   }
 
   header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 10px;
+    padding: 10px 16px 8px;
   }
 
   h2 {
@@ -71,35 +72,15 @@
     color: var(--accent);
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
+  .grid {
+    min-height: 0;
   }
 
-  th {
-    text-align: left;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-dim);
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--rule);
+  .portfolio :global(.bo-grid .c.up) {
+    color: var(--up);
   }
 
-  td {
-    padding: 8px;
-    border-bottom: 1px solid var(--rule);
-  }
-
-  .r {
-    text-align: right;
-  }
-
-  .sym {
-    font-weight: 600;
-  }
-
-  .empty {
-    margin: 8px 0;
-    font-size: 12px;
+  .portfolio :global(.bo-grid .c.down) {
+    color: var(--down);
   }
 </style>

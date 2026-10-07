@@ -5,22 +5,18 @@
 //! a JS number would round them, and the front end only needs them for
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
+use data_engine::Bar;
 use model::{AccountState, Order, OrderStatus, Quote, Side};
 use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct Snapshot {
+    /// The last batch number taken before this snapshot read engine state.
+    /// Batches numbered up to it are already reflected here.
+    pub seq: u64,
     pub quotes: Vec<QuoteDto>,
     pub orders: Vec<OrderDto>,
     pub account: AccountDto,
-}
-
-#[derive(Serialize, Clone)]
-#[serde(tag = "kind", content = "data", rename_all = "lowercase")]
-pub enum TickDto {
-    Quote(QuoteDto),
-    Order(OrderDto),
-    Account(AccountDto),
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -44,6 +40,33 @@ impl From<&Quote> for QuoteDto {
             bid_size: quote.bid_size.to_string(),
             ask_size: quote.ask_size.to_string(),
             ts_ms: quote.ts_event.0 / NANOS_PER_MILLI,
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct BarDto {
+    pub symbol: String,
+    /// Start of the bar's interval.
+    pub time_ms: u64,
+    pub open: String,
+    pub high: String,
+    pub low: String,
+    pub close: String,
+    /// Quotes in the bar: tick volume, since a quote feed has no traded volume.
+    pub ticks: u64,
+}
+
+impl BarDto {
+    pub fn new(symbol: &str, bar: &Bar) -> Self {
+        Self {
+            symbol: symbol.to_string(),
+            time_ms: bar.ts_open.0 / NANOS_PER_MILLI,
+            open: bar.open.to_string(),
+            high: bar.high.to_string(),
+            low: bar.low.to_string(),
+            close: bar.close.to_string(),
+            ticks: bar.ticks,
         }
     }
 }

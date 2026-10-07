@@ -1,30 +1,24 @@
 <script>
-  import { price } from "./format.js";
+  import { Grid, tradecanvasTheme } from "bo-grid";
 
-  let { quotes, symbols, selected = $bindable(null) } = $props();
+  let { quotes, trends, symbols, selected = $bindable(null) } = $props();
 
-  const FLASH_MS = 450;
-  const lastBid = new Map();
-  let flash = $state({});
+  const columns = [
+    { type: "text", key: "symbol", header: "Symbol", width: 70 },
+    { type: "sparkline", key: "trend", sparkKey: "trend", header: "2 min", width: 96, sortable: false },
+    { type: "price", key: "bid", header: "Bid", width: 84, flash: "auto" },
+    { type: "price", key: "ask", header: "Ask", width: 84, flash: "auto" },
+    { type: "number", key: "spread", header: "Spread", width: 64, decimals: 2 },
+  ];
 
-  $effect(() => {
-    for (const symbol of symbols) {
-      const raw = quotes[symbol]?.bid;
-      if (raw === undefined) continue;
-      const bid = Number(raw);
-      const previous = lastBid.get(symbol);
-      lastBid.set(symbol, bid);
-      if (previous === undefined || previous === bid) continue;
-      flash[symbol] = bid > previous ? "up" : "down";
-      setTimeout(() => {
-        if (flash[symbol]) flash[symbol] = null;
-      }, FLASH_MS);
-    }
-  });
-
-  function spread(q) {
-    return (Number(q.ask) - Number(q.bid)).toFixed(2);
-  }
+  const rows = $derived(
+    symbols.map((symbol) => {
+      const quote = quotes[symbol];
+      const bid = Number(quote.bid);
+      const ask = Number(quote.ask);
+      return { id: symbol, symbol, bid, ask, spread: ask - bid, trend: trends[symbol] ?? [] };
+    }),
+  );
 </script>
 
 <div class="watch">
@@ -33,46 +27,37 @@
     <span class="dim">{symbols.length} instruments</span>
   </header>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Symbol</th>
-        <th class="r">Bid</th>
-        <th class="r">Ask</th>
-        <th class="r">Spread</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each symbols as symbol (symbol)}
-        {@const q = quotes[symbol]}
-        <tr
-          class:selected={selected === symbol}
-          onclick={() => (selected = symbol)}
-          onkeydown={(e) => e.key === "Enter" && (selected = symbol)}
-          tabindex="0"
-        >
-          <td class="sym">{symbol}</td>
-          <td class="r num bid {flash[symbol] ?? ''}">{price(q.bid)}</td>
-          <td class="r num ask {flash[symbol] ?? ''}">{price(q.ask)}</td>
-          <td class="r num dim">{spread(q)}</td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="grid">
+    <Grid
+      {rows}
+      {columns}
+      height="100%"
+      theme={tradecanvasTheme}
+      fitColumns
+      cellSelection={false}
+      selectedRowId={selected}
+      onRowClick={(row) => (selected = row.symbol)}
+      emptyMessage="Waiting for the first quotes…"
+    />
+  </div>
 
-  <p class="hint dim">Click a row to load it into the order ticket.</p>
+  <p class="hint dim">Click a row to chart it and load the order ticket.</p>
 </div>
 
 <style>
   .watch {
-    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+    height: 100%;
+    min-height: 0;
   }
 
   header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 10px;
+    padding: 10px 16px 8px;
   }
 
   h2 {
@@ -83,64 +68,13 @@
     color: var(--accent);
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  th {
-    text-align: left;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-dim);
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--rule);
-  }
-
-  td {
-    padding: 9px 8px;
-    border-bottom: 1px solid var(--rule);
-    transition: background 0.4s ease-out;
-  }
-
-  .r {
-    text-align: right;
-  }
-
-  tbody tr {
-    cursor: pointer;
-  }
-
-  tbody tr:hover td {
-    background: var(--panel-raised);
-  }
-
-  tbody tr:focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
-  }
-
-  tbody tr.selected td {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-  }
-
-  .sym {
-    font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-
-  .bid.up,
-  .ask.up {
-    background: color-mix(in srgb, var(--up) 22%, transparent);
-  }
-
-  .bid.down,
-  .ask.down {
-    background: color-mix(in srgb, var(--down) 22%, transparent);
+  .grid {
+    min-height: 0;
   }
 
   .hint {
-    margin: 12px 0 0;
+    margin: 0;
+    padding: 8px 16px 12px;
     font-size: 11px;
   }
 </style>

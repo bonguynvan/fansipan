@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use bus::Event;
 use model::{
@@ -29,6 +30,8 @@ pub const MIN_MID: Decimal = Decimal::from_parts(2, 0, 0, false, 2);
 /// move. A resting order larger than this fills across several ticks.
 pub const TOP_OF_BOOK_SIZE: Decimal = Decimal::ONE_HUNDRED;
 const AVG_PRICE_DP: u32 = 8;
+/// A random step moves a price by up to this many ticks either way.
+const MAX_STEP_TICKS: u64 = 2;
 
 struct Resting {
     order: SubmitOrder,
@@ -88,6 +91,43 @@ impl SimVenue {
             .mids
             .get(instrument)
             .map(|mid| quote_at(instrument, *mid, now))
+    }
+
+    /// A made-up past for one instrument: `count` quotes `spacing` apart,
+    /// the last one a `spacing` before `end`, walking backwards from the
+    /// current mid so the history joins the live feed without a jump.
+    /// Read-only: the venue's state does not change. Empty if the
+    /// instrument is not listed.
+    pub fn synthetic_history(
+        &self,
+        instrument: &InstrumentId,
+        end: UnixNanos,
+        count: usize,
+        spacing: Duration,
+        seed: &mut u64,
+    ) -> Vec<Quote> {
+        let Some(mid) = self.state().mids.get(instrument).copied() else {
+            return Vec::new();
+        };
+        let spacing = u64::try_from(spacing.as_nanos()).unwrap_or(u64::MAX);
+        let mut mids = Vec::with_capacity(count);
+        let mut price = mid;
+        for _ in 0..count {
+            mids.push(price);
+            price = price
+                .checked_sub(random_step(seed))
+                .unwrap_or(price)
+                .max(MIN_MID);
+        }
+        mids.into_iter()
+            .rev()
+            .enumerate()
+            .map(|(index, mid)| {
+                let steps_back = u64::try_from(count - index).unwrap_or(u64::MAX);
+                let ts = end.0.saturating_sub(steps_back.saturating_mul(spacing));
+                quote_at(instrument, mid, UnixNanos(ts))
+            })
+            .collect()
     }
 
     pub fn account(&self) -> AccountState {
@@ -198,6 +238,20 @@ fn submit_locked(state: &mut VenueState, order: SubmitOrder, now: UnixNanos) -> 
         state.resting.push(Resting { order, remaining });
     }
     events
+}
+
+/// A price move of up to `MAX_STEP_TICKS` ticks either way, drawn from a
+/// xorshift sequence so a given seed always walks the same path.
+pub(crate) fn random_step(seed: &mut u64) -> Decimal {
+    *seed = xorshift(*seed);
+    let ticks = Decimal::from(*seed % (2 * MAX_STEP_TICKS + 1)) - Decimal::from(MAX_STEP_TICKS);
+    ticks * TICK
+}
+
+fn xorshift(mut x: u64) -> u64 {
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^ (x << 17)
 }
 
 fn quote_at(instrument: &InstrumentId, mid: Decimal, now: UnixNanos) -> Quote {
@@ -581,6 +635,54 @@ mod tests {
         submit(&venue, order(2, Side::Sell, "5", None));
 
         assert!(venue.account().positions.is_empty());
+    }
+
+    #[test]
+    fn synthetic_history_ends_at_the_current_mid_without_moving_it() {
+        let venue = venue("1000", "10");
+        let spacing = Duration::from_millis(500);
+        let end = UnixNanos(1_000_000_000_000);
+
+        let history = venue.synthetic_history(&aaa(), end, 50, spacing, &mut 7);
+
+        assert_eq!(history.len(), 50);
+        assert_eq!(history.last().map(|q| q.mid()), Some(d("10")));
+        assert_eq!(
+            history.last().map(|q| q.ts_event),
+            Some(UnixNanos(end.0 - 500_000_000))
+        );
+        assert!(history
+            .windows(2)
+            .all(|w| w[1].ts_event.0 - w[0].ts_event.0 == 500_000_000));
+        assert!(history.iter().all(|q| q.mid() >= MIN_MID));
+        assert_eq!(venue.quote(&aaa(), NOW).map(|q| q.mid()), Some(d("10")));
+    }
+
+    #[test]
+    fn synthetic_history_is_reproducible_from_its_seed() {
+        let venue = venue("1000", "10");
+        let spacing = Duration::from_millis(500);
+        let end = UnixNanos(10_000_000_000);
+
+        let first = venue.synthetic_history(&aaa(), end, 20, spacing, &mut 42);
+        let second = venue.synthetic_history(&aaa(), end, 20, spacing, &mut 42);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn synthetic_history_of_an_unlisted_instrument_is_empty() {
+        let venue = venue("1000", "10");
+
+        let history = venue.synthetic_history(
+            &InstrumentId::new("sim", "ZZZ"),
+            NOW,
+            10,
+            Duration::from_millis(500),
+            &mut 7,
+        );
+
+        assert!(history.is_empty());
     }
 
     #[test]

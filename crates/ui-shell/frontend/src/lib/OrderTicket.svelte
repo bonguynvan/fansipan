@@ -11,7 +11,9 @@
   let busy = $state(false);
 
   const reference = $derived(quote ? Number(side === "buy" ? quote.ask : quote.bid) : null);
-  const notional = $derived(reference && quantity > 0 ? reference * quantity : null);
+  // A limit order is valued at its limit, which is also what risk checks.
+  const valuedAt = $derived(orderType === "limit" && Number(limitPrice) > 0 ? Number(limitPrice) : reference);
+  const notional = $derived(valuedAt && quantity > 0 ? valuedAt * quantity : null);
 
   const REFUSED = new Set(["denied", "rejected"]);
 
@@ -38,7 +40,7 @@
       });
       message = REFUSED.has(order.status)
         ? { kind: "err", text: `${order.status === "denied" ? "Denied by risk" : "Rejected"}: ${order.reason}` }
-        : { kind: "ok", text: `#${order.id} ${side.toUpperCase()} ${quantity} ${selected} — ${order.status}` };
+        : { kind: "ok", text: `#${order.id} ${side.toUpperCase()} ${quantity} ${selected} sent; live status in Orders` };
     } catch (err) {
       message = { kind: "err", text: String(err) };
     } finally {
@@ -102,14 +104,14 @@
 
 <style>
   .ticket {
-    padding: 14px 16px;
+    padding: 10px 16px 14px;
   }
 
   header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
 
   h2 {
@@ -129,11 +131,11 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
 
   .side {
-    padding: 10px;
+    padding: 8px;
     border: 1px solid var(--rule);
     background: var(--panel-raised);
     cursor: pointer;
@@ -154,7 +156,7 @@
 
   form {
     display: grid;
-    gap: 12px;
+    gap: 10px;
   }
 
   label {
@@ -205,7 +207,7 @@
   }
 
   .submit {
-    padding: 12px;
+    padding: 10px;
     border: none;
     font-weight: 700;
     letter-spacing: 0.06em;

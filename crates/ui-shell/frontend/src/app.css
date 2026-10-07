@@ -1,13 +1,15 @@
+/* One palette with the chart and the grids: TradeCanvas's dark theme and
+   bo-grid's tradecanvasTheme share these values, so panes sit flush. */
 :root {
-  --ink: #0b0d10;
-  --panel: #13161b;
-  --panel-raised: #1a1e25;
-  --rule: #262c36;
-  --text: #e6e9ef;
-  --text-dim: #7d8594;
-  --accent: #f5b841;
-  --up: #3ddc97;
-  --down: #ff5d6c;
+  --ink: #0b0f15;
+  --panel: #11161e;
+  --panel-raised: #161c25;
+  --rule: #1f2630;
+  --text: #d9dde4;
+  --text-dim: #7d8696;
+  --accent: #f2a93b;
+  --up: #3ccf91;
+  --down: #f0616d;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
 }
