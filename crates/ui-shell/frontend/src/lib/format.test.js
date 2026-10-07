@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { currencyDigits, money, price } from "./format.js";
+import { currencyDigits, money, price, timeOfDay } from "./format.js";
 
 describe("formatting", () => {
+  it("writes a time of day to the second, 24-hour, in local time", () => {
+    expect(timeOfDay(new Date(2026, 9, 7, 9, 5, 7).getTime())).toBe("09:05:07");
+    expect(timeOfDay(new Date(2026, 9, 7, 14, 30, 0).getTime())).toBe("14:30:00");
+    expect(timeOfDay(null)).toBe("—");
+  });
+
   it("writes money in the currency's minor units", () => {
     expect(currencyDigits("VND")).toBe(0);
     expect(currencyDigits("USD")).toBe(2);

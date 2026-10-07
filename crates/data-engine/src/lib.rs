@@ -7,8 +7,8 @@
 //! unsubscribe.
 //!
 //! Each subscribed instrument also gets a [`BarSeries`] built from its quote
-//! mids, which is what a chart draws, and, with a trade subscription,
-//! [`SessionStats`] built from the tape.
+//! mids, which is what a chart draws, and, with a trade subscription, a
+//! [`Tape`] of its recent prints and [`SessionStats`] built from them.
 //!
 //! Reference data (instrument definitions, today's price bands) is kept for
 //! every instrument the adapter publishes, subscribed or not: it is small,
@@ -20,6 +20,7 @@
 
 mod bars;
 mod session;
+mod tape;
 
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -33,9 +34,11 @@ use model::{
 
 pub use bars::{Bar, BarSeries};
 pub use session::SessionStats;
+pub use tape::{Print, Tape};
 
 pub const DEFAULT_BAR_INTERVAL: Duration = Duration::from_secs(5);
 pub const DEFAULT_BAR_CAPACITY: usize = 1_000;
+pub const DEFAULT_TAPE_CAPACITY: usize = 500;
 
 pub struct DataEngine {
     client: Box<dyn DataClient>,
@@ -49,6 +52,11 @@ pub struct DataEngine {
     bands: HashMap<InstrumentId, PriceBand>,
     depth: HashMap<InstrumentId, Depth>,
     stats: HashMap<InstrumentId, SessionStats>,
+    tapes: HashMap<InstrumentId, Tape>,
+    /// Prints numbered by an instrument's tapes since dropped, so a new
+    /// tape carries on the count.
+    taken_before: HashMap<InstrumentId, u64>,
+    tape_capacity: usize,
     sessions: BTreeMap<String, SessionStatus>,
     connection: Option<ConnectionStatus>,
 }
@@ -89,6 +97,9 @@ impl DataEngine {
             bands: HashMap::new(),
             depth: HashMap::new(),
             stats: HashMap::new(),
+            tapes: HashMap::new(),
+            taken_before: HashMap::new(),
+            tape_capacity: DEFAULT_TAPE_CAPACITY,
             sessions: BTreeMap::new(),
             connection: None,
         }
@@ -100,6 +111,15 @@ impl DataEngine {
         Self {
             bar_interval: interval,
             bar_capacity: capacity,
+            ..self
+        }
+    }
+
+    /// How many prints to keep per instrument. Applies to tapes started
+    /// after the call.
+    pub fn with_tape(self, capacity: usize) -> Self {
+        Self {
+            tape_capacity: capacity,
             ..self
         }
     }
@@ -150,6 +170,9 @@ impl DataEngine {
             self.client.unsubscribe_trades(instrument)?;
             self.trade_refs.remove(instrument);
             self.stats.remove(instrument);
+            if let Some(tape) = self.tapes.remove(instrument) {
+                self.taken_before.insert(instrument.clone(), tape.taken());
+            }
         }
         Ok(())
     }
@@ -213,15 +236,38 @@ impl DataEngine {
         true
     }
 
-    /// Folds a print into the session stats of a trade-subscribed instrument;
-    /// returns whether kept.
+    /// Puts a print on the tape of a trade-subscribed instrument and folds
+    /// it into its session stats; returns whether kept.
     pub fn on_trade(&mut self, trade: &Trade) -> bool {
         if !self.trade_refs.contains_key(&trade.instrument) {
             return false;
         }
         let stats = self.stats.entry(trade.instrument.clone()).or_default();
         *stats = stats.with_trade(trade.price, trade.quantity);
+        let capacity = self.tape_capacity;
+        let taken = self
+            .taken_before
+            .get(&trade.instrument)
+            .copied()
+            .unwrap_or(0);
+        self.tapes
+            .entry(trade.instrument.clone())
+            .or_insert_with(|| Tape::after(capacity, taken))
+            .record(trade.clone());
         true
+    }
+
+    /// The print `on_trade` last kept for an instrument.
+    pub fn last_print(&self, instrument: &InstrumentId) -> Option<&Print> {
+        self.tapes.get(instrument).and_then(Tape::last)
+    }
+
+    /// The newest `limit` prints of an instrument, oldest first.
+    pub fn prints(&self, instrument: &InstrumentId, limit: usize) -> Vec<Print> {
+        self.tapes
+            .get(instrument)
+            .map(|tape| tape.recent(limit).cloned().collect())
+            .unwrap_or_default()
     }
 
     pub fn instrument(&self, instrument: &InstrumentId) -> Option<&InstrumentInfo> {
@@ -395,6 +441,45 @@ mod tests {
         engine.unsubscribe_trades(&id("AAA")).unwrap();
 
         assert!(engine.stats(&id("AAA")).is_none());
+        assert!(engine.prints(&id("AAA"), 10).is_empty());
+    }
+
+    #[test]
+    fn subscribed_prints_go_on_a_numbered_tape_per_instrument() {
+        let (engine, _) = engine();
+        let mut engine = engine.with_tape(2);
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.subscribe_trades(&id("BBB")).unwrap();
+
+        assert!(!engine.on_trade(&trade("CCC", 10, 100)));
+        for price in 10..13 {
+            engine.on_trade(&trade("AAA", price, 100));
+        }
+        engine.on_trade(&trade("BBB", 50, 100));
+
+        let tape: Vec<(u64, Decimal)> = engine
+            .prints(&id("AAA"), 10)
+            .iter()
+            .map(|p| (p.seq, p.trade.price))
+            .collect();
+        assert_eq!(tape, vec![(2, Decimal::from(11)), (3, Decimal::from(12))]);
+        assert_eq!(engine.last_print(&id("BBB")).map(|p| p.seq), Some(1));
+        assert!(engine.prints(&id("CCC"), 10).is_empty());
+    }
+
+    #[test]
+    fn a_tape_started_again_carries_on_the_count() {
+        let (mut engine, _) = engine();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.on_trade(&trade("AAA", 10, 100));
+        engine.on_trade(&trade("AAA", 11, 100));
+
+        engine.unsubscribe_trades(&id("AAA")).unwrap();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.on_trade(&trade("AAA", 12, 100));
+
+        assert_eq!(engine.last_print(&id("AAA")).map(|p| p.seq), Some(3));
+        assert_eq!(engine.prints(&id("AAA"), 10).len(), 1);
     }
 
     #[test]

@@ -11,6 +11,7 @@ import OrderTicket from "../lib/OrderTicket.svelte";
 import Blotter from "../lib/Blotter.svelte";
 import Portfolio from "../lib/Portfolio.svelte";
 import PriceBoard from "../lib/PriceBoard.svelte";
+import TimeAndSales from "../lib/TimeAndSales.svelte";
 
 export const DEFAULT_LAYOUT = "trading";
 
@@ -68,6 +69,15 @@ export function registerBuiltins() {
     description: "screen.price-board.description",
   });
 
+  registerScreen({
+    id: "time-and-sales",
+    title: "screen.time-and-sales.title",
+    component: TimeAndSales,
+    linkable: true,
+    defaultParams: { link: "a" },
+    description: "screen.time-and-sales.description",
+  });
+
   registerLayout({
     id: DEFAULT_LAYOUT,
     title: "layout.trading.title",
@@ -76,7 +86,8 @@ export function registerBuiltins() {
       const watchlist = add("watchlist", { initialWidth: 420 });
       const orders = add("orders", { position: { referencePanel: watchlist, direction: "right" }, initialHeight: 270 });
       const chart = add("chart", { position: { referencePanel: orders, direction: "above" } });
-      add("order-ticket", { position: { referencePanel: chart, direction: "right" }, initialWidth: 340 });
+      const ticket = add("order-ticket", { position: { referencePanel: chart, direction: "right" }, initialWidth: 340 });
+      add("time-and-sales", { position: { referencePanel: ticket, direction: "below" } });
       add("account", { position: { referencePanel: watchlist, direction: "below" }, initialHeight: 270 });
     },
   });
@@ -107,6 +118,8 @@ export function registerBuiltins() {
       const ticket = add("order-ticket", { position: { referencePanel: chart, direction: "right" }, initialWidth: 300 });
       const orders = add("orders", { position: { referencePanel: ticket, direction: "right" }, initialWidth: 560 });
       add("account", { position: { referencePanel: orders, direction: "within" } });
+      // Beside the board, once the bottom row spans beneath both.
+      add("time-and-sales", { position: { referencePanel: board, direction: "right" }, initialWidth: 300 });
     },
   });
 

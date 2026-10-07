@@ -27,6 +27,11 @@ export const price = (value, decimals) => format(value, decimals === undefined ?
 export const money = (value, currency) => format(value, fixed(currencyDigits(currency)));
 export const quantity = (value) => format(value, QUANTITY);
 
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+
+/** Local time of day to the second, 24-hour: "09:15:07". */
+export const timeOfDay = (ms) => (ms === null || ms === undefined ? "—" : CLOCK.format(ms));
+
 /** Liquidation mark: a long sells at the bid, a short buys back at the ask. */
 export function mark(position, quote) {
   if (!quote) return Number(position.avg_price);

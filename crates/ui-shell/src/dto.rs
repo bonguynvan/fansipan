@@ -5,7 +5,7 @@
 //! a JS number would round them, and the front end only needs them for
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
-use data_engine::{Bar, DataEngine};
+use data_engine::{Bar, DataEngine, Print};
 use execution_engine::is_amendable;
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
@@ -214,6 +214,41 @@ impl From<&Quote> for QuoteDto {
     }
 }
 
+fn side_label(side: Side) -> &'static str {
+    match side {
+        Side::Buy => "buy",
+        Side::Sell => "sell",
+    }
+}
+
+/// One print of the tape, for time and sales.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PrintDto {
+    pub symbol: String,
+    /// The print's number on its instrument's tape: one more than the print
+    /// before it. Numbers are never reused, so they identify prints.
+    pub seq: u64,
+    pub price: String,
+    pub quantity: String,
+    /// The aggressor, "buy" or "sell", when the venue says.
+    pub side: Option<&'static str>,
+    pub time_ms: u64,
+}
+
+impl From<&Print> for PrintDto {
+    fn from(print: &Print) -> Self {
+        let trade = &print.trade;
+        Self {
+            symbol: trade.instrument.symbol.clone(),
+            seq: print.seq,
+            price: trade.price.to_string(),
+            quantity: trade.quantity.to_string(),
+            side: trade.side.map(side_label),
+            time_ms: trade.ts_event.0 / NANOS_PER_MILLI,
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct BarDto {
     pub symbol: String,
@@ -270,10 +305,7 @@ impl From<&Order> for OrderDto {
             id: order.id.0,
             venue_order_id: order.venue_order_id.as_ref().map(|v| v.0.clone()),
             symbol: order.instrument.symbol.clone(),
-            side: match order.side {
-                Side::Buy => "buy",
-                Side::Sell => "sell",
-            },
+            side: side_label(order.side),
             quantity: order.quantity.to_string(),
             filled_quantity: order.filled_quantity.to_string(),
             kind: kind_label(order.order_type.kind),

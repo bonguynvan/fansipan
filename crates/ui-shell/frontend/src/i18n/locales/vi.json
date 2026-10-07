@@ -51,6 +51,8 @@
   "screen.account.description": "Tiền và vị thế theo báo cáo của sàn, kèm lãi/lỗ trực tiếp.",
   "screen.price-board.title": "Bảng giá",
   "screen.price-board.description": "Toàn bộ mã niêm yết với ba bước giá mua/bán, giá khớp gần nhất và biên độ trong ngày, tô màu theo giá tham chiếu, trần và sàn.",
+  "screen.time-and-sales.title": "Khớp lệnh",
+  "screen.time-and-sales.description": "Từng lệnh khớp của mã đang liên kết, mới nhất trước, tô màu theo giá tham chiếu, trần và sàn.",
 
   "layout.trading.title": "Bàn giao dịch",
   "layout.two-charts.title": "Hai biểu đồ (nhóm liên kết A và B)",
@@ -67,6 +69,7 @@
   "column.spread": "Chênh lệch",
   "column.id": "#",
   "column.side": "Chiều",
+  "column.time": "Thời gian",
   "column.type": "Loại",
   "column.filled": "Đã khớp",
   "column.avg": "Giá TB",
@@ -162,6 +165,9 @@
   "board.tone.up": "Tăng",
   "board.tone.down": "Giảm",
   "board.unit": "Đơn vị giá: {scale} {currency}",
+  "tape.empty": "Chưa có lệnh khớp nào của {symbol}.",
+  "tape.loadFailed": "Không đọc được các lệnh khớp trước đó: {error}",
+  "tape.gridLabel": "Khớp lệnh của {symbol}",
   "board.waiting": "Đang chờ giá…",
   "board.sessionHint": "Giai đoạn giao dịch của sàn, theo sàn báo.",
 

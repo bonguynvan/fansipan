@@ -33,8 +33,8 @@ pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
 use dto::{
-    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, MarketDto, OrderDto, QuoteDto,
-    SessionDto, Snapshot,
+    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, MarketDto, OrderDto, PrintDto,
+    QuoteDto, SessionDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -42,6 +42,7 @@ const EVENT_NAME: &str = "bus-batch";
 /// order's fill feels immediate, slow enough that a burst costs one message.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const DEFAULT_BAR_LIMIT: usize = 500;
+const DEFAULT_PRINT_LIMIT: usize = 200;
 
 /// How the front end presents the venue. `id` selects its display presets
 /// (price scale, session badge, default layout); a venue without a preset
@@ -313,6 +314,22 @@ fn bars(
         .collect())
 }
 
+/// The newest prints of one instrument, oldest first: the history time and
+/// sales starts from. Later prints arrive in the batches.
+#[tauri::command]
+fn prints(
+    shell: State<'_, Shell>,
+    symbol: String,
+    limit: Option<usize>,
+) -> Result<Vec<PrintDto>, String> {
+    let limit = limit.unwrap_or(DEFAULT_PRINT_LIMIT);
+    Ok(lock(&shell.data)?
+        .prints(&shell.instrument(&symbol), limit)
+        .iter()
+        .map(PrintDto::from)
+        .collect())
+}
+
 /// Returns the order as recorded, including a risk denial: a denied order is
 /// a result to show in the blotter, not a failed command.
 #[tauri::command]
@@ -394,13 +411,19 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
             }
         }
         Event::Trade(trade) => {
-            let board = {
+            let update = {
                 let mut data = lock(&shell.data)?;
-                data.on_trade(trade)
-                    .then(|| BoardDto::of(&data, &trade.instrument))
+                data.on_trade(trade).then(|| {
+                    let print = data.last_print(&trade.instrument).map(PrintDto::from);
+                    (print, BoardDto::of(&data, &trade.instrument))
+                })
             };
-            if let Some(board) = board {
-                lock(&shell.pending)?.board(board);
+            if let Some((print, board)) = update {
+                let mut pending = lock(&shell.pending)?;
+                if let Some(print) = print {
+                    pending.print(print);
+                }
+                pending.board(board);
             }
         }
         // Reference data goes to both engines: the data engine to show it,
@@ -549,6 +572,7 @@ pub fn run(venue: Venue) -> ExitCode {
         .invoke_handler(tauri::generate_handler![
             snapshot,
             bars,
+            prints,
             place_order,
             cancel_order,
             amend_order,
@@ -626,6 +650,7 @@ mod tests {
             boards: vec![],
             connections: vec![],
             sessions: vec![],
+            prints: vec![],
         })
     }
 
@@ -822,6 +847,43 @@ mod tests {
         assert_eq!(board.change.as_deref(), Some("600"));
         assert_eq!(board.change_pct.as_deref(), Some("0.96"));
         assert_eq!(board.volume, "300");
+    }
+
+    #[test]
+    fn a_trade_reaches_the_batch_and_the_tape_as_a_numbered_print() {
+        let vn = profile("vn");
+        let shell = connect(&Bus::new(), &vn);
+        take_pending(&shell);
+        let trade = |price: i64, side| {
+            Event::Trade(model::Trade {
+                instrument: InstrumentId::new(VENUE, "VNM"),
+                price: Decimal::new(price, 0),
+                quantity: Decimal::new(300, 0),
+                side,
+                ts_event: UnixNanos(2_000_000),
+            })
+        };
+
+        route(&shell, &trade(63_100, Some(Side::Buy))).unwrap();
+        route(&shell, &trade(63_000, None)).unwrap();
+
+        let batch = take_pending(&shell);
+        let sent: Vec<(u64, &str, Option<&str>, u64)> = batch
+            .prints
+            .iter()
+            .map(|p| (p.seq, p.price.as_str(), p.side, p.time_ms))
+            .collect();
+        assert_eq!(
+            sent,
+            vec![(1, "63100", Some("buy"), 2), (2, "63000", None, 2)]
+        );
+        let tape: Vec<PrintDto> = lock(&shell.data)
+            .unwrap()
+            .prints(&shell.instrument("VNM"), DEFAULT_PRINT_LIMIT)
+            .iter()
+            .map(PrintDto::from)
+            .collect();
+        assert_eq!(tape, batch.prints);
     }
 
     #[test]

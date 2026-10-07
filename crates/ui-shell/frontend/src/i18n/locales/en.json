@@ -51,6 +51,8 @@
   "screen.account.description": "Cash and positions as the venue reports them, with live P&L.",
   "screen.price-board.title": "Price board",
   "screen.price-board.description": "Every listed instrument with three levels of depth, the last match, and the day's range, coloured against reference, ceiling and floor.",
+  "screen.time-and-sales.title": "Time & sales",
+  "screen.time-and-sales.description": "Every trade in the linked symbol, newest first, coloured against reference, ceiling and floor.",
 
   "layout.trading.title": "Trading desk",
   "layout.two-charts.title": "Two charts (link groups A and B)",
@@ -67,6 +69,7 @@
   "column.spread": "Spread",
   "column.id": "#",
   "column.side": "Side",
+  "column.time": "Time",
   "column.type": "Type",
   "column.filled": "Filled",
   "column.avg": "Avg",
@@ -164,6 +167,9 @@
   "board.tone.up": "Up",
   "board.tone.down": "Down",
   "board.unit": "Prices in {scale} {currency}",
+  "tape.empty": "No trades in {symbol} yet.",
+  "tape.loadFailed": "Earlier trades could not be read: {error}",
+  "tape.gridLabel": "Time and sales for {symbol}",
   "board.waiting": "Waiting for the first prices…",
   "board.sessionHint": "The exchange's phase of the day, as the venue reports it.",
 

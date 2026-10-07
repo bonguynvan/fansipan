@@ -5,13 +5,20 @@
 //! instrument per symbol, the latest state per order and per connection
 //! survive, and each changed bar is kept once, so the webview receives a
 //! bounded number of messages whatever the feed rate.
+//!
+//! Prints are not conflated, since time and sales shows each one. A symbol's
+//! prints in one batch are capped at a default tape's size: a burst bigger
+//! than that in one flush is more than any reader could scroll back
+//! through.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
+use data_engine::DEFAULT_TAPE_CAPACITY;
 use serde::Serialize;
 
 use crate::dto::{
-    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, QuoteDto, SessionDto,
+    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, PrintDto, QuoteDto,
+    SessionDto,
 };
 
 #[derive(Default)]
@@ -24,6 +31,7 @@ pub struct Batch {
     boards: BTreeMap<String, BoardDto>,
     connections: BTreeMap<&'static str, ConnectionDto>,
     sessions: BTreeMap<String, SessionDto>,
+    prints: BTreeMap<String, VecDeque<PrintDto>>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -41,6 +49,8 @@ pub struct BatchDto {
     pub boards: Vec<BoardDto>,
     pub connections: Vec<ConnectionDto>,
     pub sessions: Vec<SessionDto>,
+    /// Every print since the last batch, by symbol, then oldest first.
+    pub prints: Vec<PrintDto>,
 }
 
 impl Batch {
@@ -80,6 +90,14 @@ impl Batch {
         self.sessions.insert(session.market.clone(), session);
     }
 
+    pub fn print(&mut self, print: PrintDto) {
+        let tape = self.prints.entry(print.symbol.clone()).or_default();
+        if tape.len() == DEFAULT_TAPE_CAPACITY {
+            tape.pop_front();
+        }
+        tape.push_back(print);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.quotes.is_empty()
             && self.orders.is_empty()
@@ -89,6 +107,7 @@ impl Batch {
             && self.boards.is_empty()
             && self.connections.is_empty()
             && self.sessions.is_empty()
+            && self.prints.is_empty()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -102,6 +121,7 @@ impl Batch {
             boards: self.boards.into_values().collect(),
             connections: self.connections.into_values().collect(),
             sessions: self.sessions.into_values().collect(),
+            prints: self.prints.into_values().flatten().collect(),
         }
     }
 }
@@ -192,6 +212,50 @@ mod tests {
         let dto = batch.into_dto(1);
         assert_eq!(dto.boards.len(), 1);
         assert_eq!(dto.boards[0].last.as_deref(), Some("62600"));
+    }
+
+    fn print(symbol: &str, seq: u64) -> PrintDto {
+        PrintDto {
+            symbol: symbol.into(),
+            seq,
+            price: "10".into(),
+            quantity: "100".into(),
+            side: None,
+            time_ms: 0,
+        }
+    }
+
+    #[test]
+    fn every_print_is_kept_by_symbol_in_tape_order() {
+        let mut batch = Batch::default();
+
+        batch.print(print("BBB", 7));
+        batch.print(print("AAA", 1));
+        batch.print(print("BBB", 8));
+
+        let prints: Vec<(String, u64)> = batch
+            .into_dto(1)
+            .prints
+            .into_iter()
+            .map(|p| (p.symbol, p.seq))
+            .collect();
+        assert_eq!(
+            prints,
+            vec![("AAA".into(), 1), ("BBB".into(), 7), ("BBB".into(), 8)]
+        );
+    }
+
+    #[test]
+    fn a_batch_holds_no_more_of_a_symbols_prints_than_its_tape() {
+        let mut batch = Batch::default();
+
+        for seq in 1..=(DEFAULT_TAPE_CAPACITY as u64 + 2) {
+            batch.print(print("AAA", seq));
+        }
+
+        let prints = batch.into_dto(1).prints;
+        assert_eq!(prints.len(), DEFAULT_TAPE_CAPACITY);
+        assert_eq!(prints[0].seq, 3);
     }
 
     #[test]

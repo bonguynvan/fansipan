@@ -7,6 +7,7 @@ import { onBatch, startBridge } from "./bridge.js";
 import { withConnections } from "./connection.js";
 import { withSessions, withTypeNames } from "./sessions.js";
 import { createSync } from "./sync.js";
+import { TAPE_PRINTS, withPrints, withTapeHistory } from "./tape.js";
 import { tickDecimals, tickTable } from "./ticks.js";
 import { TREND_BARS, toCandle, withBars, withHistory } from "./trends.js";
 
@@ -29,6 +30,8 @@ class Market {
   sessions = $state.raw({});
   /** Every order type name a market's sessions have given, kept after they move on. */
   typeNames = $state.raw({});
+  /** Each symbol's recent prints, oldest first, numbered by its tape. */
+  tapes = $state.raw({});
   /** `{ id, title, currency }` of the market the shell is wired to; null until the snapshot is in. */
   info = $state.raw(null);
   /** Whether the venue takes amendments; fixed for the session. */
@@ -52,6 +55,7 @@ class Market {
     this.connections = withConnections(this.connections, batch.connections);
     this.sessions = withSessions(this.sessions, batch.sessions);
     this.typeNames = withTypeNames(this.typeNames, batch.sessions);
+    this.tapes = withPrints(this.tapes, batch.prints ?? []);
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
@@ -71,6 +75,24 @@ async function loadTrends(symbols) {
   );
   // Batches keep arriving while history loads.
   market.trends = withHistory(market.trends, loaded);
+}
+
+const tapesRead = new Set();
+
+/**
+ * Reads a symbol's recent prints once, under the ones the batches already
+ * brought; later prints come in the batches. A failed read can be retried.
+ */
+export async function loadTape(symbol) {
+  if (tapesRead.has(symbol)) return;
+  tapesRead.add(symbol);
+  try {
+    const history = await invoke("prints", { symbol, limit: TAPE_PRINTS });
+    market.tapes = withTapeHistory(market.tapes, symbol, history);
+  } catch (err) {
+    tapesRead.delete(symbol);
+    throw err;
+  }
 }
 
 let started = null;
