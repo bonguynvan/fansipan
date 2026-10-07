@@ -1,15 +1,16 @@
 //! Conflates engine output into one message per flush for the front end.
 //!
 //! A feed can produce thousands of events a second; a screen shows one state
-//! per frame. Between flushes only the latest quote per symbol and the latest
-//! state per order survive, and each changed bar is kept once, so the webview
-//! receives a bounded number of messages whatever the feed rate.
+//! per frame. Between flushes only the latest quote, board row, and
+//! instrument per symbol and the latest state per order survive, and each
+//! changed bar is kept once, so the webview receives a bounded number of
+//! messages whatever the feed rate.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::dto::{AccountDto, BarDto, OrderDto, QuoteDto};
+use crate::dto::{AccountDto, BarDto, BoardDto, InstrumentDto, OrderDto, QuoteDto};
 
 #[derive(Default)]
 pub struct Batch {
@@ -17,6 +18,8 @@ pub struct Batch {
     orders: BTreeMap<u64, OrderDto>,
     account: Option<AccountDto>,
     bars: BTreeMap<(String, u64), BarDto>,
+    instruments: BTreeMap<String, InstrumentDto>,
+    boards: BTreeMap<String, BoardDto>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -30,6 +33,8 @@ pub struct BatchDto {
     pub orders: Vec<OrderDto>,
     pub account: Option<AccountDto>,
     pub bars: Vec<BarDto>,
+    pub instruments: Vec<InstrumentDto>,
+    pub boards: Vec<BoardDto>,
 }
 
 impl Batch {
@@ -52,11 +57,22 @@ impl Batch {
         self.bars.insert((bar.symbol.clone(), bar.time_ms), bar);
     }
 
+    pub fn instrument(&mut self, instrument: InstrumentDto) {
+        self.instruments
+            .insert(instrument.symbol.clone(), instrument);
+    }
+
+    pub fn board(&mut self, board: BoardDto) {
+        self.boards.insert(board.symbol.clone(), board);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.quotes.is_empty()
             && self.orders.is_empty()
             && self.account.is_none()
             && self.bars.is_empty()
+            && self.instruments.is_empty()
+            && self.boards.is_empty()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -66,6 +82,8 @@ impl Batch {
             orders: self.orders.into_values().collect(),
             account: self.account,
             bars: self.bars.into_values().collect(),
+            instruments: self.instruments.into_values().collect(),
+            boards: self.boards.into_values().collect(),
         }
     }
 }
@@ -125,6 +143,37 @@ mod tests {
             .map(|b| (b.time_ms, b.close))
             .collect();
         assert_eq!(closes, vec![(5_000, "3".into()), (10_000, "2".into())]);
+    }
+
+    fn board(symbol: &str, last: &str) -> BoardDto {
+        BoardDto {
+            symbol: symbol.into(),
+            exchange: String::new(),
+            reference: None,
+            ceiling: None,
+            floor: None,
+            bids: vec![],
+            asks: vec![],
+            last: Some(last.into()),
+            last_quantity: None,
+            change: None,
+            change_pct: None,
+            volume: "0".into(),
+            high: None,
+            low: None,
+        }
+    }
+
+    #[test]
+    fn only_the_latest_board_row_per_symbol_survives() {
+        let mut batch = Batch::default();
+
+        batch.board(board("VNM", "62500"));
+        batch.board(board("VNM", "62600"));
+
+        let dto = batch.into_dto(1);
+        assert_eq!(dto.boards.len(), 1);
+        assert_eq!(dto.boards[0].last.as_deref(), Some("62600"));
     }
 
     #[test]

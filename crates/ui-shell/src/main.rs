@@ -11,6 +11,8 @@ mod dto;
 mod settings;
 mod workspace;
 
+use std::collections::BTreeSet;
+use std::env;
 use std::mem;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,36 +26,28 @@ use bus::{Bus, Event};
 use data_engine::DataEngine;
 use execution_engine::{ExecutionEngine, RiskLimits};
 use model::{AccountState, ClientOrderId, Decimal, InstrumentId, NewOrder, Side};
-use sandbox::{SandboxDataClient, SandboxExecutionClient, SimVenue};
+use sandbox::{MarketProfile, SandboxDataClient, SandboxExecutionClient};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use batch::{Batch, BatchDto};
-use dto::{AccountDto, BarDto, OrderDto, QuoteDto, Snapshot};
+use dto::{AccountDto, BarDto, BoardDto, InstrumentDto, MarketDto, OrderDto, QuoteDto, Snapshot};
 
 const VENUE: &str = "sim";
-const STARTING_CASH: Decimal = Decimal::from_parts(100_000, 0, 0, false, 0);
-const MAX_ORDER_QUANTITY: Decimal = Decimal::from_parts(1_000, 0, 0, false, 0);
-const MAX_ORDER_NOTIONAL: Decimal = Decimal::from_parts(250_000, 0, 0, false, 0);
+/// Which simulated market to run; see `sandbox::profiles::PROFILE_IDS`.
+const MARKET_ENV: &str = "FANSIPAN_SANDBOX_MARKET";
+const DEFAULT_MARKET: &str = "vn";
 const EVENT_NAME: &str = "bus-batch";
 /// How often conflated changes go to the front end: fast enough that an
 /// order's fill feels immediate, slow enough that a burst costs one message.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const DEFAULT_BAR_LIMIT: usize = 500;
 
-/// Symbol and opening mid in cents.
-const LISTINGS: [(&str, i64); 5] = [
-    ("AAPL", 19_000),
-    ("MSFT", 41_000),
-    ("NVDA", 88_000),
-    ("TSLA", 24_000),
-    ("VNM", 6_250),
-];
-
 /// Lock order: `exec` before `pending`. Every change to an order is queued
 /// in `pending` while `exec` is still held, so the batch receives order
 /// states in the order the engine produced them, whichever thread made the
 /// change. Nothing takes `pending` and then another lock.
 pub struct Shell {
+    market: MarketDto,
     data: Mutex<DataEngine>,
     exec: Mutex<ExecutionEngine>,
     account: Mutex<AccountState>,
@@ -111,11 +105,32 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     // from `pending` before the state below was read, so it holds nothing
     // newer than this snapshot and the front end can drop it.
     let seq = shell.flushed.load(Ordering::SeqCst);
+    let (instruments, boards, quotes) = {
+        let data = lock(&shell.data)?;
+        let known: BTreeSet<&InstrumentId> = data
+            .instruments()
+            .map(|info| &info.id)
+            .chain(data.quotes().map(|quote| &quote.instrument))
+            .collect();
+        (
+            data.instruments().map(InstrumentDto::from).collect(),
+            known
+                .into_iter()
+                .map(|id| BoardDto::of(&data, id))
+                .collect(),
+            data.quotes().map(QuoteDto::from).collect(),
+        )
+    };
+    let orders = lock(&shell.exec)?.orders().map(OrderDto::from).collect();
+    let account = AccountDto::from(&*lock(&shell.account)?);
     Ok(Snapshot {
         seq,
-        quotes: lock(&shell.data)?.quotes().map(QuoteDto::from).collect(),
-        orders: lock(&shell.exec)?.orders().map(OrderDto::from).collect(),
-        account: AccountDto::from(&*lock(&shell.account)?),
+        market: shell.market.clone(),
+        instruments,
+        boards,
+        quotes,
+        orders,
+        account,
     })
 }
 
@@ -200,16 +215,60 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                     let bar = data
                         .last_bar(&quote.instrument)
                         .map(|bar| BarDto::new(symbol, bar));
-                    (QuoteDto::from(quote), bar)
+                    let board = BoardDto::of(&data, &quote.instrument);
+                    (QuoteDto::from(quote), bar, board)
                 })
             };
-            if let Some((quote, bar)) = update {
+            if let Some((quote, bar, board)) = update {
                 let mut pending = lock(&shell.pending)?;
                 pending.quote(quote);
+                pending.board(board);
                 if let Some(bar) = bar {
                     pending.bar(bar);
                 }
             }
+        }
+        Event::Depth(depth) => {
+            let board = {
+                let mut data = lock(&shell.data)?;
+                data.on_depth(depth)
+                    .then(|| BoardDto::of(&data, &depth.instrument))
+            };
+            if let Some(board) = board {
+                lock(&shell.pending)?.board(board);
+            }
+        }
+        Event::Trade(trade) => {
+            let board = {
+                let mut data = lock(&shell.data)?;
+                data.on_trade(trade)
+                    .then(|| BoardDto::of(&data, &trade.instrument))
+            };
+            if let Some(board) = board {
+                lock(&shell.pending)?.board(board);
+            }
+        }
+        // Reference data goes to both engines: the data engine to show it,
+        // the execution engine to check orders against it.
+        Event::Instrument(info) => {
+            let board = {
+                let mut data = lock(&shell.data)?;
+                data.on_instrument(info);
+                BoardDto::of(&data, &info.id)
+            };
+            lock(&shell.exec)?.set_instrument(info.clone());
+            let mut pending = lock(&shell.pending)?;
+            pending.instrument(InstrumentDto::from(info));
+            pending.board(board);
+        }
+        Event::PriceBand(band) => {
+            let board = {
+                let mut data = lock(&shell.data)?;
+                data.on_band(band);
+                BoardDto::of(&data, &band.instrument)
+            };
+            lock(&shell.exec)?.set_band(band.clone());
+            lock(&shell.pending)?.board(board);
         }
         Event::Execution(report) => {
             let mut exec = lock(&shell.exec)?;
@@ -262,28 +321,37 @@ fn flush(app: AppHandle) {
     });
 }
 
-fn connect_engines(bus: &Bus) -> Result<Shell, AdapterError> {
-    let venue = SimVenue::new(STARTING_CASH);
-    for (symbol, cents) in LISTINGS {
-        venue.list(instrument(symbol), Decimal::new(cents, 2));
-    }
+/// The simulated market named by `FANSIPAN_SANDBOX_MARKET`, or the default.
+fn market_profile() -> Result<MarketProfile, String> {
+    let id = env::var(MARKET_ENV).unwrap_or_else(|_| DEFAULT_MARKET.to_string());
+    MarketProfile::by_id(id.trim(), VENUE).map_err(|e| format!("{MARKET_ENV}: {e}"))
+}
+
+fn connect_engines(bus: &Bus, profile: &MarketProfile) -> Result<Shell, AdapterError> {
+    let venue = profile.venue();
 
     let mut data = DataEngine::new(Box::new(SandboxDataClient::new(venue.clone())));
     data.connect(bus.handle())?;
-    for (symbol, _) in LISTINGS {
-        data.subscribe_quotes(&instrument(symbol))?;
+    for listing in &profile.listings {
+        data.subscribe_quotes(&listing.info.id)?;
+        data.subscribe_trades(&listing.info.id)?;
     }
 
     let mut exec = ExecutionEngine::new(
         Box::new(SandboxExecutionClient::new(venue)),
         RiskLimits {
-            max_order_quantity: MAX_ORDER_QUANTITY,
-            max_order_notional: MAX_ORDER_NOTIONAL,
+            max_order_quantity: profile.max_order_quantity,
+            max_order_notional: profile.max_order_notional,
         },
     );
     exec.connect(bus.handle())?;
 
     Ok(Shell {
+        market: MarketDto {
+            id: profile.id.to_string(),
+            title: profile.title.to_string(),
+            currency: profile.currency.to_string(),
+        },
         data: Mutex::new(data),
         exec: Mutex::new(exec),
         account: Mutex::new(AccountState::default()),
@@ -293,9 +361,16 @@ fn connect_engines(bus: &Bus) -> Result<Shell, AdapterError> {
 }
 
 fn main() -> ExitCode {
+    let profile = match market_profile() {
+        Ok(profile) => profile,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let bus = Bus::new();
     let events = bus.subscribe();
-    let shell = match connect_engines(&bus) {
+    let shell = match connect_engines(&bus, &profile) {
         Ok(shell) => shell,
         Err(e) => {
             eprintln!("could not connect to the venue: {e}");
@@ -342,8 +417,20 @@ mod tests {
     use super::*;
     use model::{Quote, UnixNanos};
 
+    fn profile(id: &str) -> MarketProfile {
+        MarketProfile::by_id(id, VENUE).unwrap()
+    }
+
     fn shell() -> Shell {
-        connect_engines(&Bus::new()).unwrap()
+        connect_engines(&Bus::new(), &profile("us")).unwrap()
+    }
+
+    /// Routes the reference data the sandbox would announce on its first
+    /// beat, as the pump does.
+    fn announce(shell: &Shell, profile: &MarketProfile) {
+        for event in profile.venue().reference_data(UnixNanos(0)) {
+            route(shell, &event).unwrap();
+        }
     }
 
     fn take_pending(shell: &Shell) -> BatchDto {
@@ -353,6 +440,8 @@ mod tests {
             orders: vec![],
             account: None,
             bars: vec![],
+            instruments: vec![],
+            boards: vec![],
         })
     }
 
@@ -360,7 +449,7 @@ mod tests {
     fn a_market_order_reaches_the_batch_as_filled() {
         let bus = Bus::new();
         let events = bus.subscribe();
-        let shell = connect_engines(&bus).unwrap();
+        let shell = connect_engines(&bus, &profile("us")).unwrap();
 
         let placed = submit(&shell, new_order("AAPL", "buy", "1", None).unwrap()).unwrap();
         for event in events.try_iter() {
@@ -455,5 +544,87 @@ mod tests {
         assert_eq!(batch.bars.len(), 1);
         assert_eq!(batch.bars[0].close, "190.01");
         assert_eq!(batch.bars[0].time_ms, 1_700_000_000_000);
+        assert_eq!(batch.boards[0].bids[0].price, "190");
+    }
+
+    #[test]
+    fn reference_data_reaches_the_board_and_the_snapshot() {
+        let vn = profile("vn");
+        let shell = connect_engines(&Bus::new(), &vn).unwrap();
+
+        announce(&shell, &vn);
+
+        let batch = take_pending(&shell);
+        let vnm = batch.boards.iter().find(|b| b.symbol == "VNM").unwrap();
+        assert_eq!(vnm.exchange, "HOSE");
+        assert_eq!(vnm.reference.as_deref(), Some("62500"));
+        assert_eq!(vnm.ceiling.as_deref(), Some("66800"));
+        assert_eq!(vnm.floor.as_deref(), Some("58200"));
+        let info = batch
+            .instruments
+            .iter()
+            .find(|i| i.symbol == "VNM")
+            .unwrap();
+        assert_eq!(info.lot_size, "100");
+        assert_eq!(info.ticks.len(), 3);
+
+        let snapshot = snapshot_of(&shell).unwrap();
+        assert_eq!(snapshot.market.currency, "VND");
+        assert_eq!(snapshot.instruments.len(), vn.listings.len());
+        assert_eq!(snapshot.boards.len(), vn.listings.len());
+    }
+
+    #[test]
+    fn announced_rules_deny_an_order_before_it_reaches_the_venue() {
+        let vn = profile("vn");
+        let shell = connect_engines(&Bus::new(), &vn).unwrap();
+        announce(&shell, &vn);
+
+        let odd_lot = submit(
+            &shell,
+            new_order("VNM", "buy", "150", Some("62500")).unwrap(),
+        );
+        let above_ceiling = submit(
+            &shell,
+            new_order("VNM", "buy", "100", Some("66900")).unwrap(),
+        );
+
+        assert_eq!(odd_lot.unwrap().status, "denied");
+        assert_eq!(above_ceiling.unwrap().status, "denied");
+    }
+
+    #[test]
+    fn a_trade_moves_the_board_change_against_the_reference() {
+        let vn = profile("vn");
+        let shell = connect_engines(&Bus::new(), &vn).unwrap();
+        announce(&shell, &vn);
+        take_pending(&shell);
+
+        route(
+            &shell,
+            &Event::Trade(model::Trade {
+                instrument: instrument("VNM"),
+                price: Decimal::new(63_100, 0),
+                quantity: Decimal::new(300, 0),
+                side: Side::Buy,
+                ts_event: UnixNanos(1),
+            }),
+        )
+        .unwrap();
+
+        let board = take_pending(&shell).boards.remove(0);
+        assert_eq!(board.last.as_deref(), Some("63100"));
+        assert_eq!(board.change.as_deref(), Some("600"));
+        assert_eq!(board.change_pct.as_deref(), Some("0.96"));
+        assert_eq!(board.volume, "300");
+    }
+
+    #[test]
+    fn an_unknown_market_is_refused_naming_the_setting() {
+        let err = MarketProfile::by_id("mars", VENUE)
+            .map_err(|e| format!("{MARKET_ENV}: {e}"))
+            .unwrap_err();
+
+        assert!(err.starts_with("FANSIPAN_SANDBOX_MARKET"));
     }
 }

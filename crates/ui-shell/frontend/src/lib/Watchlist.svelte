@@ -3,6 +3,7 @@
   import { market } from "./market.svelte.js";
   import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
   import { t, tn } from "../i18n/i18n.svelte.js";
+  import { price } from "./format.js";
 
   let { params, panel } = $props();
 
@@ -14,12 +15,15 @@
     else panel?.updateParameters({ symbol });
   }
 
+  /** At the precision of the instrument's tick: no decimals for VND, cents for USD. */
+  const atTick = (value, row) => price(value, row && market.priceDecimals(row.symbol));
+
   const columns = $derived([
     { type: "text", key: "symbol", header: t("column.symbol"), width: 70 },
     { type: "sparkline", key: "trend", sparkKey: "trend", header: t("column.trend"), width: 96, sortable: false },
-    { type: "price", key: "bid", header: t("column.bid"), width: 84, flash: "auto" },
-    { type: "price", key: "ask", header: t("column.ask"), width: 84, flash: "auto" },
-    { type: "number", key: "spread", header: t("column.spread"), width: 64, decimals: 2 },
+    { type: "price", key: "bid", header: t("column.bid"), width: 84, flash: "auto", format: atTick },
+    { type: "price", key: "ask", header: t("column.ask"), width: 84, flash: "auto", format: atTick },
+    { type: "number", key: "spread", header: t("column.spread"), width: 64, format: atTick },
   ]);
 
   const rows = $derived(

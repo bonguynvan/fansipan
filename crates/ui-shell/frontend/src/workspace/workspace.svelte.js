@@ -9,6 +9,8 @@ import { getLayout, getScreen } from "./registry.js";
 import { DEFAULT_LAYOUT } from "./builtins.js";
 import { debouncedSetter, getSetting, removeSetting, setSetting } from "../lib/settings.js";
 import { isLinked, links, nextGroup } from "../lib/links.svelte.js";
+import { marketInfo } from "../lib/market.svelte.js";
+import { marketPreset } from "../lib/markets.js";
 import { newWindowLabel } from "./labels.js";
 import { t } from "../i18n/i18n.svelte.js";
 
@@ -125,6 +127,12 @@ export function applyLayout(layoutId) {
   persist();
 }
 
+/** The layout a fresh main window opens with: the market preset's, else the default. */
+async function defaultLayout() {
+  const info = await marketInfo();
+  return marketPreset(info?.id).layout ?? DEFAULT_LAYOUT;
+}
+
 /**
  * Labels every tab in the current language. A saved layout holds tab text
  * in whatever language it was saved in; the source of each title is the
@@ -158,7 +166,10 @@ export async function restore(api, label) {
     // Unreadable is not the same as absent: show the default, but leave
     // whatever is stored alone rather than overwrite it.
     notify("workspace.unreadable", { error: String(err) });
-    if (label === MAIN_WINDOW) applyLayout(DEFAULT_LAYOUT);
+    if (label === MAIN_WINDOW) {
+      const layout = await defaultLayout();
+      if (workspace.api === api) applyLayout(layout);
+    }
     return;
   }
 
@@ -166,7 +177,10 @@ export async function restore(api, label) {
   rebuild(() => (loaded = loadSaved(api, saved)));
   if (!loaded) {
     if (label === MAIN_WINDOW) {
-      applyLayout(DEFAULT_LAYOUT);
+      const layout = await defaultLayout();
+      // The window may have torn this dockview down while waiting.
+      if (workspace.api !== api) return;
+      applyLayout(layout);
     } else if (saved) {
       addScreen("watchlist");
     } else {

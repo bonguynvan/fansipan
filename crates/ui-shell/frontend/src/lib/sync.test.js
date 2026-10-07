@@ -40,4 +40,16 @@ describe("createSync", () => {
 
     expect(applied).toEqual(["snapshot", 4]);
   });
+
+  it("hands on the snapshot's reference data and board rows as a batch", () => {
+    const received = [];
+    const sync = createSync((b) => received.push(b));
+
+    sync.snapshot({ ...snapshot(1), instruments: [{ symbol: "VNM" }], boards: [{ symbol: "VNM" }] });
+    sync.snapshot(snapshot(2));
+
+    expect(received[0].instruments).toEqual([{ symbol: "VNM" }]);
+    expect(received[0].boards).toEqual([{ symbol: "VNM" }]);
+    expect(received[1].instruments).toEqual([]);
+  });
 });

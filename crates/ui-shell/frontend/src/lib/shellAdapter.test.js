@@ -12,7 +12,7 @@ vi.mock("./bridge.js", () => ({
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args) => invoke(...args) }));
 
-const { ShellAdapter, toChartBar } = await import("./shellAdapter.js");
+const { ShellAdapter, symbolInfoOf, toChartBar } = await import("./shellAdapter.js");
 
 const deliver = (batch) => {
   for (const subscriber of subscribers) {
@@ -132,5 +132,31 @@ describe("ShellAdapter", () => {
 
     expect(events.filter((e) => e.type === "bar")).toEqual([]);
     expect(adapter.getConnectionState()).toBe("disconnected");
+  });
+  it("tells the chart each instrument's names and price steps", async () => {
+    const vnm = {
+      symbol: "VNM",
+      name: "Vinamilk",
+      exchange: "HOSE",
+      currency: "VND",
+      lot_size: "100",
+      ticks: [
+        { from: "0", tick: "10" },
+        { from: "10000", tick: "50" },
+        { from: "50000", tick: "100" },
+      ],
+    };
+    const adapter = new ShellAdapter((symbol) => (symbol === "VNM" ? vnm : undefined));
+
+    expect(await adapter.resolveSymbol("VNM")).toMatchObject({
+      description: "Vinamilk",
+      exchange: "HOSE",
+      pricePrecision: 0,
+      minTick: 10,
+      currency: "VND",
+    });
+    expect(await adapter.resolveSymbol("XYZ")).toBeNull();
+    expect(symbolInfoOf({ symbol: "AAPL", name: "Apple", exchange: "", currency: "USD", ticks: [{ from: "0", tick: "0.01" }] }))
+      .toMatchObject({ pricePrecision: 2, minTick: 0.01, exchange: undefined });
   });
 });

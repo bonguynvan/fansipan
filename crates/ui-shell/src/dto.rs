@@ -5,8 +5,10 @@
 //! a JS number would round them, and the front end only needs them for
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
-use data_engine::Bar;
-use model::{AccountState, Order, OrderStatus, Quote, Side};
+use data_engine::{Bar, DataEngine};
+use model::{
+    AccountState, BookLevel, Decimal, InstrumentId, InstrumentInfo, Order, OrderStatus, Quote, Side,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -14,9 +16,167 @@ pub struct Snapshot {
     /// The last batch number taken before this snapshot read engine state.
     /// Batches numbered up to it are already reflected here.
     pub seq: u64,
+    pub market: MarketDto,
+    pub instruments: Vec<InstrumentDto>,
+    pub boards: Vec<BoardDto>,
     pub quotes: Vec<QuoteDto>,
     pub orders: Vec<OrderDto>,
     pub account: AccountDto,
+}
+
+/// Which market the terminal is wired to, so the front end can pick
+/// defaults (layout, price units) without knowing any market by name.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MarketDto {
+    pub id: String,
+    pub title: String,
+    pub currency: String,
+}
+
+/// How an instrument trades: what an order ticket needs to offer only valid
+/// quantities and prices.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct InstrumentDto {
+    pub symbol: String,
+    pub name: String,
+    pub exchange: String,
+    pub currency: String,
+    pub lot_size: String,
+    /// Ascending; the tick at a price is that of the last step at or below it.
+    pub ticks: Vec<TickStepDto>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct TickStepDto {
+    pub from: String,
+    pub tick: String,
+}
+
+impl From<&InstrumentInfo> for InstrumentDto {
+    fn from(info: &InstrumentInfo) -> Self {
+        Self {
+            symbol: info.id.symbol.clone(),
+            name: info.name.clone(),
+            exchange: info.exchange.clone(),
+            currency: info.currency.clone(),
+            lot_size: number(info.lot_size),
+            ticks: info
+                .ticks
+                .steps()
+                .iter()
+                .map(|(from, tick)| TickStepDto {
+                    from: number(*from),
+                    tick: number(*tick),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One row of a price board: everything known about an instrument today,
+/// in one piece so a row never shows a ceiling from one moment and a last
+/// price from another.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct BoardDto {
+    pub symbol: String,
+    pub exchange: String,
+    pub reference: Option<String>,
+    pub ceiling: Option<String>,
+    pub floor: Option<String>,
+    /// Best first.
+    pub bids: Vec<LevelDto>,
+    /// Best first.
+    pub asks: Vec<LevelDto>,
+    pub last: Option<String>,
+    pub last_quantity: Option<String>,
+    /// Last minus reference.
+    pub change: Option<String>,
+    /// Change as a percentage of reference, to two places.
+    pub change_pct: Option<String>,
+    pub volume: String,
+    pub high: Option<String>,
+    pub low: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct LevelDto {
+    pub price: String,
+    pub size: String,
+}
+
+impl From<&BookLevel> for LevelDto {
+    fn from(level: &BookLevel) -> Self {
+        Self {
+            price: number(level.price),
+            size: number(level.size),
+        }
+    }
+}
+
+const PERCENT_PLACES: u32 = 2;
+
+impl BoardDto {
+    /// The row as the data engine knows it now. Depth when the venue sends
+    /// it, else the top of book from the latest quote.
+    pub fn of(data: &DataEngine, instrument: &InstrumentId) -> Self {
+        let band = data.band(instrument);
+        let stats = data.stats(instrument).cloned().unwrap_or_default();
+        let (bids, asks) = match (data.depth(instrument), data.latest(instrument)) {
+            (Some(depth), _) => (levels(&depth.bids), levels(&depth.asks)),
+            (None, Some(quote)) => (
+                vec![level(quote.bid, quote.bid_size)],
+                vec![level(quote.ask, quote.ask_size)],
+            ),
+            (None, None) => (vec![], vec![]),
+        };
+        let reference = band.map(|b| b.reference);
+        let change = stats
+            .last
+            .zip(reference)
+            .and_then(|(last, r)| last.checked_sub(r));
+        let change_pct = change.zip(reference).and_then(|(change, r)| {
+            change
+                .checked_mul(Decimal::ONE_HUNDRED)
+                .and_then(|scaled| scaled.checked_div(r))
+                .map(|pct| pct.round_dp(PERCENT_PLACES))
+        });
+        Self {
+            symbol: instrument.symbol.clone(),
+            exchange: data
+                .instrument(instrument)
+                .map(|info| info.exchange.clone())
+                .unwrap_or_default(),
+            reference: reference.map(number),
+            ceiling: band.and_then(|b| b.ceiling).map(number),
+            floor: band.and_then(|b| b.floor).map(number),
+            bids,
+            asks,
+            last: stats.last.map(number),
+            last_quantity: stats.last_quantity.map(number),
+            change: change.map(number),
+            change_pct: change_pct.map(number),
+            volume: number(stats.volume),
+            high: stats.high.map(number),
+            low: stats.low.map(number),
+        }
+    }
+}
+
+fn levels(book: &[BookLevel]) -> Vec<LevelDto> {
+    book.iter().map(LevelDto::from).collect()
+}
+
+fn level(price: Decimal, size: Decimal) -> LevelDto {
+    LevelDto {
+        price: number(price),
+        size: number(size),
+    }
+}
+
+/// Without trailing zeros that tick arithmetic leaves behind: a ceiling
+/// computed as 62500 * 1.07, rounded to the tick, is 66800, not 66800.00.
+fn number(value: Decimal) -> String {
+    value.normalize().to_string()
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]

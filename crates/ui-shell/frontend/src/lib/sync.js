@@ -26,7 +26,15 @@ export function createSync(apply) {
     },
 
     snapshot(snap) {
-      apply({ seq: snap.seq, quotes: snap.quotes, orders: snap.orders, account: snap.account, bars: [] });
+      apply({
+        seq: snap.seq,
+        quotes: snap.quotes,
+        orders: snap.orders,
+        account: snap.account,
+        bars: [],
+        instruments: snap.instruments ?? [],
+        boards: snap.boards ?? [],
+      });
       lastSeq = snap.seq;
       synced = true;
       [...early].sort((a, b) => a.seq - b.seq).forEach(deliver);

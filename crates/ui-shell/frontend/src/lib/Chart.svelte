@@ -9,7 +9,7 @@
 
   const symbol = $derived(symbolOf(params, market.symbols[0]));
 
-  const adapter = new ShellAdapter();
+  const adapter = new ShellAdapter((symbol) => market.instruments[symbol]);
   // Chart-side trading, alerts and screenshots stay off until they are wired
   // to the engines; a button that does nothing is worse than no button.
   const features = { trading: false, alerts: false, screenshot: false };
@@ -24,15 +24,19 @@
 
   <div class="canvas">
     {#if symbol}
-      <TradeCanvas
-        {symbol}
-        timeframe={BAR_TIMEFRAME}
-        theme="dark"
-        {adapter}
-        {features}
-        {indicators}
-        historyLimit={500}
-      />
+      <!-- The chart asks for the instrument's price steps once, when it
+           mounts; one that mounted before they arrived mounts again. -->
+      {#key Boolean(market.instruments[symbol])}
+        <TradeCanvas
+          {symbol}
+          timeframe={BAR_TIMEFRAME}
+          theme="dark"
+          {adapter}
+          {features}
+          {indicators}
+          historyLimit={500}
+        />
+      {/key}
     {:else}
       <p class="dim empty">{t("feed.waiting")}</p>
     {/if}

@@ -9,6 +9,7 @@ mod account;
 mod ids;
 mod market;
 mod order;
+mod rules;
 
 pub use rust_decimal::Decimal;
 
@@ -17,4 +18,7 @@ pub use ids::{ClientOrderId, FillId, InstrumentId, UnixNanos, VenueOrderId};
 pub use market::{Quote, Trade};
 pub use order::{
     CancelOrder, ExecutionReport, NewOrder, Order, OrderEvent, OrderStatus, Side, SubmitOrder,
+};
+pub use rules::{
+    BandError, BookLevel, Depth, InstrumentInfo, PriceBand, TickTable, TickTableError,
 };

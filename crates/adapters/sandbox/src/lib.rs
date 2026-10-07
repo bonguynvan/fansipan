@@ -1,17 +1,20 @@
 //! Simulated venue for demos, CI, and development. Not a real venue: no
-//! network, no protocol. A random walk moves prices; market orders sweep,
-//! limit orders rest and fill when the walk reaches them, at most
-//! [`TOP_OF_BOOK_SIZE`] per order per price move.
+//! network, no protocol. A random walk moves prices along each listing's
+//! tick ladder and inside its price band; market orders sweep, limit orders
+//! rest and fill when the walk reaches them, at most the displayed size per
+//! order per price move.
 //!
 //! The two clients are thin: [`SimVenue`] does the matching and the clients
 //! only move its events onto the bus, which is the shape a real adapter has
-//! too (decode, translate, publish).
+//! too (decode, translate, publish). [`MarketProfile`] supplies the
+//! listings and their market rules.
 
+pub mod profiles;
 mod venue;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -19,7 +22,8 @@ use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{BusHandle, Event};
 use model::{AccountState, CancelOrder, InstrumentId, SubmitOrder, UnixNanos};
 
-pub use venue::{SimVenue, MIN_MID, SPREAD, TICK, TOP_OF_BOOK_SIZE};
+pub use profiles::MarketProfile;
+pub use venue::{Listing, SimVenue, Tick, DEPTH_LEVELS, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(500);
 const WALK_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -30,9 +34,14 @@ const HISTORY_QUOTES: usize = 2_400;
 
 type Subscriptions = Arc<Mutex<HashSet<InstrumentId>>>;
 
+fn locked(set: &Subscriptions) -> MutexGuard<'_, HashSet<InstrumentId>> {
+    set.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 pub struct SandboxDataClient {
     venue: SimVenue,
-    subscribed: Subscriptions,
+    quotes: Subscriptions,
+    trades: Subscriptions,
     running: Arc<AtomicBool>,
 }
 
@@ -40,15 +49,20 @@ impl SandboxDataClient {
     pub fn new(venue: SimVenue) -> Self {
         Self {
             venue,
-            subscribed: Arc::default(),
+            quotes: Arc::default(),
+            trades: Arc::default(),
             running: Arc::default(),
         }
     }
 
-    fn subscriptions(&self) -> std::sync::MutexGuard<'_, HashSet<InstrumentId>> {
-        self.subscribed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn listed(&self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+        if self.venue.is_listed(instrument) {
+            Ok(())
+        } else {
+            Err(AdapterError::fatal(format!(
+                "sandbox: {instrument} is not listed"
+            )))
+        }
     }
 }
 
@@ -61,23 +75,22 @@ impl DataClient for SandboxDataClient {
         }
         let running = self.running.clone();
         let venue = self.venue.clone();
-        let subscribed = self.subscribed.clone();
+        let quotes = self.quotes.clone();
+        let trades = self.trades.clone();
         thread::Builder::new()
             .name("sandbox-market".into())
             .spawn(move || {
-                let mut seed = WALK_SEED;
-                let mut backfilled = HashSet::new();
+                let mut state = BeatState::default();
                 while running.load(Ordering::SeqCst) {
-                    let watched = subscribed
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone();
+                    let quoted = locked(&quotes).clone();
+                    let printed = locked(&trades).clone();
                     let beat = Beat {
                         venue: &venue,
-                        subscribed: &watched,
+                        quotes: &quoted,
+                        trades: &printed,
                         bus: bus.as_ref(),
                     };
-                    beat.run(&mut backfilled, &mut seed, now());
+                    beat.run(&mut state, now());
                     thread::sleep(TICK_INTERVAL);
                 }
             })
@@ -89,27 +102,24 @@ impl DataClient for SandboxDataClient {
     }
 
     fn subscribe_quotes(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
-        if !self.venue.is_listed(instrument) {
-            return Err(AdapterError::fatal(format!(
-                "sandbox: {instrument} is not listed"
-            )));
-        }
-        self.subscriptions().insert(instrument.clone());
+        self.listed(instrument)?;
+        locked(&self.quotes).insert(instrument.clone());
         Ok(())
     }
 
     fn unsubscribe_quotes(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
-        self.subscriptions().remove(instrument);
+        locked(&self.quotes).remove(instrument);
         Ok(())
     }
 
-    /// The sandbox prints no tape; trade subscriptions are accepted and
-    /// produce nothing.
-    fn subscribe_trades(&mut self, _instrument: &InstrumentId) -> Result<(), AdapterError> {
+    fn subscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+        self.listed(instrument)?;
+        locked(&self.trades).insert(instrument.clone());
         Ok(())
     }
 
-    fn unsubscribe_trades(&mut self, _instrument: &InstrumentId) -> Result<(), AdapterError> {
+    fn unsubscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+        locked(&self.trades).remove(instrument);
         Ok(())
     }
 
@@ -119,37 +129,77 @@ impl DataClient for SandboxDataClient {
     }
 }
 
+/// What the market thread remembers between beats.
+struct BeatState {
+    /// Reference data goes out once, before the first quote.
+    announced: bool,
+    backfilled: HashSet<InstrumentId>,
+    seed: u64,
+}
+
+impl Default for BeatState {
+    fn default() -> Self {
+        Self {
+            announced: false,
+            backfilled: HashSet::new(),
+            seed: WALK_SEED,
+        }
+    }
+}
+
 /// What one beat of the simulated market reads.
 struct Beat<'a> {
     venue: &'a SimVenue,
-    subscribed: &'a HashSet<InstrumentId>,
+    quotes: &'a HashSet<InstrumentId>,
+    trades: &'a HashSet<InstrumentId>,
     bus: &'a dyn BusHandle,
 }
 
 impl Beat<'_> {
-    /// Newly subscribed instruments get their made-up history first. Then
-    /// every listed instrument takes a random step; quotes go out for the
-    /// subscribed ones, fills for all. `backfilled` forgets instruments that
-    /// were unsubscribed, so subscribing again brings a fresh history.
-    fn run(&self, backfilled: &mut HashSet<InstrumentId>, seed: &mut u64, now: UnixNanos) {
-        backfilled.retain(|instrument| self.subscribed.contains(instrument));
-        for instrument in self.subscribed {
-            if backfilled.insert(instrument.clone()) {
+    /// The first beat announces every listing's rules and today's band. Newly
+    /// quote-subscribed instruments then get their made-up history. Then
+    /// every listed instrument takes a random step: quotes and depth go out
+    /// for quote subscriptions, prints for trade subscriptions, fills for
+    /// all. Unsubscribing forgets the backfill, so subscribing again brings
+    /// a fresh history.
+    fn run(&self, state: &mut BeatState, now: UnixNanos) {
+        if !state.announced {
+            state.announced = true;
+            self.venue
+                .reference_data(now)
+                .into_iter()
+                .for_each(|event| self.bus.publish(event));
+        }
+
+        state
+            .backfilled
+            .retain(|instrument| self.quotes.contains(instrument));
+        for instrument in self.quotes {
+            if state.backfilled.insert(instrument.clone()) {
                 self.venue
-                    .synthetic_history(instrument, now, HISTORY_QUOTES, TICK_INTERVAL, seed)
+                    .synthetic_history(
+                        instrument,
+                        now,
+                        HISTORY_QUOTES,
+                        TICK_INTERVAL,
+                        &mut state.seed,
+                    )
                     .into_iter()
                     .for_each(|quote| self.bus.publish(Event::Quote(quote)));
             }
         }
 
         for instrument in self.venue.instruments() {
-            let step = venue::random_step(seed);
             let publish = &mut |event| self.bus.publish(event);
-            let Some(quote) = self.venue.step(&instrument, step, now, publish) else {
+            let Some(tick) = self.venue.walk(&instrument, now, &mut state.seed, publish) else {
                 continue;
             };
-            if self.subscribed.contains(&instrument) {
-                self.bus.publish(Event::Quote(quote));
+            if self.quotes.contains(&instrument) {
+                self.bus.publish(Event::Quote(tick.quote));
+                self.bus.publish(Event::Depth(tick.depth));
+            }
+            if let Some(trade) = tick.trade.filter(|_| self.trades.contains(&instrument)) {
+                self.bus.publish(Event::Trade(trade));
             }
         }
     }
@@ -241,22 +291,99 @@ mod tests {
             .collect()
     }
 
+    fn ids(symbols: &[&str]) -> HashSet<InstrumentId> {
+        symbols
+            .iter()
+            .map(|s| InstrumentId::new("sim", *s))
+            .collect()
+    }
+
+    /// A state that has already announced and backfilled `quoted`.
+    fn settled(quoted: &HashSet<InstrumentId>) -> BeatState {
+        BeatState {
+            announced: true,
+            backfilled: quoted.clone(),
+            seed: 7,
+        }
+    }
+
     #[test]
-    fn a_beat_publishes_quotes_only_for_subscribed_instruments() {
+    fn a_beat_publishes_quotes_and_depth_only_for_quote_subscriptions() {
         let venue = listed(&["AAA", "BBB"]);
         let (tx, rx) = mpsc::channel();
         let bus = ChannelBus(tx);
-        let watched = HashSet::from([InstrumentId::new("sim", "AAA")]);
+        let quoted = ids(&["AAA"]);
         let beat = Beat {
             venue: &venue,
-            subscribed: &watched,
+            quotes: &quoted,
+            trades: &HashSet::new(),
             bus: &bus,
         };
-        let mut backfilled = watched.clone();
 
-        beat.run(&mut backfilled, &mut 7, UnixNanos(1));
+        beat.run(&mut settled(&quoted), UnixNanos(1));
 
-        assert_eq!(quoted_symbols(&rx), vec!["AAA".to_string()]);
+        let events: Vec<Event> = rx.try_iter().collect();
+        let symbols: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Quote(q) => Some(q.instrument.symbol.as_str()),
+                Event::Depth(d) => Some(d.instrument.symbol.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(symbols, vec!["AAA", "AAA"]);
+        assert!(!events.iter().any(|e| matches!(e, Event::Trade(_))));
+    }
+
+    #[test]
+    fn prints_go_out_only_for_trade_subscriptions_and_only_when_price_moves() {
+        let venue = listed(&["AAA", "BBB"]);
+        let (tx, rx) = mpsc::channel();
+        let bus = ChannelBus(tx);
+        let printed = ids(&["BBB"]);
+        let beat = Beat {
+            venue: &venue,
+            quotes: &HashSet::new(),
+            trades: &printed,
+            bus: &bus,
+        };
+        let mut state = settled(&HashSet::new());
+
+        for _ in 0..20 {
+            beat.run(&mut state, UnixNanos(1));
+        }
+
+        let traded: HashSet<String> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                Event::Trade(t) => Some(t.instrument.symbol),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(traded, HashSet::from(["BBB".to_string()]));
+    }
+
+    #[test]
+    fn reference_data_is_announced_once_before_anything_else() {
+        let venue = listed(&["AAA", "BBB"]);
+        let (tx, rx) = mpsc::channel();
+        let bus = ChannelBus(tx);
+        let beat = Beat {
+            venue: &venue,
+            quotes: &HashSet::new(),
+            trades: &HashSet::new(),
+            bus: &bus,
+        };
+        let mut state = BeatState::default();
+
+        beat.run(&mut state, UnixNanos(1));
+        beat.run(&mut state, UnixNanos(2));
+
+        let announced = rx
+            .try_iter()
+            .filter(|e| matches!(e, Event::Instrument(_) | Event::PriceBand(_)))
+            .count();
+        assert_eq!(announced, 4);
     }
 
     #[test]
@@ -264,18 +391,19 @@ mod tests {
         let venue = listed(&["AAA"]);
         let (tx, rx) = mpsc::channel();
         let bus = ChannelBus(tx);
-        let watched = HashSet::from([InstrumentId::new("sim", "AAA")]);
+        let quoted = ids(&["AAA"]);
         let beat = Beat {
             venue: &venue,
-            subscribed: &watched,
+            quotes: &quoted,
+            trades: &HashSet::new(),
             bus: &bus,
         };
-        let mut backfilled = HashSet::new();
+        let mut state = settled(&HashSet::new());
         let now = UnixNanos(10_000_000_000_000);
 
-        beat.run(&mut backfilled, &mut 7, now);
+        beat.run(&mut state, now);
         let first = quoted_symbols(&rx).len();
-        beat.run(&mut backfilled, &mut 7, now);
+        beat.run(&mut state, now);
         let second = quoted_symbols(&rx).len();
 
         assert_eq!(first, HISTORY_QUOTES + 1);
@@ -288,16 +416,17 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let bus = ChannelBus(tx);
         let nobody = HashSet::new();
-        let mut backfilled = HashSet::from([InstrumentId::new("sim", "AAA")]);
         let idle = Beat {
             venue: &venue,
-            subscribed: &nobody,
+            quotes: &nobody,
+            trades: &nobody,
             bus: &bus,
         };
+        let mut state = settled(&ids(&["AAA"]));
 
-        idle.run(&mut backfilled, &mut 7, UnixNanos(10_000_000_000_000));
+        idle.run(&mut state, UnixNanos(10_000_000_000_000));
 
-        assert!(backfilled.is_empty());
+        assert!(state.backfilled.is_empty());
         assert!(quoted_symbols(&rx).is_empty());
     }
 

@@ -3,12 +3,15 @@
 // rename one that has shipped. Titles and descriptions are message ids
 // (see src/i18n/locales).
 
+import { VN_HOSE_SCHEDULE } from "bo-grid/trading";
 import { registerLayout, registerScreen } from "./registry.js";
+import { registerMarketPreset } from "../lib/markets.js";
 import Watchlist from "../lib/Watchlist.svelte";
 import Chart from "../lib/Chart.svelte";
 import OrderTicket from "../lib/OrderTicket.svelte";
 import Blotter from "../lib/Blotter.svelte";
 import Portfolio from "../lib/Portfolio.svelte";
+import PriceBoard from "../lib/PriceBoard.svelte";
 
 export const DEFAULT_LAYOUT = "trading";
 
@@ -57,6 +60,15 @@ export function registerBuiltins() {
     description: "screen.account.description",
   });
 
+  registerScreen({
+    id: "price-board",
+    title: "screen.price-board.title",
+    component: PriceBoard,
+    linkable: true,
+    defaultParams: { link: "a", exchange: "" },
+    description: "screen.price-board.description",
+  });
+
   registerLayout({
     id: DEFAULT_LAYOUT,
     title: "layout.trading.title",
@@ -85,5 +97,29 @@ export function registerBuiltins() {
       add("chart", { params: { link: "b" }, title: "layout.two-charts.chart-b", position: { referencePanel: chartA, direction: "below" } });
       add("orders", { position: { referencePanel: watchB, direction: "within" } });
     },
+  });
+
+  registerLayout({
+    id: "board",
+    title: "layout.board.title",
+    build(add) {
+      const board = add("price-board");
+      const chart = add("chart", { position: { referencePanel: board, direction: "below" }, initialHeight: 330 });
+      const ticket = add("order-ticket", { position: { referencePanel: chart, direction: "right" }, initialWidth: 300 });
+      const orders = add("orders", { position: { referencePanel: ticket, direction: "right" }, initialWidth: 560 });
+      add("account", { position: { referencePanel: orders, direction: "within" } });
+    },
+  });
+
+  // Vietnamese boards quote in thousands of dong, to two places on every
+  // exchange. The badge follows HOSE's schedule, the largest board; HNX
+  // and UPCoM run close to it.
+  registerMarketPreset({
+    id: "vn",
+    priceScale: 1000,
+    priceDecimals: 2,
+    schedule: VN_HOSE_SCHEDULE,
+    timeZone: "Asia/Ho_Chi_Minh",
+    layout: "board",
   });
 }

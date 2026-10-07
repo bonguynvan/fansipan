@@ -7,18 +7,25 @@
 //! unsubscribe.
 //!
 //! Each subscribed instrument also gets a [`BarSeries`] built from its quote
-//! mids, which is what a chart draws.
+//! mids, which is what a chart draws, and, with a trade subscription,
+//! [`SessionStats`] built from the tape.
+//!
+//! Reference data (instrument definitions, today's price bands) is kept for
+//! every instrument the adapter publishes, subscribed or not: it is small,
+//! and screens need it before they subscribe.
 
 mod bars;
+mod session;
 
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use adapter_api::{AdapterError, DataClient};
 use bus::BusHandle;
-use model::{InstrumentId, Quote};
+use model::{Depth, InstrumentId, InstrumentInfo, PriceBand, Quote, Trade};
 
 pub use bars::{Bar, BarSeries};
+pub use session::SessionStats;
 
 pub const DEFAULT_BAR_INTERVAL: Duration = Duration::from_secs(5);
 pub const DEFAULT_BAR_CAPACITY: usize = 1_000;
@@ -26,10 +33,37 @@ pub const DEFAULT_BAR_CAPACITY: usize = 1_000;
 pub struct DataEngine {
     client: Box<dyn DataClient>,
     quote_refs: HashMap<InstrumentId, usize>,
+    trade_refs: HashMap<InstrumentId, usize>,
     latest: BTreeMap<InstrumentId, Quote>,
     bars: HashMap<InstrumentId, BarSeries>,
     bar_interval: Duration,
     bar_capacity: usize,
+    instruments: BTreeMap<InstrumentId, InstrumentInfo>,
+    bands: HashMap<InstrumentId, PriceBand>,
+    depth: HashMap<InstrumentId, Depth>,
+    stats: HashMap<InstrumentId, SessionStats>,
+}
+
+/// Takes one reference; true if it is the first, so the adapter must be told.
+fn acquire(refs: &mut HashMap<InstrumentId, usize>, instrument: &InstrumentId) -> bool {
+    match refs.get_mut(instrument) {
+        Some(count) => {
+            *count += 1;
+            false
+        }
+        None => true,
+    }
+}
+
+/// Releases one reference: `None` if there was none, `Some(true)` if it was
+/// the last, so the adapter must be told.
+fn release(refs: &mut HashMap<InstrumentId, usize>, instrument: &InstrumentId) -> Option<bool> {
+    let count = refs.get_mut(instrument)?;
+    if *count > 1 {
+        *count -= 1;
+        return Some(false);
+    }
+    Some(true)
 }
 
 impl DataEngine {
@@ -37,10 +71,15 @@ impl DataEngine {
         Self {
             client,
             quote_refs: HashMap::new(),
+            trade_refs: HashMap::new(),
             latest: BTreeMap::new(),
             bars: HashMap::new(),
             bar_interval: DEFAULT_BAR_INTERVAL,
             bar_capacity: DEFAULT_BAR_CAPACITY,
+            instruments: BTreeMap::new(),
+            bands: HashMap::new(),
+            depth: HashMap::new(),
+            stats: HashMap::new(),
         }
     }
 
@@ -59,12 +98,10 @@ impl DataEngine {
     }
 
     pub fn subscribe_quotes(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
-        if let Some(count) = self.quote_refs.get_mut(instrument) {
-            *count += 1;
-            return Ok(());
+        if acquire(&mut self.quote_refs, instrument) {
+            self.client.subscribe_quotes(instrument)?;
+            self.quote_refs.insert(instrument.clone(), 1);
         }
-        self.client.subscribe_quotes(instrument)?;
-        self.quote_refs.insert(instrument.clone(), 1);
         Ok(())
     }
 
@@ -72,20 +109,31 @@ impl DataEngine {
     /// no-op, so a screen can release on close without tracking whether its
     /// subscribe succeeded.
     pub fn unsubscribe_quotes(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
-        match self.quote_refs.get(instrument).copied() {
-            None => Ok(()),
-            Some(1) => {
-                self.client.unsubscribe_quotes(instrument)?;
-                self.quote_refs.remove(instrument);
-                self.latest.remove(instrument);
-                self.bars.remove(instrument);
-                Ok(())
-            }
-            Some(count) => {
-                self.quote_refs.insert(instrument.clone(), count - 1);
-                Ok(())
-            }
+        if release(&mut self.quote_refs, instrument) == Some(true) {
+            self.client.unsubscribe_quotes(instrument)?;
+            self.quote_refs.remove(instrument);
+            self.latest.remove(instrument);
+            self.bars.remove(instrument);
+            self.depth.remove(instrument);
         }
+        Ok(())
+    }
+
+    pub fn subscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+        if acquire(&mut self.trade_refs, instrument) {
+            self.client.subscribe_trades(instrument)?;
+            self.trade_refs.insert(instrument.clone(), 1);
+        }
+        Ok(())
+    }
+
+    pub fn unsubscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+        if release(&mut self.trade_refs, instrument) == Some(true) {
+            self.client.unsubscribe_trades(instrument)?;
+            self.trade_refs.remove(instrument);
+            self.stats.remove(instrument);
+        }
+        Ok(())
     }
 
     pub fn is_subscribed(&self, instrument: &InstrumentId) -> bool {
@@ -127,6 +175,58 @@ impl DataEngine {
         self.latest.get(instrument)
     }
 
+    /// Records how an instrument trades. Kept whether or not anyone is
+    /// subscribed.
+    pub fn on_instrument(&mut self, info: &InstrumentInfo) {
+        self.instruments.insert(info.id.clone(), info.clone());
+    }
+
+    /// Records today's band. Kept whether or not anyone is subscribed.
+    pub fn on_band(&mut self, band: &PriceBand) {
+        self.bands.insert(band.instrument.clone(), band.clone());
+    }
+
+    /// Caches depth for quote-subscribed instruments; returns whether kept.
+    pub fn on_depth(&mut self, depth: &Depth) -> bool {
+        if !self.is_subscribed(&depth.instrument) {
+            return false;
+        }
+        self.depth.insert(depth.instrument.clone(), depth.clone());
+        true
+    }
+
+    /// Folds a print into the session stats of a trade-subscribed instrument;
+    /// returns whether kept.
+    pub fn on_trade(&mut self, trade: &Trade) -> bool {
+        if !self.trade_refs.contains_key(&trade.instrument) {
+            return false;
+        }
+        let stats = self.stats.entry(trade.instrument.clone()).or_default();
+        *stats = stats.with_trade(trade.price, trade.quantity);
+        true
+    }
+
+    pub fn instrument(&self, instrument: &InstrumentId) -> Option<&InstrumentInfo> {
+        self.instruments.get(instrument)
+    }
+
+    /// Every instrument the adapter has described, ordered by instrument.
+    pub fn instruments(&self) -> impl Iterator<Item = &InstrumentInfo> {
+        self.instruments.values()
+    }
+
+    pub fn band(&self, instrument: &InstrumentId) -> Option<&PriceBand> {
+        self.bands.get(instrument)
+    }
+
+    pub fn depth(&self, instrument: &InstrumentId) -> Option<&Depth> {
+        self.depth.get(instrument)
+    }
+
+    pub fn stats(&self, instrument: &InstrumentId) -> Option<&SessionStats> {
+        self.stats.get(instrument)
+    }
+
     /// Latest quote per subscribed instrument, ordered by instrument.
     pub fn quotes(&self) -> impl Iterator<Item = &Quote> {
         self.latest.values()
@@ -143,6 +243,8 @@ mod tests {
     struct Calls {
         subscribed: Vec<InstrumentId>,
         unsubscribed: Vec<InstrumentId>,
+        trade_subscribed: Vec<InstrumentId>,
+        trade_unsubscribed: Vec<InstrumentId>,
     }
 
     struct RecordingClient(Arc<Mutex<Calls>>);
@@ -162,10 +264,23 @@ mod tests {
             self.0.lock().unwrap().unsubscribed.push(instrument.clone());
             Ok(())
         }
-        fn subscribe_trades(&mut self, _instrument: &InstrumentId) -> Result<(), AdapterError> {
+        fn subscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+            if instrument.symbol == "BAD" {
+                return Err(AdapterError::fatal("unknown instrument"));
+            }
+            self.0
+                .lock()
+                .unwrap()
+                .trade_subscribed
+                .push(instrument.clone());
             Ok(())
         }
-        fn unsubscribe_trades(&mut self, _instrument: &InstrumentId) -> Result<(), AdapterError> {
+        fn unsubscribe_trades(&mut self, instrument: &InstrumentId) -> Result<(), AdapterError> {
+            self.0
+                .lock()
+                .unwrap()
+                .trade_unsubscribed
+                .push(instrument.clone());
             Ok(())
         }
         fn disconnect(&mut self) -> Result<(), AdapterError> {
@@ -198,6 +313,76 @@ mod tests {
             ask_size: Decimal::ONE,
             ts_event: UnixNanos(seconds * 1_000_000_000),
         }
+    }
+
+    fn trade(symbol: &str, price: i64, quantity: i64) -> Trade {
+        Trade {
+            instrument: id(symbol),
+            price: Decimal::from(price),
+            quantity: Decimal::from(quantity),
+            side: model::Side::Buy,
+            ts_event: UnixNanos(0),
+        }
+    }
+
+    #[test]
+    fn trades_build_session_stats_once_subscribed() {
+        let (mut engine, calls) = engine();
+        assert!(!engine.on_trade(&trade("AAA", 10, 100)));
+
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.on_trade(&trade("AAA", 10, 100));
+        engine.on_trade(&trade("AAA", 12, 300));
+
+        let stats = engine.stats(&id("AAA")).unwrap();
+        assert_eq!(stats.volume, Decimal::from(400));
+        assert_eq!(stats.high, Some(Decimal::from(12)));
+        assert_eq!(calls.lock().unwrap().trade_subscribed.len(), 1);
+    }
+
+    #[test]
+    fn the_last_trade_unsubscribe_drops_the_stats() {
+        let (mut engine, _) = engine();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.on_trade(&trade("AAA", 10, 100));
+
+        engine.unsubscribe_trades(&id("AAA")).unwrap();
+
+        assert!(engine.stats(&id("AAA")).is_none());
+    }
+
+    #[test]
+    fn reference_data_is_kept_without_a_subscription() {
+        let (mut engine, _) = engine();
+        let ticks = model::TickTable::flat(Decimal::ONE).unwrap();
+
+        engine.on_instrument(&InstrumentInfo::new(id("AAA"), Decimal::ONE_HUNDRED, ticks));
+        engine.on_band(&PriceBand::new(
+            id("AAA"),
+            Decimal::TEN,
+            None,
+            None,
+            UnixNanos(0),
+        ));
+
+        assert_eq!(engine.instruments().count(), 1);
+        assert_eq!(
+            engine.band(&id("AAA")).map(|b| b.reference),
+            Some(Decimal::TEN)
+        );
+    }
+
+    #[test]
+    fn depth_is_kept_only_for_quote_subscribed_instruments() {
+        let (mut engine, _) = engine();
+        let depth = Depth::new(id("AAA"), vec![], vec![], UnixNanos(0));
+        assert!(!engine.on_depth(&depth));
+
+        engine.subscribe_quotes(&id("AAA")).unwrap();
+
+        assert!(engine.on_depth(&depth));
+        assert!(engine.depth(&id("AAA")).is_some());
     }
 
     #[test]
@@ -315,6 +500,34 @@ mod tests {
         assert!(engine.subscribe_quotes(&id("BAD")).is_err());
 
         assert!(!engine.is_subscribed(&id("BAD")));
+    }
+
+    #[test]
+    fn a_failed_trade_subscribe_is_not_counted() {
+        let (mut engine, calls) = engine();
+
+        assert!(engine.subscribe_trades(&id("BAD")).is_err());
+        engine.unsubscribe_trades(&id("BAD")).unwrap();
+
+        assert!(calls.lock().unwrap().trade_unsubscribed.is_empty());
+    }
+
+    #[test]
+    fn trade_stats_survive_until_the_last_trade_subscriber_leaves() {
+        let (mut engine, calls) = engine();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.subscribe_trades(&id("AAA")).unwrap();
+        engine.on_trade(&trade("AAA", 10, 5));
+
+        engine.unsubscribe_trades(&id("AAA")).unwrap();
+        let kept = engine.stats(&id("AAA")).map(|s| s.volume);
+        engine.unsubscribe_trades(&id("AAA")).unwrap();
+
+        assert_eq!(kept, Some(Decimal::from(5)));
+        assert!(engine.stats(&id("AAA")).is_none());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.trade_subscribed, vec![id("AAA")]);
+        assert_eq!(calls.trade_unsubscribed, vec![id("AAA")]);
     }
 
     #[test]

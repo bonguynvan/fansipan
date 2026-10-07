@@ -5,7 +5,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { onBatch, startBridge } from "./bridge.js";
 import { createSync } from "./sync.js";
+import { tickDecimals, tickTable } from "./ticks.js";
 import { TREND_BARS, toCandle, withBars, withHistory } from "./trends.js";
+
+const bySymbol = (items) => Object.fromEntries(items.map((item) => [item.symbol, item]));
 
 class Market {
   // Plain objects replaced on every change: cheap to diff, and what
@@ -14,6 +17,12 @@ class Market {
   orders = $state.raw({});
   trends = $state.raw({});
   account = $state.raw({ cash: "0", positions: [] });
+  /** How each instrument trades (lot, ticks, board), keyed by symbol. */
+  instruments = $state.raw({});
+  /** One price-board row per symbol, as the shell built it. */
+  boards = $state.raw({});
+  /** `{ id, title, currency }` of the market the shell is wired to; null until the snapshot is in. */
+  info = $state.raw(null);
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -28,6 +37,13 @@ class Market {
     }
     if (batch.account) this.account = batch.account;
     if (batch.bars.length) this.trends = withBars(this.trends, batch.bars);
+    if (batch.instruments.length) this.instruments = { ...this.instruments, ...bySymbol(batch.instruments) };
+    if (batch.boards.length) this.boards = { ...this.boards, ...bySymbol(batch.boards) };
+  }
+
+  /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
+  priceDecimals(symbol) {
+    return tickDecimals(tickTable(this.instruments[symbol]));
   }
 }
 
@@ -45,17 +61,31 @@ async function loadTrends(symbols) {
 }
 
 let started = null;
+let infoIn;
+const infoReady = new Promise((resolve) => (infoIn = resolve));
+
+/** The market the shell is wired to, once known; null if the snapshot could not be read. */
+export function marketInfo() {
+  return infoReady;
+}
 
 /** Starts this window's feed once; later calls return the same promise. */
 export function startMarket() {
   started ??= (async () => {
-    const sync = createSync((batch) => market.apply(batch));
-    onBatch(sync.batch);
-    await startBridge();
-    const snap = await invoke("snapshot");
-    sync.snapshot(snap);
-    await loadTrends(snap.quotes.map((q) => q.symbol));
-    market.ready = true;
+    try {
+      const sync = createSync((batch) => market.apply(batch));
+      onBatch(sync.batch);
+      await startBridge();
+      const snap = await invoke("snapshot");
+      sync.snapshot(snap);
+      market.info = snap.market ?? null;
+      infoIn(market.info);
+      await loadTrends(snap.quotes.map((q) => q.symbol));
+      market.ready = true;
+    } finally {
+      // Whoever waits on the market must not wait forever on a failed start.
+      infoIn(market.info);
+    }
   })();
   return started;
 }

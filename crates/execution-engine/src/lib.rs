@@ -5,14 +5,14 @@
 pub mod lifecycle;
 pub mod risk;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
 use model::{
-    CancelOrder, ClientOrderId, Decimal, ExecutionReport, FillId, NewOrder, Order, OrderEvent,
-    OrderStatus, SubmitOrder,
+    CancelOrder, ClientOrderId, Decimal, ExecutionReport, FillId, InstrumentId, InstrumentInfo,
+    NewOrder, Order, OrderEvent, OrderStatus, PriceBand, SubmitOrder,
 };
 
 pub use lifecycle::TransitionError;
@@ -72,6 +72,9 @@ pub struct ExecutionEngine {
     limits: RiskLimits,
     orders: BTreeMap<ClientOrderId, Tracked>,
     next_id: u64,
+    /// Market rules as the adapter published them, for risk.
+    instruments: HashMap<InstrumentId, InstrumentInfo>,
+    bands: HashMap<InstrumentId, PriceBand>,
 }
 
 impl ExecutionEngine {
@@ -81,7 +84,19 @@ impl ExecutionEngine {
             limits,
             orders: BTreeMap::new(),
             next_id: 1,
+            instruments: HashMap::new(),
+            bands: HashMap::new(),
         }
+    }
+
+    /// Records an instrument's lot and tick rules for risk to apply.
+    pub fn set_instrument(&mut self, info: InstrumentInfo) {
+        self.instruments.insert(info.id.clone(), info);
+    }
+
+    /// Records today's price band for risk to apply.
+    pub fn set_band(&mut self, band: PriceBand) {
+        self.bands.insert(band.instrument.clone(), band);
     }
 
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
@@ -111,7 +126,14 @@ impl ExecutionEngine {
             reason: None,
         };
 
-        let order = match risk::check(&request, &self.limits) {
+        let cleared = risk::check(&request, &self.limits).and_then(|()| {
+            risk::check_market_rules(
+                &request,
+                self.instruments.get(&request.instrument),
+                self.bands.get(&request.instrument),
+            )
+        });
+        let order = match cleared {
             Err(reject) => Order {
                 status: OrderStatus::Denied,
                 reason: Some(reject.to_string()),
@@ -307,6 +329,38 @@ mod tests {
         );
         assert!(calls.lock().unwrap().submitted.is_empty());
         assert_eq!(engine.orders().count(), 1);
+    }
+
+    #[test]
+    fn market_rules_deny_an_odd_lot_once_the_instrument_is_known() {
+        let (mut engine, calls) = engine();
+        let ticks = model::TickTable::flat(d("0.01")).unwrap();
+        engine.set_instrument(InstrumentInfo::new(buy("1").instrument, d("3"), ticks));
+
+        let order = engine.submit(buy("4"));
+
+        assert_eq!(order.status, OrderStatus::Denied);
+        assert_eq!(
+            order.reason.as_deref(),
+            Some("quantity must be a multiple of the lot size, 3")
+        );
+        assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    #[test]
+    fn market_rules_deny_a_limit_outside_the_band() {
+        let (mut engine, _) = engine();
+        engine.set_band(PriceBand::new(
+            buy("1").instrument,
+            d("5"),
+            Some(d("4.5")),
+            Some(d("1")),
+            UnixNanos(0),
+        ));
+
+        let order = engine.submit(buy("2"));
+
+        assert_eq!(order.status, OrderStatus::Denied);
     }
 
     #[test]

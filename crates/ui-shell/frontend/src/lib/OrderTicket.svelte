@@ -2,17 +2,32 @@
   import { invoke } from "@tauri-apps/api/core";
   import { market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
+  import { money, price, quantity as formatQuantity } from "./format.js";
+  import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
 
   const selected = $derived(symbolOf(params, market.symbols[0]));
   const quote = $derived(selected ? market.quotes[selected] : null);
+  // The instrument's rules, so the inputs offer what the venue accepts.
+  // Risk checks them again in exact decimals; these only help.
+  const instrument = $derived(selected ? market.instruments[selected] : null);
+  const band = $derived(selected ? market.boards[selected] : null);
+  const lot = $derived(Number(instrument?.lot_size) || 1);
+  const ticks = $derived(tickTable(instrument));
+  const decimals = $derived(market.priceDecimals(selected));
 
+  // What was typed starts over when the symbol changes: a size or a price
+  // meant for one instrument is wrong for the next, whose lots and prices
+  // differ. Assigning to these overrides them until then.
+  const blankFor = (_symbol) => null;
   let side = $state("buy");
-  let quantity = $state(10);
+  /** What was typed; until then, one lot. */
+  let typedQuantity = $derived(blankFor(selected));
+  const quantity = $derived(typedQuantity ?? lot);
   let orderType = $state("market");
-  let limitPrice = $state(null);
+  let limitPrice = $derived(blankFor(selected));
   let message = $state(null);
   let busy = $state(false);
 
@@ -25,6 +40,10 @@
 
   /** Number inputs bind to null when empty; send the raw text and let Rust validate. */
   const asText = (value) => (value === null || value === undefined ? "" : String(value));
+
+  function stepLimit(step) {
+    limitPrice = step(ticks, Number(limitPrice) || reference || 0);
+  }
 
   function onTypeChange() {
     if (orderType === "limit" && (limitPrice === null || limitPrice === "") && reference) {
@@ -48,7 +67,12 @@
         ? { kind: "err", text: t(order.status === "denied" ? "ticket.denied" : "ticket.rejected", { reason: order.reason }) }
         : {
             kind: "ok",
-            text: t("ticket.sent", { id: order.id, side: t(`side.${side}`), quantity, symbol: selected }),
+            text: t("ticket.sent", {
+              id: order.id,
+              side: t(`side.${side}`),
+              quantity: formatQuantity(quantity),
+              symbol: selected,
+            }),
           };
     } catch (err) {
       message = { kind: "err", text: String(err) };
@@ -70,8 +94,17 @@
 
   <form onsubmit={submit}>
     <label>
-      <span>{t("ticket.quantity")}</span>
-      <input class="num" type="number" min="1" step="1" bind:value={quantity} />
+      <span>
+        {t("ticket.quantity")}
+        {#if lot > 1}<em class="hint">{t("ticket.lot", { lot: formatQuantity(lot) })}</em>{/if}
+      </span>
+      <input
+        class="num"
+        type="number"
+        min={lot}
+        step={lot}
+        bind:value={() => quantity, (value) => (typedQuantity = value)}
+      />
     </label>
 
     <label>
@@ -84,19 +117,37 @@
 
     {#if orderType === "limit"}
       <label>
-        <span>{t("ticket.limitPrice")}</span>
-        <input class="num" type="number" min="0.01" step="0.01" bind:value={limitPrice} />
+        <span>
+          {t("ticket.limitPrice")}
+          {#if band?.ceiling && band?.floor}
+            <em class="hint">
+              {t("ticket.band", { floor: price(band.floor, decimals), ceiling: price(band.ceiling, decimals) })}
+            </em>
+          {/if}
+        </span>
+        <span class="stepper">
+          <!-- step="any": the browser measures steps from 0, which a ladder
+               whose tiers start off a tick multiple would fail; risk checks
+               the tick and says why. -->
+          <input class="num" type="number" min="0" step="any" bind:value={limitPrice} />
+          <button type="button" aria-label={t("ticket.tickDown")} title={t("ticket.tickDown")} onclick={() => stepLimit(stepDown)}
+            >−</button
+          >
+          <button type="button" aria-label={t("ticket.tickUp")} title={t("ticket.tickUp")} onclick={() => stepLimit(stepUp)}
+            >+</button
+          >
+        </span>
       </label>
     {/if}
 
     <dl class="summary">
       <div>
         <dt class="dim">{t("ticket.reference")}</dt>
-        <dd class="num">{reference ? reference.toFixed(2) : "—"}</dd>
+        <dd class="num">{price(reference, decimals)}</dd>
       </div>
       <div>
         <dt class="dim">{t("ticket.notional")}</dt>
-        <dd class="num">{notional ? notional.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "—"}</dd>
+        <dd class="num">{money(notional, market.info?.currency)}</dd>
       </div>
     </dl>
 
@@ -182,6 +233,34 @@
   select:focus {
     outline: none;
     border-color: var(--accent);
+  }
+
+  .hint {
+    margin-left: 6px;
+    font-style: normal;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .stepper {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .stepper button {
+    width: 34px;
+    border: 1px solid var(--rule);
+    border-left: none;
+    background: var(--panel-raised);
+    color: var(--text-dim);
+    font-size: 15px;
+    cursor: pointer;
+  }
+
+  .stepper button:hover,
+  .stepper button:focus-visible {
+    color: var(--text);
+    outline: none;
   }
 
   .summary {

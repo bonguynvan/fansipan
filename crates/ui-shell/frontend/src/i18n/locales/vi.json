@@ -7,6 +7,7 @@
   "app.live": "trực tuyến",
   "app.connecting": "đang kết nối",
   "app.language": "Ngôn ngữ",
+  "app.startFailed": "Một phần của ứng dụng không khởi động được: {error}",
 
   "workspace.menu": "Không gian làm việc",
   "workspace.addPanel": "Thêm khung",
@@ -37,6 +38,8 @@
   "screen.orders.description": "Mọi lệnh trong phiên: khớp, trạng thái, lý do và hủy lệnh.",
   "screen.account.title": "Tài khoản",
   "screen.account.description": "Tiền và vị thế theo báo cáo của sàn, kèm lãi/lỗ trực tiếp.",
+  "screen.price-board.title": "Bảng giá",
+  "screen.price-board.description": "Toàn bộ mã niêm yết với ba bước giá mua/bán, giá khớp gần nhất và biên độ trong ngày, tô màu theo giá tham chiếu, trần và sàn.",
 
   "layout.trading.title": "Bàn giao dịch",
   "layout.two-charts.title": "Hai biểu đồ (nhóm liên kết A và B)",
@@ -44,6 +47,7 @@
   "layout.two-charts.watchlist-b": "Danh mục B",
   "layout.two-charts.chart-a": "Biểu đồ A",
   "layout.two-charts.chart-b": "Biểu đồ B",
+  "layout.board.title": "Bàn bảng giá",
 
   "column.symbol": "Mã",
   "column.trend": "2 phút",
@@ -97,6 +101,10 @@
   "ticket.denied": "Bị chặn bởi kiểm tra rủi ro: {reason}",
   "ticket.rejected": "Bị từ chối: {reason}",
   "ticket.sent": "#{id} {side} {quantity} {symbol} đã gửi; theo dõi trạng thái ở Sổ lệnh",
+  "ticket.lot": "Lô {lot}",
+  "ticket.band": "Sàn {floor} · Trần {ceiling}",
+  "ticket.tickUp": "Tăng một bước giá",
+  "ticket.tickDown": "Giảm một bước giá",
 
   "orders.summary": "{working} đang chờ · {total} trong phiên",
   "orders.empty": "Chưa có lệnh. Hãy đặt lệnh từ khung Đặt lệnh.",
@@ -105,5 +113,39 @@
 
   "account.positions.other": "{count} vị thế",
   "account.cash": "tiền {cash}",
-  "account.empty": "Chưa có vị thế."
+  "account.empty": "Chưa có vị thế.",
+
+  "board.exchange": "Sàn giao dịch",
+  "board.all": "Tất cả",
+  "board.ref": "TC",
+  "board.ceiling": "Trần",
+  "board.floor": "Sàn",
+  "board.bids": "Bên mua",
+  "board.asks": "Bên bán",
+  "board.matched": "Khớp lệnh",
+  "board.day": "Trong phiên",
+  "board.priceN": "Giá {n}",
+  "board.volumeN": "KL {n}",
+  "board.price": "Giá",
+  "board.volume": "KL",
+  "board.change": "+/-",
+  "board.pct": "%",
+  "board.totalVolume": "Tổng KL",
+  "board.high": "Cao",
+  "board.low": "Thấp",
+  "board.tone.ceiling": "Trần",
+  "board.tone.floor": "Sàn",
+  "board.tone.ref": "Tham chiếu",
+  "board.tone.up": "Tăng",
+  "board.tone.down": "Giảm",
+  "board.unit": "Đơn vị giá: {scale} {currency}",
+  "board.waiting": "Đang chờ giá…",
+  "board.sessionHint": "Phiên giao dịch thường của sàn, theo giờ của sàn. Sàn giả lập giao dịch mọi lúc.",
+
+  "session.pre-open": "Trước phiên",
+  "session.ato": "ATO",
+  "session.continuous": "Liên tục",
+  "session.break": "Nghỉ trưa",
+  "session.atc": "ATC",
+  "session.closed": "Đóng cửa"
 }

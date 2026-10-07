@@ -5,6 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { onBatch } from "./bridge.js";
+import { finestTick, tickDecimals, tickTable } from "./ticks.js";
 
 /** The interval data-engine builds bars at. The chart resamples longer timeframes from it. */
 export const BAR_TIMEFRAME = "5s";
@@ -21,16 +22,41 @@ export function toChartBar(bar) {
   };
 }
 
+/**
+ * What the chart is told about an instrument (the shell's instrument row):
+ * its names, and the price steps that set the axis precision, so VND shows
+ * no decimals and cents show two. Null when the instrument is not known yet.
+ */
+export function symbolInfoOf(instrument) {
+  if (!instrument) return null;
+  const ticks = tickTable(instrument);
+  return {
+    symbol: instrument.symbol,
+    description: instrument.name,
+    exchange: instrument.exchange || undefined,
+    type: "stock",
+    pricePrecision: tickDecimals(ticks),
+    minTick: finestTick(ticks),
+    currency: instrument.currency || undefined,
+  };
+}
+
 export class ShellAdapter {
   name = "fansipan-shell";
   supportedTimeframes = [BAR_TIMEFRAME];
 
+  #describe;
   #state = "disconnected";
   #listeners = new Map();
   #symbol = null;
   #unsubscribe = null;
   /** The newest bar sent and not yet closed. */
   #forming = null;
+
+  /** `describe(symbol)` returns the instrument row the shell sent for it, if any. */
+  constructor(describe = () => null) {
+    this.#describe = describe;
+  }
 
   connect(config) {
     this.#stop();
@@ -47,6 +73,10 @@ export class ShellAdapter {
 
   getConnectionState() {
     return this.#state;
+  }
+
+  async resolveSymbol(symbol) {
+    return symbolInfoOf(this.#describe(symbol));
   }
 
   async fetchHistory(symbol, _timeframe, limit) {

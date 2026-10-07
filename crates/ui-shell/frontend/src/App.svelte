@@ -7,7 +7,7 @@
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
   import WorkspaceMenu from "./workspace/WorkspaceMenu.svelte";
-  import { MAIN_WINDOW, currentWindowLabel, flushLayout } from "./workspace/workspace.svelte.js";
+  import { MAIN_WINDOW, currentWindowLabel, flushLayout, workspace } from "./workspace/workspace.svelte.js";
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
   import LocalePicker from "./i18n/LocalePicker.svelte";
 
@@ -17,9 +17,10 @@
   const label = currentWindowLabel();
 
   onMount(() => {
-    startLocale();
-    startLinks();
-    startMarket();
+    const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
+    startLocale().catch(failed);
+    startLinks().catch(failed);
+    startMarket().catch(failed);
     // The shell sends this just before quitting and waits briefly, so saves
     // still inside their debounce window are not lost.
     const flushing = listen("workspace-flush", () => {
@@ -50,7 +51,7 @@
     </div>
     <div class="equity">
       <span class="dim">{t("app.equity")}</span>
-      <span class="num">{money(equity)}</span>
+      <span class="num">{money(equity, market.info?.currency)}</span>
     </div>
     <div class="tools">
       <WorkspaceMenu />

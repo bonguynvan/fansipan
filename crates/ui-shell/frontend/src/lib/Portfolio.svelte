@@ -11,13 +11,15 @@
   const quotes = $derived(market.quotes);
 
   const tone = (value) => (value > 0 ? "up" : value < 0 ? "down" : undefined);
+  const atTick = (value, row) => price(value, row && market.priceDecimals(row.symbol));
+  const inCash = (value) => money(value, market.info?.currency);
 
   const columns = $derived([
     { type: "text", key: "symbol", header: t("column.symbol"), width: 66, minWidth: 62 },
     { type: "text", key: "quantity", header: t("column.qty"), width: 48, minWidth: 40, align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
-    { type: "text", key: "avg", header: t("column.avg"), width: 78, minWidth: 72, align: "right", format: (v) => price(v) },
-    { type: "price", key: "mark", header: t("column.mark"), width: 72, minWidth: 64, flash: "auto" },
-    { type: "number", key: "pnl", header: t("column.pnl"), width: 76, minWidth: 64, decimals: 2, cellClass: (v) => tone(v) },
+    { type: "text", key: "avg", header: t("column.avg"), width: 78, minWidth: 72, align: "right", format: atTick },
+    { type: "price", key: "mark", header: t("column.mark"), width: 72, minWidth: 64, flash: "auto", format: atTick },
+    { type: "number", key: "pnl", header: t("column.pnl"), width: 76, minWidth: 64, format: inCash, cellClass: (v) => tone(v) },
   ]);
 
   const rows = $derived(
@@ -38,7 +40,7 @@
 <div class="portfolio">
   <header>
     <span class="dim">{tn("account.positions", account.positions.length)}</span>
-    <span class="num">{t("account.cash", { cash: money(account.cash) })}</span>
+    <span class="num">{t("account.cash", { cash: inCash(account.cash) })}</span>
   </header>
 
   <div class="grid">

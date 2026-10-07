@@ -8,6 +8,11 @@
 //! price move could overtake the `Accepted` it follows, or an older account
 //! snapshot could land after a newer one. The bus never blocks, so holding
 //! the lock across a publish costs nothing.
+//!
+//! Each listing carries its market's rules as data ([`Listing`]): tick
+//! sizes, lot size, today's price band, displayed size. Prices stay on the
+//! tick ladder and inside the band, and orders that break a rule are
+//! rejected the way an exchange would.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -15,23 +20,175 @@ use std::time::Duration;
 
 use bus::Event;
 use model::{
-    AccountState, CancelOrder, ClientOrderId, Decimal, ExecutionReport, FillId, InstrumentId,
-    OrderEvent, Position, Quote, Side, SubmitOrder, UnixNanos, VenueOrderId,
+    AccountState, BookLevel, CancelOrder, ClientOrderId, Decimal, Depth, ExecutionReport, FillId,
+    InstrumentId, InstrumentInfo, OrderEvent, Position, PriceBand, Quote, Side, SubmitOrder,
+    TickTable, Trade, UnixNanos, VenueOrderId,
 };
 
-/// Bid/ask distance around the simulated mid, in price units.
-pub const SPREAD: Decimal = Decimal::from_parts(2, 0, 0, false, 2);
-/// Smallest price increment.
+/// Tick of an instrument listed with [`SimVenue::list`] (no market rules).
 pub const TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
-/// Lowest mid a random walk can reach: one tick plus half the spread, so the
-/// bid never reaches zero and nothing ever fills at a price of zero.
+/// Lowest mid such a walk can reach: two ticks, so the bid never reaches
+/// zero and nothing fills at a price of zero.
 pub const MIN_MID: Decimal = Decimal::from_parts(2, 0, 0, false, 2);
-/// Displayed size on each side, and the most one order can fill per price
-/// move. A resting order larger than this fills across several ticks.
+/// Displayed size of such an instrument at the best bid and ask, and the
+/// most one order can fill per price move.
 pub const TOP_OF_BOOK_SIZE: Decimal = Decimal::ONE_HUNDRED;
+/// Price levels published on each side of the book.
+pub const DEPTH_LEVELS: usize = 3;
 const AVG_PRICE_DP: u32 = 8;
-/// A random step moves a price by up to this many ticks either way.
-const MAX_STEP_TICKS: u64 = 2;
+/// One beat in this many moves a price at all; the rest leave it alone.
+const MOVE_ODDS: u64 = 3;
+/// How far a price strays from where it leans, as a fraction of its
+/// reference price, before every move takes it back.
+const PULL_RANGE: Decimal = Decimal::from_parts(5, 0, 0, false, 2);
+/// How far a price may lean without daily limits, as a fraction of its
+/// reference price.
+const OPEN_LEAN: Decimal = Decimal::from_parts(3, 0, 0, false, 2);
+/// The strongest lean, as a fraction of the way from reference to a limit.
+const MAX_LEAN: Decimal = Decimal::from_parts(95, 0, 0, false, 2);
+/// Resolution of the draws that pick a lean and a direction.
+const DRAW_STEPS: u64 = 1_000;
+/// Deeper book levels and trade prints show between 1 and this many lots.
+const MAX_LOTS: u64 = 40;
+
+/// How one instrument trades on the simulated venue.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listing {
+    pub info: InstrumentInfo,
+    /// Today's limits. Its reference is also the opening price.
+    pub band: PriceBand,
+    /// Size shown at the best bid and ask, and the most one order fills per
+    /// price move: an order larger than this fills across several moves.
+    pub display_size: Decimal,
+}
+
+impl Listing {
+    /// No market rules: a flat 0.01 tick, lot of one, no price limits.
+    pub fn unrestricted(instrument: InstrumentId, price: Decimal) -> Result<Self, String> {
+        let ticks = TickTable::flat(TICK).map_err(|e| e.to_string())?;
+        Ok(Self {
+            info: InstrumentInfo::new(instrument.clone(), Decimal::ONE, ticks),
+            band: PriceBand::new(instrument, price, None, None, UnixNanos::default()),
+            display_size: TOP_OF_BOOK_SIZE,
+        })
+    }
+
+    fn ticks(&self) -> &TickTable {
+        &self.info.ticks
+    }
+
+    /// Where the mid may go so that the bid and ask stay inside the band
+    /// and above zero.
+    fn clamp(&self, mid: Decimal) -> Decimal {
+        let ticks = self.ticks();
+        let lowest = self.band.floor.map_or_else(
+            || ticks.step_up(ticks.step_up(Decimal::ZERO)),
+            |f| ticks.step_up(f),
+        );
+        let clamped = mid.max(lowest);
+        match self.band.ceiling {
+            Some(ceiling) => clamped.min(ticks.step_down(ceiling).unwrap_or(ceiling)),
+            None => clamped,
+        }
+    }
+
+    /// Where this instrument's price drifts today. Drawn from the symbol, so
+    /// every run shows the same mix: most names near their reference, now
+    /// and then one pressing its ceiling or floor.
+    fn lean(&self) -> Decimal {
+        let reference = self.band.reference;
+        let draw = Decimal::from(fnv1a(self.info.id.symbol.as_bytes()) % (2 * DRAW_STEPS + 1))
+            / Decimal::from(DRAW_STEPS)
+            - Decimal::ONE;
+        // Cubing keeps most draws small and leaves a few near the ends.
+        let shaped = draw * draw * draw * MAX_LEAN;
+        let reach = match (self.band.ceiling, self.band.floor) {
+            (Some(ceiling), _) if shaped > Decimal::ZERO => ceiling - reference,
+            (_, Some(floor)) if shaped < Decimal::ZERO => reference - floor,
+            _ => reference * OPEN_LEAN,
+        };
+        self.clamp(self.ticks().round_nearest(reference + shaped * reach))
+    }
+
+    /// `price` moved `steps` prices along the ladder, up for positive, so a
+    /// step from a tier boundary lands on the neighbouring price whichever
+    /// way it goes. Not clamped to the band.
+    fn moved(&self, price: Decimal, steps: i64) -> Decimal {
+        let ticks = self.ticks();
+        (0..steps.unsigned_abs()).fold(price, |at, _| {
+            if steps > 0 {
+                ticks.step_up(at)
+            } else {
+                ticks.step_down(at).unwrap_or(at)
+            }
+        })
+    }
+
+    /// A size for a deeper level or a print: a whole number of lots that is
+    /// the same every time for the same price and slot.
+    fn lots(&self, price: Decimal, slot: u64) -> Decimal {
+        let units =
+            u64::try_from(price.mantissa().unsigned_abs() % u128::from(u64::MAX)).unwrap_or(0);
+        let mixed = xorshift(units ^ slot.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        self.info.lot_size.max(Decimal::ONE) * Decimal::from(1 + mixed % MAX_LOTS)
+    }
+}
+
+/// One price move on the venue: what a market-data feed publishes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tick {
+    pub quote: Quote,
+    pub depth: Depth,
+    /// The print that moved the price; `None` when it did not move.
+    pub trade: Option<Trade>,
+}
+
+struct Book {
+    mid: Decimal,
+    listing: Listing,
+}
+
+impl Book {
+    fn quote(&self, instrument: &InstrumentId, now: UnixNanos) -> Quote {
+        let ticks = self.listing.ticks();
+        Quote {
+            instrument: instrument.clone(),
+            bid: ticks.step_down(self.mid).unwrap_or(self.mid),
+            ask: ticks.step_up(self.mid),
+            bid_size: self.listing.display_size,
+            ask_size: self.listing.display_size,
+            ts_event: now,
+        }
+    }
+
+    fn depth(&self, quote: &Quote) -> Depth {
+        let ticks = self.listing.ticks();
+        let band = &self.listing.band;
+        let side = |best: Decimal, next: &dyn Fn(Decimal) -> Decimal| {
+            let mut levels = Vec::with_capacity(DEPTH_LEVELS);
+            let mut price = best;
+            for slot in 0..DEPTH_LEVELS {
+                if price <= Decimal::ZERO || !band.contains(price) {
+                    break;
+                }
+                let size = if slot == 0 {
+                    self.listing.display_size
+                } else {
+                    self.listing.lots(price, slot as u64)
+                };
+                levels.push(BookLevel::new(price, size));
+                price = next(price);
+            }
+            levels
+        };
+        Depth::new(
+            quote.instrument.clone(),
+            side(quote.bid, &|p| ticks.step_down(p).unwrap_or(Decimal::ZERO)),
+            side(quote.ask, &|p| ticks.step_up(p)),
+            quote.ts_event,
+        )
+    }
+}
 
 struct Resting {
     order: SubmitOrder,
@@ -39,7 +196,7 @@ struct Resting {
 }
 
 struct VenueState {
-    mids: BTreeMap<InstrumentId, Decimal>,
+    books: BTreeMap<InstrumentId, Book>,
     resting: Vec<Resting>,
     cash: Decimal,
     positions: BTreeMap<InstrumentId, Position>,
@@ -57,7 +214,7 @@ impl SimVenue {
     pub fn new(starting_cash: Decimal) -> Self {
         Self {
             state: Arc::new(Mutex::new(VenueState {
-                mids: BTreeMap::new(),
+                books: BTreeMap::new(),
                 resting: Vec::new(),
                 cash: starting_cash,
                 positions: BTreeMap::new(),
@@ -74,30 +231,60 @@ impl SimVenue {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Lists an instrument with no market rules at `mid`.
     pub fn list(&self, instrument: InstrumentId, mid: Decimal) {
-        self.state().mids.insert(instrument, mid);
+        if let Ok(listing) = Listing::unrestricted(instrument, mid) {
+            self.list_with(listing);
+        }
+    }
+
+    /// Lists an instrument under its market's rules, opening at the band's
+    /// reference price.
+    pub fn list_with(&self, listing: Listing) {
+        let mid = listing.clamp(listing.ticks().round_nearest(listing.band.reference));
+        self.state()
+            .books
+            .insert(listing.info.id.clone(), Book { mid, listing });
     }
 
     pub fn is_listed(&self, instrument: &InstrumentId) -> bool {
-        self.state().mids.contains_key(instrument)
+        self.state().books.contains_key(instrument)
     }
 
     pub fn instruments(&self) -> Vec<InstrumentId> {
-        self.state().mids.keys().cloned().collect()
+        self.state().books.keys().cloned().collect()
     }
 
     pub fn quote(&self, instrument: &InstrumentId, now: UnixNanos) -> Option<Quote> {
         self.state()
-            .mids
+            .books
             .get(instrument)
-            .map(|mid| quote_at(instrument, *mid, now))
+            .map(|book| book.quote(instrument, now))
+    }
+
+    /// Every listing's rules and today's band, as a feed announces them.
+    pub fn reference_data(&self, now: UnixNanos) -> Vec<Event> {
+        self.state()
+            .books
+            .values()
+            .flat_map(|book| {
+                [
+                    Event::Instrument(book.listing.info.clone()),
+                    Event::PriceBand({
+                        let mut band = book.listing.band.clone();
+                        band.ts_event = now;
+                        band
+                    }),
+                ]
+            })
+            .collect()
     }
 
     /// A made-up past for one instrument: `count` quotes `spacing` apart,
     /// the last one a `spacing` before `end`, walking backwards from the
-    /// current mid so the history joins the live feed without a jump.
-    /// Read-only: the venue's state does not change. Empty if the
-    /// instrument is not listed.
+    /// current mid so the history joins the live feed without a jump. It
+    /// stays on the tick ladder and inside the band. Read-only: the venue's
+    /// state does not change. Empty if the instrument is not listed.
     pub fn synthetic_history(
         &self,
         instrument: &InstrumentId,
@@ -106,18 +293,21 @@ impl SimVenue {
         spacing: Duration,
         seed: &mut u64,
     ) -> Vec<Quote> {
-        let Some(mid) = self.state().mids.get(instrument).copied() else {
+        let state = self.state();
+        let Some(book) = state.books.get(instrument) else {
             return Vec::new();
         };
         let spacing = u64::try_from(spacing.as_nanos()).unwrap_or(u64::MAX);
         let mut mids = Vec::with_capacity(count);
-        let mut price = mid;
+        let mut price = book.mid;
+        let lean = book.listing.lean();
+        let reference = book.listing.band.reference;
         for _ in 0..count {
             mids.push(price);
-            price = price
-                .checked_sub(random_step(seed))
-                .unwrap_or(price)
-                .max(MIN_MID);
+            // The walk leans back toward the same price either way in time,
+            // so walking it from now into the past gives a plausible history.
+            let step = walk_ticks(seed, price, lean, reference);
+            price = book.listing.clamp(book.listing.moved(price, step));
         }
         mids.into_iter()
             .rev()
@@ -125,7 +315,11 @@ impl SimVenue {
             .map(|(index, mid)| {
                 let steps_back = u64::try_from(count - index).unwrap_or(u64::MAX);
                 let ts = end.0.saturating_sub(steps_back.saturating_mul(spacing));
-                quote_at(instrument, mid, UnixNanos(ts))
+                let past = Book {
+                    mid,
+                    listing: book.listing.clone(),
+                };
+                past.quote(instrument, UnixNanos(ts))
             })
             .collect()
     }
@@ -134,24 +328,79 @@ impl SimVenue {
         account_of(&self.state())
     }
 
-    /// Moves the mid by `delta` (never below [`MIN_MID`]), sends the fills
-    /// for whatever resting orders the new price reaches to `sink`, and
-    /// returns the new quote. `None` if the instrument is not listed.
+    /// Moves the mid by `delta` (rounded to the tick ladder, kept inside the
+    /// band), sends the fills for whatever resting orders the new price
+    /// reaches to `sink`, and returns what a feed would publish. `None` if
+    /// the instrument is not listed.
     pub fn step(
         &self,
         instrument: &InstrumentId,
         delta: Decimal,
         now: UnixNanos,
         sink: &mut dyn FnMut(Event),
-    ) -> Option<Quote> {
+    ) -> Option<Tick> {
         let mut state = self.state();
-        let mid = state.mids.get_mut(instrument)?;
-        *mid = mid.checked_add(delta).unwrap_or(*mid).max(MIN_MID);
-        let quote = quote_at(instrument, *mid, now);
-        match_resting(&mut state, &quote, now)
+        let tick = {
+            let book = state.books.get_mut(instrument)?;
+            let before = book.mid;
+            let moved = before.checked_add(delta).unwrap_or(before);
+            book.mid = book
+                .listing
+                .clamp(book.listing.ticks().round_nearest(moved));
+            let quote = book.quote(instrument, now);
+            let depth = book.depth(&quote);
+            let trade = print(book, before, &quote, now);
+            Tick {
+                quote,
+                depth,
+                trade,
+            }
+        };
+        match_resting(&mut state, &tick.quote, now)
             .into_iter()
             .for_each(sink);
-        Some(quote)
+        Some(tick)
+    }
+
+    /// One beat of the simulated market for `instrument`: a step drawn by
+    /// [`walk_ticks`] from `seed`, applied as [`SimVenue::step_ticks`] does.
+    pub fn walk(
+        &self,
+        instrument: &InstrumentId,
+        now: UnixNanos,
+        seed: &mut u64,
+        sink: &mut dyn FnMut(Event),
+    ) -> Option<Tick> {
+        let ticks = {
+            let state = self.state();
+            let book = state.books.get(instrument)?;
+            walk_ticks(
+                seed,
+                book.mid,
+                book.listing.lean(),
+                book.listing.band.reference,
+            )
+        };
+        self.step_ticks(instrument, ticks, now, sink)
+    }
+
+    /// Moves the mid `ticks` prices along its ladder.
+    pub fn step_ticks(
+        &self,
+        instrument: &InstrumentId,
+        ticks: i64,
+        now: UnixNanos,
+        sink: &mut dyn FnMut(Event),
+    ) -> Option<Tick> {
+        let delta = {
+            let state = self.state();
+            let book = state.books.get(instrument)?;
+            book.listing
+                .moved(book.mid, ticks)
+                .checked_sub(book.mid)
+                .unwrap_or(Decimal::ZERO)
+        };
+        self.step(instrument, delta, now, sink)
     }
 
     pub fn submit(&self, order: SubmitOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
@@ -180,17 +429,61 @@ impl SimVenue {
     }
 }
 
+/// The trade that moved the price: a buyer lifting the offer on the way up,
+/// a seller hitting the bid on the way down.
+fn print(book: &Book, before: Decimal, quote: &Quote, now: UnixNanos) -> Option<Trade> {
+    let (price, side) = if book.mid > before {
+        (quote.ask, Side::Buy)
+    } else if book.mid < before {
+        (quote.bid, Side::Sell)
+    } else {
+        return None;
+    };
+    Some(Trade {
+        instrument: quote.instrument.clone(),
+        price,
+        quantity: book.listing.lots(price, 7),
+        side,
+        ts_event: now,
+    })
+}
+
+/// Why the venue would refuse this order under the listing's rules, if it would.
+fn rule_breach(listing: &Listing, order: &SubmitOrder) -> Option<String> {
+    if !listing.info.is_lot_multiple(order.quantity) {
+        return Some(format!(
+            "quantity must be a multiple of the lot size, {}",
+            listing.info.lot_size
+        ));
+    }
+    let price = order.limit_price?;
+    if !listing.ticks().is_on_tick(price) {
+        return Some(format!(
+            "price must be a multiple of the tick size, {}",
+            listing.ticks().tick_at(price)
+        ));
+    }
+    if !listing.band.contains(price) {
+        return Some("price is outside today's ceiling and floor".into());
+    }
+    None
+}
+
 fn submit_locked(state: &mut VenueState, order: SubmitOrder, now: UnixNanos) -> Vec<Event> {
     let reject =
         |reason: String| vec![report(order.order_id, OrderEvent::Rejected { reason }, now)];
 
-    let Some(mid) = state.mids.get(&order.instrument).copied() else {
+    let Some(book) = state.books.get(&order.instrument) else {
         return reject(format!("{} is not listed on this venue", order.instrument));
     };
     if order.quantity <= Decimal::ZERO {
         return reject("quantity must be positive".into());
     }
-    let quote = quote_at(&order.instrument, mid, now);
+    if let Some(reason) = rule_breach(&book.listing, &order) {
+        return reject(reason);
+    }
+    let quote = book.quote(&order.instrument, now);
+    let display_size = book.listing.display_size;
     let touch = touch_price(&quote, order.side);
 
     // Every later fill of this order trades at or inside `worst_price`, so
@@ -229,7 +522,7 @@ fn submit_locked(state: &mut VenueState, order: SubmitOrder, now: UnixNanos) -> 
         // A market order sweeps; a marketable limit takes what is shown.
         let quantity = match order.limit_price {
             None => remaining,
-            Some(_) => remaining.min(TOP_OF_BOOK_SIZE),
+            Some(_) => remaining.min(display_size),
         };
         events.extend(fill(state, &order, quantity, touch, now));
         remaining -= quantity;
@@ -240,30 +533,42 @@ fn submit_locked(state: &mut VenueState, order: SubmitOrder, now: UnixNanos) -> 
     events
 }
 
-/// A price move of up to `MAX_STEP_TICKS` ticks either way, drawn from a
-/// xorshift sequence so a given seed always walks the same path.
-pub(crate) fn random_step(seed: &mut u64) -> Decimal {
+/// One beat of the walk, in ticks: usually none, otherwise one either way,
+/// back toward `lean` more often the further `mid` has strayed from it (a
+/// full `PULL_RANGE` of `reference` away, always back). Drawn from a
+/// xorshift sequence, so a given seed always walks the same path.
+pub(crate) fn walk_ticks(seed: &mut u64, mid: Decimal, lean: Decimal, reference: Decimal) -> i64 {
     *seed = xorshift(*seed);
-    let ticks = Decimal::from(*seed % (2 * MAX_STEP_TICKS + 1)) - Decimal::from(MAX_STEP_TICKS);
-    ticks * TICK
+    if !seed.is_multiple_of(MOVE_ODDS) {
+        return 0;
+    }
+    *seed = xorshift(*seed);
+    let stray = mid
+        .checked_sub(lean)
+        .zip(reference.checked_mul(PULL_RANGE))
+        .and_then(|(distance, range)| distance.checked_div(range))
+        .unwrap_or(Decimal::ZERO);
+    let pull = stray.clamp(-Decimal::ONE, Decimal::ONE);
+    // An up-move's chance in DRAW_STEPS: half at the lean, none a full range above it.
+    let up = (Decimal::ONE - pull) * Decimal::from(DRAW_STEPS / 2);
+    if Decimal::from(*seed % DRAW_STEPS) < up {
+        1
+    } else {
+        -1
+    }
+}
+
+/// FNV-1a: a stable hash, the same on every platform and every run.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn xorshift(mut x: u64) -> u64 {
     x ^= x << 13;
     x ^= x >> 7;
     x ^ (x << 17)
-}
-
-fn quote_at(instrument: &InstrumentId, mid: Decimal, now: UnixNanos) -> Quote {
-    let half = SPREAD / Decimal::TWO;
-    Quote {
-        instrument: instrument.clone(),
-        bid: mid - half,
-        ask: mid + half,
-        bid_size: TOP_OF_BOOK_SIZE,
-        ask_size: TOP_OF_BOOK_SIZE,
-        ts_event: now,
-    }
 }
 
 /// The price a taker on `side` trades at.
@@ -296,9 +601,14 @@ fn available_cash(state: &VenueState) -> Option<Decimal> {
         })
 }
 
-/// Fills resting orders the new quote reaches. A resting order is the maker,
-/// so it trades at its own limit price, not at the touch.
+/// Fills resting orders the new quote reaches, at most the displayed size
+/// each. A resting order is the maker, so it trades at its own limit price,
+/// not at the touch.
 fn match_resting(state: &mut VenueState, quote: &Quote, now: UnixNanos) -> Vec<Event> {
+    let display_size = state
+        .books
+        .get(&quote.instrument)
+        .map_or(TOP_OF_BOOK_SIZE, |book| book.listing.display_size);
     let mut fills = Vec::new();
     for index in 0..state.resting.len() {
         let resting = &state.resting[index];
@@ -315,7 +625,7 @@ fn match_resting(state: &mut VenueState, quote: &Quote, now: UnixNanos) -> Vec<E
         ) {
             continue;
         }
-        let quantity = resting.remaining.min(TOP_OF_BOOK_SIZE);
+        let quantity = resting.remaining.min(display_size);
         fills.push((index, quantity, limit));
     }
 
@@ -454,10 +764,10 @@ mod tests {
 
     fn step(venue: &SimVenue, delta: &str) -> (Quote, Vec<Event>) {
         let mut out = Vec::new();
-        let quote = venue
+        let tick = venue
             .step(&aaa(), d(delta), NOW, &mut |e| out.push(e))
             .expect("listed");
-        (quote, out)
+        (tick.quote, out)
     }
 
     fn cancel(venue: &SimVenue, request: &CancelOrder) -> Vec<Event> {
@@ -711,5 +1021,186 @@ mod tests {
             );
         }
         assert_eq!(venue.account().cash, d("1000"));
+    }
+
+    /// A HOSE-style listing: the 10/50/100 ladder, a 7% band, lots of 100.
+    fn banded(symbol: &str, reference: &str) -> Listing {
+        let id = InstrumentId::new("sim", symbol);
+        let ticks = TickTable::new(vec![
+            (d("0"), d("10")),
+            (d("10000"), d("50")),
+            (d("50000"), d("100")),
+        ])
+        .unwrap();
+        let band =
+            PriceBand::from_fraction(id.clone(), d(reference), d("0.07"), &ticks, NOW).unwrap();
+        Listing {
+            info: InstrumentInfo::new(id, d("100"), ticks),
+            band,
+            display_size: d("10000"),
+        }
+    }
+
+    #[test]
+    fn a_lean_is_a_tradable_price_inside_the_band_and_the_same_every_run() {
+        for symbol in ["VNM", "FPT", "SHS", "TCB", "HPG"] {
+            let listing = banded(symbol, "62500");
+            let lean = listing.lean();
+
+            assert!(listing.band.contains(lean), "{symbol} leans to {lean}");
+            assert!(listing.ticks().is_on_tick(lean), "{symbol} leans to {lean}");
+            assert_eq!(lean, banded(symbol, "62500").lean());
+        }
+    }
+
+    #[test]
+    fn the_walk_moves_at_most_a_tick_and_usually_not_at_all() {
+        let mut seed = 7;
+        let steps: Vec<i64> = (0..3_000)
+            .map(|_| walk_ticks(&mut seed, d("62500"), d("62500"), d("62500")))
+            .collect();
+
+        let still = steps.iter().filter(|s| **s == 0).count();
+        assert!(steps.iter().all(|s| (-1..=1).contains(s)));
+        assert!(
+            (1_700..2_300).contains(&still),
+            "{still} of 3000 beats stood still"
+        );
+    }
+
+    #[test]
+    fn far_from_its_lean_every_move_heads_back() {
+        let mut seed = 11;
+        let moves: Vec<i64> = (0..300)
+            .map(|_| walk_ticks(&mut seed, d("70000"), d("62500"), d("62500")))
+            .filter(|s| *s != 0)
+            .collect();
+
+        assert!(!moves.is_empty());
+        assert!(moves.iter().all(|s| *s == -1));
+    }
+
+    #[test]
+    fn the_walk_hovers_near_its_lean_and_never_leaves_the_band() {
+        let listing = banded("VNM", "62500");
+        let (lean, ceiling, floor) = (
+            listing.lean(),
+            listing.band.ceiling.unwrap(),
+            listing.band.floor.unwrap(),
+        );
+        let venue = SimVenue::new(d("1000"));
+        venue.list_with(listing);
+        let instrument = InstrumentId::new("sim", "VNM");
+        let mut seed = 3;
+
+        let mids: Vec<Decimal> = (0..20_000)
+            .map(|_| {
+                let tick = venue
+                    .walk(&instrument, NOW, &mut seed, &mut |_| {})
+                    .expect("listed");
+                assert!(tick.quote.bid >= floor && tick.quote.ask <= ceiling);
+                (tick.quote.bid + tick.quote.ask) / Decimal::TWO
+            })
+            .collect();
+
+        let settled = &mids[10_000..];
+        let mean = settled.iter().copied().sum::<Decimal>() / Decimal::from(settled.len());
+        assert!(
+            (mean - lean).abs() < d("62500") * PULL_RANGE,
+            "mean {mean} strays from lean {lean}"
+        );
+    }
+
+    #[test]
+    fn history_stays_inside_the_band() {
+        let listing = banded("SHS", "13600");
+        let (ceiling, floor) = (listing.band.ceiling.unwrap(), listing.band.floor.unwrap());
+        let venue = SimVenue::new(d("1000"));
+        venue.list_with(listing);
+        let mut seed = 5;
+
+        let history = venue.synthetic_history(
+            &InstrumentId::new("sim", "SHS"),
+            UnixNanos(10_000_000_000_000),
+            2_400,
+            Duration::from_millis(500),
+            &mut seed,
+        );
+
+        assert_eq!(history.len(), 2_400);
+        assert!(history.iter().all(|q| q.bid >= floor && q.ask <= ceiling));
+    }
+
+    fn submit_vnm(venue: &SimVenue, quantity: &str, limit: Option<&str>) -> Vec<OrderEvent> {
+        let mut out = Vec::new();
+        venue.submit(
+            SubmitOrder {
+                order_id: ClientOrderId(1),
+                instrument: InstrumentId::new("sim", "VNM"),
+                side: Side::Buy,
+                quantity: d(quantity),
+                limit_price: limit.map(d),
+            },
+            NOW,
+            &mut |e| out.push(e),
+        );
+        order_events(&out)
+    }
+
+    fn rejection(events: &[OrderEvent]) -> Option<String> {
+        events.iter().find_map(|e| match e {
+            OrderEvent::Rejected { reason } => Some(reason.clone()),
+            _ => None,
+        })
+    }
+
+    fn vnm_venue() -> SimVenue {
+        let venue = SimVenue::new(d("100000000"));
+        venue.list_with(banded("VNM", "62500"));
+        venue
+    }
+
+    #[test]
+    fn the_venue_rejects_an_odd_lot_on_its_own() {
+        let reason = rejection(&submit_vnm(&vnm_venue(), "150", Some("62500")));
+
+        assert_eq!(
+            reason.as_deref(),
+            Some("quantity must be a multiple of the lot size, 100")
+        );
+    }
+
+    #[test]
+    fn the_venue_rejects_a_price_between_ticks_on_its_own() {
+        let reason = rejection(&submit_vnm(&vnm_venue(), "100", Some("62550")));
+
+        assert_eq!(
+            reason.as_deref(),
+            Some("price must be a multiple of the tick size, 100")
+        );
+    }
+
+    #[test]
+    fn the_venue_rejects_a_price_outside_the_band_on_its_own() {
+        let reason = rejection(&submit_vnm(&vnm_venue(), "100", Some("66900")));
+
+        assert_eq!(
+            reason.as_deref(),
+            Some("price is outside today's ceiling and floor")
+        );
+    }
+
+    #[test]
+    fn a_step_down_from_a_tier_boundary_lands_on_the_price_just_below() {
+        let venue = SimVenue::new(d("1000"));
+        venue.list_with(banded("TCB", "10000"));
+        let instrument = InstrumentId::new("sim", "TCB");
+
+        let tick = venue
+            .step_ticks(&instrument, -1, NOW, &mut |_| {})
+            .expect("listed");
+
+        assert_eq!(tick.quote.ask, d("10000"));
+        assert_eq!(tick.quote.bid, d("9980"));
     }
 }

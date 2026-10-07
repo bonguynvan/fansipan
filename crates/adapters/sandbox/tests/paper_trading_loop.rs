@@ -80,11 +80,11 @@ impl Desk {
     /// What the sandbox market thread does on a beat, with a chosen move.
     fn move_price(&mut self, delta: &str) {
         let bus = &self.bus;
-        let quote = self
+        let tick = self
             .venue
             .step(&aaa(), d(delta), UnixNanos(1), &mut |e| bus.publish(e))
             .expect("listed");
-        self.bus.publish(Event::Quote(quote));
+        self.bus.publish(Event::Quote(tick.quote));
     }
 
     fn buy(&mut self, quantity: &str, limit: Option<&str>) -> ClientOrderId {
