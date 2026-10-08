@@ -16,3 +16,4 @@ adapter-api.workspace = true
 [dev-dependencies]
 execution-engine.workspace = true
 data-engine.workspace = true
+proptest.workspace = true
