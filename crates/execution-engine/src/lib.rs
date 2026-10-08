@@ -3,6 +3,7 @@
 //! venue said, and this engine decides what it means.
 //! The state machine itself is in [`lifecycle`]; see /docs/order-lifecycle.md.
 
+pub mod capacity;
 pub mod lifecycle;
 pub mod risk;
 
@@ -16,8 +17,9 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side, SubmitOrder,
 };
-use model::{AmendOrder, OrderKind, VenueOrder, VenueOrderState};
+use model::{AmendOrder, OrderKind, OrderType, VenueOrder, VenueOrderState};
 
+pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use lifecycle::TransitionError;
 pub use risk::{RiskLimits, RiskReject};
 
@@ -193,6 +195,50 @@ impl ExecutionEngine {
 
     pub fn account(&self) -> &AccountState {
         &self.account
+    }
+
+    /// How large one order in `instrument` could be now (ADR 0016): what
+    /// the account can pay for or holds, and this terminal's limits, in the
+    /// quantities the market takes. Risk still judges the order itself.
+    pub fn capacity(
+        &self,
+        instrument: &InstrumentId,
+        side: Side,
+        order_type: OrderType,
+        limit_price: Option<Decimal>,
+    ) -> OrderCapacity {
+        capacity::capacity(&capacity::Inputs {
+            side,
+            order_type,
+            limit_price,
+            info: self.instruments.get(instrument),
+            band: self.bands.get(instrument),
+            account: &self.account,
+            position: self.account.position(instrument),
+            working_buys: self.working_buys_value(),
+            working_sells: self.working_sells(instrument),
+            limits: &self.limits,
+        })
+    }
+
+    /// What this session's working buys in every instrument may still
+    /// spend: at their limit, or at the day's ceiling for one without. A buy
+    /// with neither cannot be valued and is left out.
+    fn working_buys_value(&self) -> Decimal {
+        self.orders
+            .values()
+            .filter(|t| t.order.side == Side::Buy && t.order.status.is_open())
+            .filter_map(|t| {
+                let price = t.order.limit_price.or_else(|| {
+                    self.bands
+                        .get(&t.order.instrument)
+                        .and_then(|band| band.ceiling)
+                })?;
+                t.exposure().checked_mul(price)
+            })
+            .fold(Decimal::ZERO, |sum, value| {
+                sum.checked_add(value).unwrap_or(Decimal::MAX)
+            })
     }
 
     /// What this session's working sell orders in `instrument` have yet to
@@ -707,6 +753,71 @@ mod tests {
             quantity: d(quantity),
             price: d("5"),
         }
+    }
+
+    #[test]
+    fn capacity_counts_this_sessions_working_orders() {
+        let (mut engine, _) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine.set_instrument(
+            InstrumentInfo::new(
+                aaa.clone(),
+                d("1"),
+                model::TickTable::flat(d("0.01")).unwrap(),
+            )
+            .with_short_selling(false),
+        );
+        engine.set_account(AccountState::new(
+            d("1000"),
+            vec![model::Position::new(aaa.clone(), d("8"), d("5")).with_settled(d("8"))],
+        ));
+        let working = [
+            engine.submit(buy("4")),
+            engine.submit(NewOrder::limit(aaa.clone(), Side::Sell, d("3"), d("6"))),
+        ];
+        assert!(working.iter().all(|order| order.status.is_open()));
+
+        let buying = engine.capacity(&aaa, Side::Buy, model::OrderType::LIMIT, Some(d("5")));
+        let selling = engine.capacity(&aaa, Side::Sell, model::OrderType::LIMIT, Some(d("6")));
+
+        // Cash 1000 less the working buy's 4 × 5; the order-size cap of 10 binds.
+        assert_eq!(
+            buying.buying_power,
+            BuyingPower {
+                amount: d("980"),
+                estimated: true
+            }
+        );
+        assert_eq!(
+            (buying.max_quantity, buying.bound),
+            (Some(d("10")), Some(Bound::OrderSize))
+        );
+        // 8 settled, 3 already in a working sell.
+        assert_eq!(
+            (selling.max_quantity, selling.bound),
+            (Some(d("5")), Some(Bound::Holding))
+        );
+    }
+
+    #[test]
+    fn capacity_prefers_the_venues_buying_power() {
+        let (mut engine, _) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine.set_account(AccountState::new(d("1000"), vec![]).with_buying_power(d("30")));
+
+        let buying = engine.capacity(&aaa, Side::Buy, model::OrderType::LIMIT, Some(d("5")));
+
+        assert_eq!(
+            buying.buying_power,
+            BuyingPower {
+                amount: d("30"),
+                estimated: false
+            }
+        );
+        assert_eq!(
+            (buying.max_quantity, buying.bound),
+            (Some(d("6")), Some(Bound::BuyingPower))
+        );
     }
 
     #[test]

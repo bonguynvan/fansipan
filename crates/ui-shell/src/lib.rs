@@ -34,8 +34,8 @@ pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
 use dto::{
-    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, ConnectionDto, InstrumentDto,
-    MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
+    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConnectionDto,
+    InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -376,6 +376,41 @@ fn place_order(
     submit(&shell, new_order(&shell.venue, &ticket)?)
 }
 
+/// How large one order could be now (ADR 0016): what the account can pay
+/// for or holds, within this terminal's limits, in the quantities the market
+/// takes. The ticket asks as its side, type, and price change. A buy without
+/// a limit price is valued at the day's ceiling.
+#[tauri::command]
+fn order_capacity(
+    shell: State<'_, Shell>,
+    symbol: String,
+    side: String,
+    limit_price: Option<String>,
+    kind: Option<String>,
+    time_in_force: Option<String>,
+) -> Result<CapacityDto, String> {
+    let ticket = Ticket {
+        symbol: &symbol,
+        side: &side,
+        quantity: "0",
+        limit_price: limit_price.as_deref().filter(|raw| !raw.trim().is_empty()),
+        kind: kind.as_deref(),
+        time_in_force: time_in_force.as_deref(),
+    };
+    capacity_of(&shell, &ticket)
+}
+
+fn capacity_of(shell: &Shell, ticket: &Ticket<'_>) -> Result<CapacityDto, String> {
+    let order = new_order(&shell.venue, ticket)?;
+    let exec = lock(&shell.exec)?;
+    Ok(CapacityDto::from(&exec.capacity(
+        &order.instrument,
+        order.side,
+        order.order_type,
+        order.limit_price,
+    )))
+}
+
 #[tauri::command]
 fn cancel_order(shell: State<'_, Shell>, id: u64) -> Result<OrderDto, String> {
     cancel(&shell, id)
@@ -613,6 +648,7 @@ pub fn run(venue: Venue) -> ExitCode {
             bars,
             prints,
             place_order,
+            order_capacity,
             cancel_order,
             cancel_all_orders,
             amend_order,
@@ -737,6 +773,7 @@ mod tests {
         shell.pending.lock().unwrap().account(AccountDto {
             cash: "1".into(),
             positions: vec![],
+            buying_power: None,
         });
 
         let first = take_batch(&shell).unwrap().map(|b| b.seq);
@@ -842,6 +879,30 @@ mod tests {
         assert_eq!(snapshot.market.currency, "VND");
         assert_eq!(snapshot.instruments.len(), vn.listings.len());
         assert_eq!(snapshot.boards.len(), vn.listings.len());
+    }
+
+    #[test]
+    fn the_ticket_learns_how_large_one_order_can_be() {
+        let vn = profile("vn");
+        let shell = connect(&Bus::new(), &vn);
+        announce(&shell, &vn);
+        route(&shell, &Event::AccountUpdate(vn.venue().account())).unwrap();
+
+        let buy = capacity_of(&shell, &ticket("VNM", "buy", "0", Some("62500"))).unwrap();
+        let market_buy = capacity_of(&shell, &ticket("VNM", "buy", "0", None)).unwrap();
+        let sell = capacity_of(&shell, &ticket("VNM", "sell", "0", Some("62500"))).unwrap();
+
+        // The venue's 2,000,000,000 VND of buying power, at 62,500 a share.
+        assert_eq!(buy.max_quantity.as_deref(), Some("32000"));
+        assert_eq!(buy.bound, Some("buying_power"));
+        assert!(!buy.buying_power_estimated);
+        // Without a price, a buy is valued at the day's ceiling: 29,940 shares
+        // fit, and whole lots make 29,900.
+        assert_eq!(market_buy.valued_at.as_deref(), Some("66800"));
+        assert_eq!(market_buy.max_quantity.as_deref(), Some("29900"));
+        // Nothing held, and Vietnam forbids short selling.
+        assert_eq!(sell.max_quantity.as_deref(), Some("0"));
+        assert_eq!(sell.bound, Some("holding"));
     }
 
     #[test]

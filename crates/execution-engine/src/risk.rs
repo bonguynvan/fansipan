@@ -249,7 +249,7 @@ pub fn check_sellable(
     }
     let held = position.map_or(Decimal::ZERO, |p| p.quantity.max(Decimal::ZERO));
     let settled = position.map_or(Decimal::ZERO, Position::sellable);
-    let sellable = (settled - working).max(Decimal::ZERO);
+    let sellable = sellable_now(position, working);
     if order.quantity <= sellable {
         return Ok(());
     }
@@ -259,6 +259,14 @@ pub fn check_sellable(
         unsettled: held - settled,
         working,
     })
+}
+
+/// What a sell may take now where short selling is forbidden: the settled
+/// shares, less what working sell orders (`working`) already take. The one
+/// figure both [`check_sellable`] and the ticket's capacity use.
+pub fn sellable_now(position: Option<&Position>, working: Decimal) -> Decimal {
+    let settled = position.map_or(Decimal::ZERO, Position::sellable);
+    (settled - working).max(Decimal::ZERO)
 }
 
 /// An order type in words, for a reason: "a limit order for the day".

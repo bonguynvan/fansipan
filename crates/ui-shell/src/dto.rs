@@ -6,7 +6,7 @@
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
 use data_engine::{Bar, DataEngine, Print};
-use execution_engine::is_amendable;
+use execution_engine::{is_amendable, Bound, OrderCapacity};
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
     InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
@@ -494,6 +494,9 @@ fn connection_label(connection: Connection) -> &'static str {
 pub struct AccountDto {
     pub cash: String,
     pub positions: Vec<PositionDto>,
+    /// What the venue says the account can spend on buys; `None` when it
+    /// does not say.
+    pub buying_power: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -520,6 +523,43 @@ impl From<&AccountState> for AccountDto {
                     settled: p.settled.map(|s| s.to_string()),
                 })
                 .collect(),
+            buying_power: account.buying_power.map(|b| b.to_string()),
+        }
+    }
+}
+
+/// How large one order could be now (ADR 0016), for the ticket.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CapacityDto {
+    /// The largest quantity one order may have; `None` for a buy with no
+    /// price to value it at.
+    pub max_quantity: Option<String>,
+    /// What sets it: "buying_power", "holding", "order_size", or
+    /// "order_value".
+    pub bound: Option<&'static str>,
+    pub buying_power: String,
+    /// Estimated by core from cash and working buys, as the venue gave none.
+    pub buying_power_estimated: bool,
+    /// What a sell may take now where short selling is forbidden.
+    pub sellable: Option<String>,
+    /// The price a buy was valued at.
+    pub valued_at: Option<String>,
+}
+
+impl From<&OrderCapacity> for CapacityDto {
+    fn from(capacity: &OrderCapacity) -> Self {
+        Self {
+            max_quantity: capacity.max_quantity.map(|q| q.to_string()),
+            bound: capacity.bound.map(|bound| match bound {
+                Bound::BuyingPower => "buying_power",
+                Bound::Holding => "holding",
+                Bound::OrderSize => "order_size",
+                Bound::OrderValue => "order_value",
+            }),
+            buying_power: capacity.buying_power.amount.to_string(),
+            buying_power_estimated: capacity.buying_power.estimated,
+            sellable: capacity.sellable.map(|s| s.to_string()),
+            valued_at: capacity.valued_at.map(|p| p.to_string()),
         }
     }
 }

@@ -266,6 +266,7 @@ mod tests {
         batch.account(AccountDto {
             cash: "0".into(),
             positions: vec![],
+            buying_power: None,
         });
 
         assert!(!batch.is_empty());
