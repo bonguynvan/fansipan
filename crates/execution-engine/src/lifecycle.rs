@@ -173,8 +173,9 @@ fn fill(order: &Order, quantity: Decimal, price: Decimal) -> Result<Order, Trans
 }
 
 /// The order on the venue's new terms. A cancel already sent stays pending;
-/// otherwise the order rests, or is filled if the new quantity is what has
-/// already traded.
+/// otherwise the order rests, or is done if the new quantity is what has
+/// already traded: filled if anything traded, cancelled if nothing did (a
+/// venue amending an order down to nothing has cancelled it).
 fn amended(
     order: &Order,
     quantity: Decimal,
@@ -189,7 +190,11 @@ fn amended(
     let status = if order.status == OrderStatus::PendingCancel {
         OrderStatus::PendingCancel
     } else if quantity == order.filled_quantity {
-        OrderStatus::Filled
+        if order.filled_quantity.is_zero() {
+            OrderStatus::Cancelled
+        } else {
+            OrderStatus::Filled
+        }
     } else {
         resting_status(order)
     };
@@ -513,6 +518,19 @@ mod tests {
 
         assert_eq!(next.status, OrderStatus::Submitted);
         assert_eq!((next.quantity, next.limit_price), (d("20"), Some(d("6"))));
+    }
+
+    #[test]
+    fn an_amendment_down_to_nothing_with_nothing_filled_cancels() {
+        let resting = Order {
+            venue_order_id: Some(VenueOrderId("V1".into())),
+            ..order(OrderStatus::Accepted)
+        };
+
+        let next = apply(&resting, &amended_to("0", "5")).unwrap();
+
+        assert_eq!(next.status, OrderStatus::Cancelled);
+        assert!(next.filled_quantity.is_zero());
     }
 
     #[test]
