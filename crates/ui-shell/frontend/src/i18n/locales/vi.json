@@ -215,6 +215,7 @@
   "orders.view.all": "Tất cả {count}",
   "orders.cancelAll": "Hủy mọi lệnh chờ",
   "orders.confirmCancelAll": "Bấm lần nữa để hủy {count} lệnh chờ",
+  "orders.cancelAllFailed": "Lệnh hủy tất cả chưa tới được hệ thống: {error}",
   "orders.noneWorking": "Không có lệnh đang chờ.",
   "orders.noneFinished": "Chưa có lệnh đã xong.",
   "orders.empty": "Chưa có lệnh. Hãy đặt lệnh từ khung Đặt lệnh.",

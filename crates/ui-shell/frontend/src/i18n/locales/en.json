@@ -219,6 +219,7 @@
   "orders.view.all": "All {count}",
   "orders.cancelAll": "Cancel all working",
   "orders.confirmCancelAll": "Click again to cancel {count} working",
+  "orders.cancelAllFailed": "Cancel all did not reach the engine: {error}",
   "orders.noneWorking": "No working orders.",
   "orders.noneFinished": "No finished orders yet.",
   "orders.empty": "No orders yet. Place one from an order ticket.",

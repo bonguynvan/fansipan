@@ -22,6 +22,8 @@
   /** How long the result of cancelling every working order stays shown. */
   const RESULT_MS = 6000;
   const EMPTY = { working: "orders.noneWorking", finished: "orders.noneFinished", all: "orders.empty" };
+  /** The cancel-all results that left orders working. */
+  const FAILED = new Set(["hotkey.cancelFailed", "orders.cancelAllFailed"]);
 
   // Working orders to act on, finished ones to look back on, or all; each
   // blotter remembers its own view.
@@ -38,6 +40,9 @@
   let armTimer = null;
   let resultTimer = null;
 
+  let destroyed = false;
+  let header;
+
   async function cancelAll() {
     clearTimeout(armTimer);
     if (!armed) {
@@ -47,13 +52,24 @@
       return;
     }
     armed = false;
-    const notice = await cancelAllOrders(null);
-    result = { ...notice, failed: notice.id === "hotkey.cancelFailed" };
+    let notice;
+    try {
+      notice = await cancelAllOrders(null);
+    } catch (err) {
+      notice = { id: "orders.cancelAllFailed", vars: { error: String(err) } };
+    }
+    if (destroyed) return;
+    result = { ...notice, failed: FAILED.has(notice.id) };
     clearTimeout(resultTimer);
     resultTimer = setTimeout(() => (result = null), RESULT_MS);
+    // With nothing left working the button goes; the keyboard stays in the
+    // blotter, on the view it shows.
+    await tick();
+    if (header && !header.querySelector(".cancel-all")) header.querySelector('[aria-pressed="true"]')?.focus();
   }
 
   $effect(() => () => {
+    destroyed = true;
     clearTimeout(armTimer);
     clearTimeout(resultTimer);
   });
@@ -63,8 +79,10 @@
   const amendingOrder = $derived(amending === null ? null : market.orders[amending]);
   let blotter;
 
+  // The form closes once its order is no longer shown here: it finished,
+  // or the trader switched to a view without it.
   $effect(() => {
-    if (amending !== null && !amendingOrder) amending = null;
+    if (amending !== null && !orders.some((order) => order.id === amending)) closeAmend();
   });
 
   /** Back to the Amend button that opened the form, or the grid once the order has none. */
@@ -147,7 +165,7 @@
 </script>
 
 <div class="blotter" bind:this={blotter} bind:clientWidth={width}>
-  <header>
+  <header bind:this={header}>
     <Chips label={t("orders.view")} options={viewOptions} value={view} onchange={(next) => panel?.updateParameters({ view: next })} />
     {#if counts.working > 0 || armed}
       <button type="button" class="cancel-all" class:armed onclick={cancelAll}>
@@ -156,7 +174,10 @@
     {/if}
   </header>
 
-  {#if result}
+  <!-- One status line: what the next click will do while armed, then what was done. -->
+  {#if armed}
+    <p class="result" role="status">{t("hotkey.confirmCancelAll")}</p>
+  {:else if result}
     <p class="result" class:failed={result.failed} role="status">
       {result.count === undefined ? t(result.id, result.vars) : tn(result.id, result.count, result.vars)}
     </p>
@@ -206,7 +227,7 @@
 
   .cancel-all {
     padding: 0.1875rem 0.625rem;
-    font-size: var(--text-xs);
+    font: 600 var(--text-xs)/1.4 var(--mono);
     letter-spacing: 0.04em;
     background: transparent;
     border: 1px solid var(--rule);
