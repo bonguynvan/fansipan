@@ -94,7 +94,7 @@ async function run(action) {
 }
 
 /** A dialog or menu open owns the keyboard: shortcuts wait until it closes. */
-const somethingModal = () => document.querySelector("dialog[open], [role='menu'], [role='dialog']") !== null;
+const somethingModal = () => document.querySelector("dialog[open], [role='menu'], [role='dialog'], [data-popup]") !== null;
 
 function onKeydown(event) {
   if (hotkeys.recording || event.defaultPrevented || event.repeat || somethingModal()) return;

@@ -25,8 +25,10 @@ export const MAIN_WINDOW = "main";
 const SAVE_DELAY_MS = 400;
 /** An extra window sends a panel back to the main window's page on this event. */
 const DOCK_EVENT = "workspace-dock";
-/** Where a panel floats when lifted off the dock, and how big. */
+/** Where the first panel lifted off the dock floats, and how big; the next ones cascade. */
 const FLOATING_BOX = { x: 80, y: 60, width: 460, height: 340 };
+const FLOATING_STEP = 28;
+const FLOATING_SPAN = 8;
 
 /** Default names in the trader's language. */
 const names = {
@@ -69,11 +71,21 @@ function newPanelId(screenId) {
   return `${screenId}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+/**
+ * A page whose save could not be restored. It shows empty, but its save is
+ * kept as it was until the trader puts a panel on it: a save from another
+ * version must survive a launch of this one.
+ */
+let heldPageId = null;
+
 /** Reads the page on screen back into the workspace. */
 function capture() {
-  if (workspace.api && workspace.pages) {
-    workspace.pages = pages.withPageLayout(workspace.pages, workspace.api.toJSON());
+  if (!workspace.api || !workspace.pages) return;
+  if (pages.activePage(workspace.pages).id === heldPageId) {
+    if (workspace.api.totalPanels === 0) return;
+    heldPageId = null;
   }
+  workspace.pages = pages.withPageLayout(workspace.pages, workspace.api.toJSON());
 }
 
 /** Saves this window's workspace soon; safe to call on every change. */
@@ -168,7 +180,8 @@ function showActivePage(layoutId = null) {
         api.fromJSON(migratedDockview(page.dockview));
       } catch (err) {
         api.clear();
-        notify("workspace.unrestorable", { error: String(err) });
+        heldPageId = page.id;
+        notify("workspace.unrestorable", { name: page.name, error: String(err) });
       }
     }
     const [rest, incoming] = pages.takeIncoming(workspace.pages);
@@ -177,10 +190,18 @@ function showActivePage(layoutId = null) {
       addScreen(panel.component, { title: panel.title, params: migrateLinkParams(panel.params) });
     }
     const layout = layoutId ? getLayout(layoutId) : null;
-    if (layout) buildLayout(layout);
+    if (layout) {
+      // A plugin's layout can throw; the page keeps whatever it built.
+      try {
+        buildLayout(layout);
+      } catch (err) {
+        notify("workspace.layoutFailed", { name: t(layout.title), error: String(err) });
+      }
+    }
   });
   retitlePanels();
   persist();
+  dockWaiting();
 }
 
 /** Applies `change` to the workspace, then shows the active page if it is another one. */
@@ -263,8 +284,14 @@ export const isFloating = (group) => group?.api.location.type === "floating";
 
 /** Lifts a group off the dock to float over the page, leaving the dock as it was. */
 export function floatGroup(group) {
-  if (!workspace.api || group?.api.location.type !== "grid") return;
-  workspace.api.addFloatingGroup(group, FLOATING_BOX);
+  const api = workspace.api;
+  if (!api || group?.api.location.type !== "grid") return;
+  const n = api.groups.filter(isFloating).length % FLOATING_SPAN;
+  api.addFloatingGroup(group, {
+    ...FLOATING_BOX,
+    x: FLOATING_BOX.x + n * FLOATING_STEP,
+    y: FLOATING_BOX.y + n * FLOATING_STEP,
+  });
   persist();
 }
 
@@ -290,14 +317,28 @@ export async function dockInMain(panel) {
 }
 
 let docking = null;
+/** Panels sent back before this window's page was on screen; docked once it is. */
+const dockQueue = [];
 
-/** The main window takes panels sent back from extra windows; once. */
+function dockWaiting() {
+  while (dockQueue.length && workspace.pages && !workspace.rebuilding) {
+    const panel = dockQueue.shift();
+    addScreen(panel.component, { title: panel.title ?? undefined, params: migrateLinkParams(panel.params) });
+  }
+  persist();
+}
+
+/**
+ * The main window takes panels sent back from extra windows; once. One
+ * that arrives while the main window is still restoring waits for its page,
+ * which would otherwise clear it away.
+ */
 function takeDockedPanels() {
   docking ??= listen(DOCK_EVENT, ({ payload }) => {
     if (typeof payload?.component !== "string" || !payload.component) return;
     const params = payload.params && typeof payload.params === "object" ? payload.params : {};
-    addScreen(payload.component, { title: payload.title ?? undefined, params: migrateLinkParams(params) });
-    persist();
+    dockQueue.push({ component: payload.component, params, title: payload.title ?? null });
+    dockWaiting();
   });
   return docking;
 }
@@ -378,6 +419,17 @@ export async function restore(api, label) {
   if (workspace.api !== api) return;
 
   const restored = pages.reviveWorkspace(saved, names) ?? pages.fromSingleLayout(saved, names, names.page(1));
+  if (!restored && saved !== null && saved !== undefined) {
+    // Something is saved that this version cannot read, perhaps from a newer
+    // one. Keep it: show a default, and save nothing this session.
+    notify("workspace.unknownSave");
+    if (label === MAIN_WINDOW) await startFresh(api);
+    else {
+      workspace.pages = pages.seedWorkspace(names, { panels: [{ component: "watchlist", params: {}, title: null }] });
+      showActivePage();
+    }
+    return;
+  }
   saver = debouncedSetter(layoutKey(label), SAVE_DELAY_MS, (message) => {
     notify("workspace.notSaved", { error: message });
   });
@@ -386,9 +438,6 @@ export async function restore(api, label) {
     showActivePage();
   } else if (label === MAIN_WINDOW) {
     await startFresh(api);
-  } else if (saved) {
-    workspace.pages = pages.seedWorkspace(names, { panels: [{ component: "watchlist", params: {}, title: null }] });
-    showActivePage();
   } else {
     getCurrentWindow().close();
   }

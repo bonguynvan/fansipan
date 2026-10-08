@@ -61,7 +61,10 @@
   "workspace.missingScreenHint": "Đóng khung này, hoặc cài lại màn hình rồi khởi động lại.",
   "workspace.unreadable": "Không đọc được bố cục đã lưu ({error}); thay đổi trong phiên này sẽ không được lưu.",
   "workspace.notSaved": "Chưa lưu được bố cục: {error}",
-  "workspace.unrestorable": "Không khôi phục được bố cục đã lưu ({error}); đang dùng bố cục mặc định.",
+  "workspace.unrestorable": "Không khôi phục được trang {name} ({error}). Trang đang trống, và bản lưu cũ được giữ cho tới khi bạn thêm khung vào trang.",
+  "workspace.unknownSave": "Bố cục đã lưu của cửa sổ này thuộc phiên bản Fansipan khác. Bản lưu được giữ nguyên; thay đổi ở đây sẽ không được lưu trong phiên này.",
+  "workspace.layoutFailed": "Không dựng được bố cục {name}: {error}",
+  "workspace.symbolNotShared": "Mã chưa tới được các cửa sổ khác: {error}",
   "workspace.windowFailed": "Không mở được cửa sổ mới: {error}",
 
   "screen.watchlist.title": "Danh mục theo dõi",

@@ -59,6 +59,13 @@ describe("choosing a symbol", () => {
     expect(emitted).toEqual([]);
   });
 
+  it("orders picks so a newer one is never undone by an older one", () => {
+    setSharedSymbol("NVDA");
+    setSharedSymbol("TSLA");
+
+    expect(emitted[1].payload.at).toBeGreaterThan(emitted[0].payload.at);
+  });
+
   it("does not resend an unchanged symbol", () => {
     setSharedSymbol("NVDA");
     setSharedSymbol("NVDA");

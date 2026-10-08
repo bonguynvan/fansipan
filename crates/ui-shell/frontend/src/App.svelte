@@ -25,7 +25,9 @@
   onMount(() => {
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
     startLocale().catch(failed);
-    startLinks().catch(failed);
+    startLinks({
+      onError: (error) => (workspace.notice = { id: "workspace.symbolNotShared", vars: { error } }),
+    }).catch(failed);
     startPicks().catch(failed);
     startHotkeys({ onNotice: (notice) => (workspace.notice = notice) }).catch(failed);
     startMarket().catch(failed);

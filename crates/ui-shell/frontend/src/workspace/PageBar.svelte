@@ -3,7 +3,9 @@
   // open pages as tabs, and "+" for a new page (blank, from a registered
   // layout, or a copy of this one) or a closed page to open again.
   // Double-click a tab to rename it. Removing a desktop or deleting a closed
-  // page asks once more on the same button.
+  // page asks once more on the same button. Tabs and menus are plain buttons
+  // in lists: the current page is marked, and each popup list is the
+  // disclosure of the button that opens it.
   import { listLayouts } from "./registry.js";
   import * as pages from "./pages.js";
   import {
@@ -34,6 +36,7 @@
   /** The id of a desktop or closed page whose removal awaits a second click. */
   let confirming = $state(null);
   let bar = $state(null);
+  const id = $props.id();
 
   function toggle(menu) {
     open = open === menu ? null : menu;
@@ -110,26 +113,31 @@
       {#if renaming?.kind === "desktop"}
         {@render nameField()}
       {:else}
-        <button class="desktop" aria-expanded={open === "desktop"} onclick={() => toggle("desktop")}>{desktop.name} ▾</button>
+        <button
+          class="desktop"
+          aria-expanded={open === "desktop"}
+          aria-controls="{id}-desktops"
+          onclick={() => toggle("desktop")}>{desktop.name} ▾</button
+        >
       {/if}
       {#if open === "desktop"}
-        <ul role="menu">
+        <ul id="{id}-desktops" data-popup>
           {#each ws.desktops as each (each.id)}
-            <li role="none">
-              <button role="menuitemradio" aria-checked={each.id === desktop.id} onclick={run(() => goToDesktop(each.id))}>
+            <li>
+              <button aria-current={each.id === desktop.id ? "true" : undefined} onclick={run(() => goToDesktop(each.id))}>
                 <span class="check" aria-hidden="true">{each.id === desktop.id ? "●" : ""}</span>{each.name}
               </button>
             </li>
           {/each}
-          <li role="separator"></li>
-          <li role="none"><button role="menuitem" onclick={run(newDesktop)}>{t("workspace.newDesktop")}</button></li>
-          <li role="none">
-            <button role="menuitem" onclick={() => startRename("desktop", desktop.id, desktop.name)}>{t("workspace.renameDesktop")}</button>
+          <li class="separator" aria-hidden="true"></li>
+          <li><button onclick={run(newDesktop)}>{t("workspace.newDesktop")}</button></li>
+          <li>
+            <button onclick={() => startRename("desktop", desktop.id, desktop.name)}>{t("workspace.renameDesktop")}</button>
           </li>
           {#if ws.desktops.length > 1}
-            <li role="none">
+            <li>
               <button
-                role="menuitem"
+               
                 class:danger={confirming === desktop.id}
                 onclick={() => twice(desktop.id, run(() => removeDesktop(desktop.id)))}
               >
@@ -143,40 +151,46 @@
       {/if}
     </div>
 
-    <div class="tabs" role="tablist" aria-label={t("workspace.openPages")}>
+    <ul class="tabs" aria-label={t("workspace.openPages")}>
       {#each tabs as page (page.id)}
-        <div class="tab" class:active={page.id === active.id}>
+        <li class="tab" class:active={page.id === active.id}>
           {#if renaming?.kind === "page" && renaming.id === page.id}
             {@render nameField()}
           {:else}
             <button
-              role="tab"
-              aria-selected={page.id === active.id}
+              class="page"
+              aria-current={page.id === active.id ? "page" : undefined}
               title={t("workspace.renameHint")}
               onclick={() => goToPage(page.id)}
               ondblclick={() => startRename("page", page.id, page.name)}>{page.name}</button
             >
             <button class="x" aria-label={t("workspace.closePage", { name: page.name })} onclick={() => closePageTab(page.id)}>×</button>
           {/if}
-        </div>
+        </li>
       {/each}
-    </div>
+    </ul>
 
     <div class="menu">
-      <button class="add" aria-expanded={open === "add"} aria-label={t("workspace.newPage")} onclick={() => toggle("add")}>+</button>
+      <button
+        class="add"
+        aria-expanded={open === "add"}
+        aria-controls="{id}-add"
+        aria-label={t("workspace.newPage")}
+        onclick={() => toggle("add")}>+</button
+      >
       {#if open === "add"}
-        <ul role="menu">
-          <li role="none"><button role="menuitem" onclick={run(() => newPage())}>{t("workspace.blankPage")}</button></li>
-          <li role="none"><button role="menuitem" onclick={run(copyPage)}>{t("workspace.copyPage")}</button></li>
-          <li role="presentation" class="heading">{t("workspace.fromLayout")}</li>
+        <ul id="{id}-add" data-popup>
+          <li><button onclick={run(() => newPage())}>{t("workspace.blankPage")}</button></li>
+          <li><button onclick={run(copyPage)}>{t("workspace.copyPage")}</button></li>
+          <li class="heading">{t("workspace.fromLayout")}</li>
           {#each listLayouts() as layout (layout.id)}
-            <li role="none"><button role="menuitem" onclick={run(() => newPage(layout.id))}>{t(layout.title)}</button></li>
+            <li><button onclick={run(() => newPage(layout.id))}>{t(layout.title)}</button></li>
           {/each}
           {#if closed.length}
-            <li role="presentation" class="heading">{t("workspace.closedPages")}</li>
+            <li class="heading">{t("workspace.closedPages")}</li>
             {#each closed as page (page.id)}
-              <li role="none" class="row">
-                <button role="menuitem" onclick={run(() => reopenPage(page.id))}>{page.name}</button>
+              <li class="row">
+                <button onclick={run(() => reopenPage(page.id))}>{page.name}</button>
                 <button
                   class="delete"
                   class:danger={confirming === page.id}
@@ -212,6 +226,9 @@
 
   .tabs {
     display: flex;
+    margin: 0;
+    padding: 0;
+    list-style: none;
     align-items: stretch;
     gap: 2px;
     min-width: 0;
@@ -237,12 +254,12 @@
     cursor: pointer;
   }
 
-  .tab > button[role="tab"] {
+  .tab > .page {
     padding: 4px 8px;
     white-space: nowrap;
   }
 
-  .tab.active > button[role="tab"] {
+  .tab.active > .page {
     color: var(--text);
   }
 
@@ -336,7 +353,7 @@
     color: var(--accent);
   }
 
-  li[role="separator"] {
+  li.separator {
     margin: 4px 0;
     border-top: 1px solid var(--rule);
   }

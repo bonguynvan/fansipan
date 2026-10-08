@@ -61,7 +61,10 @@
   "workspace.missingScreenHint": "Close this panel, or add the screen back and restart.",
   "workspace.unreadable": "The saved layout could not be read ({error}); changes will not be saved this session.",
   "workspace.notSaved": "Layout not saved: {error}",
-  "workspace.unrestorable": "The saved layout could not be restored ({error}); showing the default.",
+  "workspace.unrestorable": "Page {name} could not be restored ({error}). It is shown empty, and its save is kept until you add a panel to it.",
+  "workspace.unknownSave": "This window's saved layout is from another version of Fansipan. It is kept as it is; changes here are not saved this session.",
+  "workspace.layoutFailed": "The layout {name} could not be built: {error}",
+  "workspace.symbolNotShared": "The symbol did not reach the other windows: {error}",
   "workspace.windowFailed": "Could not open a new window: {error}",
 
   "screen.watchlist.title": "Watchlist",
