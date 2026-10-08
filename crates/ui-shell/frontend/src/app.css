@@ -67,8 +67,10 @@ button, input, select {
 }
 
 /* dockview with the app's palette. Every other dockview variable keeps the
-   dark theme's value; override any of these to restyle the docking frame. */
-.dockview-theme-fansipan {
+   dark theme's value; override any of these to restyle the docking frame.
+   dockview injects its own stylesheet after this one, so these overrides
+   name both classes to outweigh its `.dockview-theme-dark` alone. */
+.dockview-theme-dark.dockview-theme-fansipan {
   --dv-group-view-background-color: var(--panel);
   --dv-tabs-and-actions-container-background-color: var(--ink);
   --dv-tabs-and-actions-container-height: 1.875rem;
