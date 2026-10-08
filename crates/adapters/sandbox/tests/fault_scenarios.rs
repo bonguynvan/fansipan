@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use bus::{BusHandle, Event};
 use execution_engine::{ExecutionEngine, RiskLimits};
-use fansipan_sandbox::{SandboxExecutionClient, SimVenue};
+use fansipan_sandbox::{Listing, SandboxExecutionClient, SimVenue};
 use model::{
     ClientOrderId, Decimal, ExecutionReport, InstrumentId, NewOrder, Order, OrderEvent,
     OrderStatus, Side, UnixNanos, VenueOrder, VenueOrderState,
@@ -30,6 +30,8 @@ use proptest::test_runner::RngSeed;
 
 const SEED: u64 = 20_261_008;
 const STARTING_CASH: i64 = 1_000_000;
+/// Little enough cash that buys run out of it, so the venue refuses some.
+const TIGHT_CASH: i64 = 8_000;
 const MID: i64 = 1_000;
 const NOW: UnixNanos = UnixNanos(1);
 
@@ -136,6 +138,7 @@ impl BusHandle for WireEnd {
 
 struct Desk {
     venue: SimVenue,
+    starting_cash: Decimal,
     exec: ExecutionEngine,
     sent: Arc<Mutex<VecDeque<Event>>>,
     held: Vec<Event>,
@@ -145,9 +148,15 @@ struct Desk {
 }
 
 impl Desk {
-    fn open(fates: Vec<Fate>) -> Self {
-        let venue = SimVenue::new(Decimal::from(STARTING_CASH));
-        venue.list(aaa(), price(0));
+    /// A desk on the sandbox. A tight one has little cash and a market that
+    /// forbids short selling, so the venue refuses buys it cannot pay for
+    /// and sells beyond the holding; otherwise it refuses nothing.
+    fn open(fates: Vec<Fate>, tight: bool) -> Self {
+        let starting_cash = Decimal::from(if tight { TIGHT_CASH } else { STARTING_CASH });
+        let venue = SimVenue::new(starting_cash);
+        let mut listing = Listing::unrestricted(aaa(), price(0)).expect("a listing");
+        listing.info = listing.info.with_short_selling(!tight);
+        venue.list_with(listing);
         let mut exec = ExecutionEngine::new(
             Box::new(SandboxExecutionClient::new(venue.clone())),
             RiskLimits {
@@ -160,6 +169,7 @@ impl Desk {
             .expect("the engine connects");
         Self {
             venue,
+            starting_cash,
             exec,
             sent,
             held: Vec::new(),
@@ -321,6 +331,24 @@ impl Desk {
     }
 }
 
+/// Whether the engine knows no more fills than the venue made: duplicates
+/// and replays never count twice, at any point of the session.
+fn never_ahead_of_the_venue(desk: &Desk) -> Result<(), String> {
+    for (id, view) in desk.venue.order_views() {
+        let filled = desk
+            .exec
+            .order(id)
+            .map_or(Decimal::ZERO, |o| o.filled_quantity);
+        if filled > view.filled_quantity {
+            return Err(format!(
+                "order {id:?}: {filled} filled, the venue made {}",
+                view.filled_quantity
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Whether the engine's order says what the venue's view says.
 fn agrees(order: &Order, view: &VenueOrder) -> Result<(), String> {
     if order.filled_quantity != view.filled_quantity {
@@ -346,10 +374,20 @@ fn agrees(order: &Order, view: &VenueOrder) -> Result<(), String> {
             order.status, view.state
         ));
     }
-    if let (Some(ours), Some(venues)) = (order.avg_fill_price, view.avg_fill_price) {
-        if (ours - venues).abs() > Decimal::new(1, 12) {
+    match (order.avg_fill_price, view.avg_fill_price) {
+        (Some(ours), Some(venues)) if (ours - venues).abs() > Decimal::new(1, 12) => {
             return Err(format!("average {ours} but the venue says {venues}"));
         }
+        (Some(_), Some(_)) | (None, None) => {}
+        (ours, venues) => return Err(format!("average {ours:?} but the venue says {venues:?}")),
+    }
+    // The terms too: an amendment whose answer was missed is settled by the
+    // read-back.
+    if view.quantity.is_some_and(|q| q != order.quantity) || view.limit_price != order.limit_price {
+        return Err(format!(
+            "terms {} at {:?} but the venue says {:?} at {:?}",
+            order.quantity, order.limit_price, view.quantity, view.limit_price
+        ));
     }
     Ok(())
 }
@@ -361,19 +399,23 @@ proptest! {
     fn the_engine_ends_in_the_venues_state_whatever_the_wire_did(
         steps in vec(step(), 1..60),
         fates in vec(fate(), 1..20),
+        tight in any::<bool>(),
     ) {
-        let mut desk = Desk::open(fates);
+        let mut desk = Desk::open(fates, tight);
         for step in &steps {
             desk.run(step);
+            let ahead = never_ahead_of_the_venue(&desk);
+            prop_assert!(ahead.is_ok(), "after {step:?}: {}", ahead.err().unwrap_or_default());
         }
         desk.settle();
 
         // Every order agrees with the venue's view of it.
         for (id, view) in desk.venue.order_views() {
-            let order = desk.exec.order(id).cloned();
+            let order = desk.exec.order(id);
             prop_assert!(order.is_some(), "the venue has order {id:?} the engine does not");
-            if let (Some(order), Err(why)) = (order.as_ref(), order.as_ref().map(|o| agrees(o, &view)).unwrap_or(Ok(()))) {
-                prop_assert!(false, "order {:?}: {why}", order.id);
+            if let Some(order) = order {
+                let verdict = agrees(order, &view);
+                prop_assert!(verdict.is_ok(), "order {id:?}: {}", verdict.err().unwrap_or_default());
             }
         }
 
@@ -382,7 +424,7 @@ proptest! {
         // was bought less what was sold.
         let account = desk.venue.account();
         prop_assert_eq!(desk.exec.account(), &account);
-        let mut cash = Decimal::from(STARTING_CASH);
+        let mut cash = desk.starting_cash;
         let mut held = Decimal::ZERO;
         for order in desk.exec.orders() {
             let traded = order.avg_fill_price.unwrap_or_default() * order.filled_quantity;
@@ -408,7 +450,7 @@ proptest! {
 /// on the stream, and the read-back at reconnect catches the order up.
 #[test]
 fn a_fill_lost_in_an_outage_is_caught_up_at_reconnect() {
-    let mut desk = Desk::open(vec![Fate::Deliver]);
+    let mut desk = Desk::open(vec![Fate::Deliver], false);
     desk.run(&Step::Buy {
         quantity: 10,
         ticks: -5,
