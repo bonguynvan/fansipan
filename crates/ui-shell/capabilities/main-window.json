@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "The main window's menus may close it (File, Exit: closing the main window quits the terminal) and put it in full screen",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen"
+  ]
+}

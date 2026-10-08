@@ -93,6 +93,12 @@ async function run(action) {
   }
 }
 
+/** Runs a registered action as its key would, from a menu or a search; unknown ids do nothing. */
+export function runAction(actionId) {
+  const action = registered.get(actionId);
+  return action ? run(action) : Promise.resolve();
+}
+
 /** A dialog or menu open owns the keyboard: shortcuts wait until it closes. */
 const somethingModal = () => document.querySelector("dialog[open], [role='menu'], [role='dialog'], [data-popup]") !== null;
 

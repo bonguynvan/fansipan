@@ -8,10 +8,12 @@
   import { flushWatchlists } from "./lib/watchlists.svelte.js";
   import { flushHotkeys, startHotkeys } from "./lib/hotkeys.svelte.js";
   import KeysDialog from "./lib/KeysDialog.svelte";
+  import AboutDialog from "./lib/AboutDialog.svelte";
+  import MenuBar from "./lib/MenuBar.svelte";
+  import { registerAppMenus } from "./lib/appMenus.js";
   import { mark, money } from "./lib/format.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
-  import WorkspaceMenu from "./workspace/WorkspaceMenu.svelte";
   import {
     MAIN_WINDOW,
     currentWindowLabel,
@@ -20,18 +22,19 @@
     workspace,
   } from "./workspace/workspace.svelte.js";
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
-  import LocalePicker from "./i18n/LocalePicker.svelte";
-  import ScalePicker from "./lib/ScalePicker.svelte";
-  import ThemePicker from "./lib/ThemePicker.svelte";
   import { startTheme } from "./lib/theme.svelte.js";
   import { startUiScale } from "./lib/ui.svelte.js";
+
+  const label = currentWindowLabel();
+  let keysOpen = $state(false);
+  let aboutOpen = $state(false);
 
   // Screens must be registered before any layout that names them loads.
   registerBuiltins();
   registerWorkspaceActions();
-
-  const label = currentWindowLabel();
-  let keysOpen = $state(false);
+  if (label === MAIN_WINDOW) {
+    registerAppMenus({ showShortcuts: () => (keysOpen = true), showAbout: () => (aboutOpen = true) });
+  }
 
   onMount(() => {
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
@@ -88,24 +91,20 @@
 <div class="terminal" class:detached={label !== MAIN_WINDOW}>
   {#if label === MAIN_WINDOW}
   <header>
-    <div class="brand">
-      <span class="mark" aria-hidden="true">▲</span>
-      <span>Fansipan</span>
-      <span class="venue dim">{market.info?.title ?? ""}</span>
+    <div class="lead">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">▲</span>
+        <span>Fansipan</span>
+        <span class="venue dim">{market.info?.title ?? ""}</span>
+      </div>
+      <MenuBar onNotice={(notice) => (workspace.notice = notice)} />
     </div>
     <div class="equity">
       <span class="dim">{t("app.equity")}</span>
       <span class="num">{money(equity, market.info?.currency)}</span>
     </div>
-    <div class="tools">
-      <WorkspaceMenu />
-      <button class="keys-button" onclick={() => (keysOpen = true)}>{t("hotkey.open")}</button>
-      <ScalePicker />
-      <ThemePicker />
-      <LocalePicker />
-      <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
-        <span class="dot"></span>{status}
-      </div>
+    <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
+      <span class="dot"></span>{status}
     </div>
   </header>
   {/if}
@@ -116,6 +115,7 @@
 </div>
 
 <KeysDialog bind:open={keysOpen} />
+<AboutDialog bind:open={aboutOpen} />
 
 <style>
   .terminal {
@@ -132,11 +132,19 @@
 
   header {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    grid-template-columns: auto 1fr auto;
+    gap: 1rem;
     align-items: center;
     padding: 0.5rem 1rem;
     background: var(--panel);
     border-bottom: 1px solid var(--rule);
+  }
+
+  .lead {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 0;
   }
 
   .brand {
@@ -154,9 +162,11 @@
   .venue {
     font-weight: 400;
     font-size: var(--text-xs);
+    white-space: nowrap;
   }
 
   .equity {
+    justify-self: center;
     display: flex;
     gap: 0.625rem;
     align-items: baseline;
@@ -169,47 +179,16 @@
     letter-spacing: 0.12em;
   }
 
-  .keys-button {
-    padding: 0.25rem 0.625rem;
-    font: inherit;
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    background: transparent;
-    border: 1px solid var(--rule);
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-
-  .keys-button:hover,
-  .keys-button:focus-visible {
-    color: var(--text);
-    border-color: var(--text-dim);
-    outline: none;
-  }
-
-  .tools {
-    justify-self: end;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.5rem 1rem;
-    align-items: center;
-  }
-
   /* The top bar gets the window, so it alone answers to the window's width. */
   @media (max-width: 64rem) {
     .venue,
     .equity .dim {
       display: none;
     }
-
-    .tools {
-      gap: 0.375rem 0.5rem;
-    }
   }
 
   .status {
+    justify-self: end;
     display: flex;
     gap: 0.5rem;
     align-items: center;
