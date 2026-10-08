@@ -319,7 +319,7 @@ impl Desk {
     /// arrives, and a last read-back settles what the stream left out.
     fn settle(&mut self) {
         if self.connected {
-            let held: Vec<Event> = self.held.drain(..).collect();
+            let held = std::mem::take(&mut self.held);
             for event in held {
                 self.route(event);
             }
