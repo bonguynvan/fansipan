@@ -1,0 +1,7 @@
+# The Rust every check runs on, here and in CI. A new stable's lints arrive
+# by a change to this line, with their fixes in the same commit, not by
+# surprise on main.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
