@@ -28,21 +28,31 @@ export function keyboardRow(node) {
     marked = row;
   };
 
-  // The focus cell moves (the attribute changes, on a grid that may mount
-  // after this element); rows are recycled as the grid scrolls, so a
-  // scroll marks again whichever row now shows the cell.
+  // Rows are recycled as the grid scrolls, so a scroll marks again whichever
+  // row now shows the cell, once a frame however fast the wheel turns.
+  let frame = 0;
+  const markSoon = () => {
+    frame ||= requestAnimationFrame(() => {
+      frame = 0;
+      mark();
+    });
+  };
+
+  // The focus cell moves: the attribute changes, on a grid that may mount
+  // after this element.
   const moves = new MutationObserver(mark);
   moves.observe(node, { subtree: true, attributes: true, attributeFilter: ["aria-activedescendant"] });
   node.addEventListener("focusin", mark);
   node.addEventListener("focusout", unmark);
-  node.addEventListener("scroll", mark, { capture: true, passive: true });
+  node.addEventListener("scroll", markSoon, { capture: true, passive: true });
 
   return {
     destroy() {
       moves.disconnect();
       node.removeEventListener("focusin", mark);
       node.removeEventListener("focusout", unmark);
-      node.removeEventListener("scroll", mark, { capture: true });
+      node.removeEventListener("scroll", markSoon, { capture: true });
+      cancelAnimationFrame(frame);
       unmark();
     },
   };

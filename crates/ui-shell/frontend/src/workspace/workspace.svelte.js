@@ -258,26 +258,32 @@ export function stepPanel(step) {
   const next = stepFrom(order, api.activePanel, step);
   if (!next) return;
   next.api.setActive();
-  // A panel in a background tab is attached once it is shown: a frame later.
-  requestAnimationFrame(() => focusInto(next));
+  focusInto(next, FOCUS_TRIES);
 }
+
+/** How many frames a panel just shown gets to draw something to focus. */
+const FOCUS_TRIES = 4;
 
 /**
  * The keyboard into `panel`: the element its screen marks with
- * `data-autofocus`, else its grid, else the first control. With none, the
- * panel's content itself, so keys stop going to the panel left behind.
+ * `data-autofocus`, else its grid, else the first control. A panel in a
+ * background tab is attached only once shown, and its screen may draw a
+ * frame or two later, so this waits a few frames for one. With none, the
+ * panel's content itself (dockview makes it focusable), so keys stop going
+ * to the panel left behind.
  */
-function focusInto(panel) {
-  const content = panel.group?.element.querySelector(".dv-content-container");
-  if (!content) return;
-  const target =
-    content.querySelector("[data-autofocus]") ?? content.querySelector('[role="grid"]') ?? content.querySelector(FOCUSABLE);
-  if (target) {
-    target.focus();
-    return;
-  }
-  content.tabIndex = -1;
-  content.focus();
+function focusInto(panel, tries) {
+  requestAnimationFrame(() => {
+    const content = panel.group?.element.querySelector(".dv-content-container");
+    if (!content) return;
+    const target =
+      content.querySelector("[data-autofocus]") ??
+      content.querySelector('[role="grid"]') ??
+      content.querySelector(FOCUSABLE);
+    if (target) target.focus();
+    else if (tries > 1) focusInto(panel, tries - 1);
+    else content.focus();
+  });
 }
 
 /**
