@@ -16,6 +16,7 @@
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params, panel } = $props();
+  const id = $props.id();
 
   const selected = $derived(symbolOf(params, market.symbols[0]));
   const quote = $derived(selected ? market.quotes[selected] : null);
@@ -102,18 +103,20 @@
   // How large one order can be (ADR 0016): core's answer for this side,
   // type, and price, asked again whenever the account or the orders move,
   // since both change what fits. A slower, older answer never overwrites a
-  // newer one.
+  // newer one, and an answer to another question (another symbol, side,
+  // type, or price) is cleared at once, so Max never fills the wrong size.
   let capacity = $state(null);
   let asked = 0;
+  let askedFor = "";
   $effect(() => {
     const args = capacityArgs({ symbol: selected, side, orderType, priced, limitPrice });
     void market.account;
     void market.orders;
     const ask = ++asked;
-    if (!args) {
-      capacity = null;
-      return;
-    }
+    const question = JSON.stringify(args);
+    if (question !== askedFor) capacity = null;
+    askedFor = question;
+    if (!args) return;
     invoke("order_capacity", args)
       .then((answer) => ask === asked && (capacity = answer))
       .catch(() => ask === asked && (capacity = null));
@@ -219,14 +222,17 @@
   <!-- novalidate: the quantity steps in lots, but an odd lot is a valid
        order on some markets; risk judges the quantity and says why. -->
   <form onsubmit={submit} novalidate>
+    <!-- Each input is named by its heading alone: the buttons sharing its
+         label (Max, the band prices) are not part of its name. -->
     <label>
-      <span>
+      <span id="{id}-quantity">
         {t("ticket.quantity")}
         {#if lot > 1}<em class="hint">{t("ticket.lot", { lot: formatQuantity(lot) })}</em>{/if}
       </span>
       <input
         class="num"
         type="number"
+        aria-labelledby="{id}-quantity"
         min={lot}
         step={lot}
         bind:this={quantityInput}
@@ -236,7 +242,7 @@
         <span class="capacity" class:over={overMax}>
           {#if maxQuantity !== null}
             <button type="button" class="max" disabled={maxQuantity <= 0} title={t("ticket.useMax")} onclick={() => (typedQuantity = maxQuantity)}
-              >{capacity.valued_at
+              >{side === "buy" && capacity.valued_at
                 ? t("ticket.maxAt", { quantity: formatQuantity(maxQuantity), price: price(capacity.valued_at, decimals) })
                 : t("ticket.max", { quantity: formatQuantity(maxQuantity) })}</button
             >
@@ -264,12 +270,20 @@
 
     {#if priced}
       <label>
-        <span>{t("ticket.limitPrice")}</span>
+        <span id="{id}-limit">{t("ticket.limitPrice")}</span>
         <span class="stepper">
           <!-- step="any": the browser measures steps from 0, which a ladder
                whose tiers start off a tick multiple would fail; risk checks
                the tick and says why. -->
-          <input class="num" type="number" min="0" step="any" placeholder={reference ?? ""} bind:value={limitPrice} />
+          <input
+            class="num"
+            type="number"
+            aria-labelledby="{id}-limit"
+            min="0"
+            step="any"
+            placeholder={reference ?? ""}
+            bind:value={limitPrice}
+          />
           <button type="button" aria-label={t("ticket.tickDown")} title={t("ticket.tickDown")} onclick={() => stepLimit(stepDown)}
             >−</button
           >
@@ -470,10 +484,11 @@
     color: var(--down);
   }
 
-  /* Floor, reference, and ceiling, each in its price tone. */
+  /* Floor, reference, and ceiling, each in its price tone. A price on a
+     button that sets the limit is never cut short: the buttons wrap first. */
   .band {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
     gap: 0.25rem;
   }
 
@@ -492,8 +507,7 @@
 
   .band-price .num {
     font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
   .band-price:hover,
