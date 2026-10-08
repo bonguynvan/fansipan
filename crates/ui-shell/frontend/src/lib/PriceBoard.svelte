@@ -207,7 +207,7 @@
     gap: 0.375rem;
     padding: 0.125rem 0.5625rem;
     border: 1px solid var(--rule);
-    border-radius: 999px;
+    border-radius: 999rem;
     color: var(--text);
   }
 

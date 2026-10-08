@@ -15,6 +15,8 @@ export const SCALES = [0.9, 1, 1.15, 1.3];
 export const BASE_ROOT_PX = 16;
 const SETTING = "ui.scale";
 const EVENT = "ui-scale";
+/** Ignores this window's own events, which Tauri delivers back late. */
+const SOURCE = crypto.randomUUID();
 
 class Ui {
   /** The chosen text size: one of SCALES. */
@@ -43,13 +45,16 @@ function apply(scale) {
 const save = debouncedSetter(SETTING, 0);
 /** Shows the trader a size that did not reach the other windows; set by `startUiScale`. */
 let report = () => {};
+/** Set once a size is chosen here or arrives from another window: newer than the save. */
+let chosen = false;
 
 /** Sets the text size here, in every other window, and in the store. */
 export function setScale(scale) {
   if (!isScale(scale) || scale === ui.scale) return;
+  chosen = true;
   apply(scale);
   save(scale);
-  emit(EVENT, scale).catch((err) => report(String(err)));
+  emit(EVENT, { source: SOURCE, scale }).catch((err) => report(String(err)));
 }
 
 let started = null;
@@ -60,10 +65,13 @@ export function startUiScale({ onError } = {}) {
     report = onError ?? report;
     apply(ui.scale);
     await listen(EVENT, ({ payload }) => {
-      if (isScale(payload)) apply(payload);
+      if (payload?.source === SOURCE || !isScale(payload?.scale)) return;
+      chosen = true;
+      apply(payload.scale);
     });
     const saved = await getSetting(SETTING);
-    if (isScale(saved)) apply(saved);
+    // A size chosen while the save was being read is the newer one.
+    if (!chosen && isScale(saved)) apply(saved);
   })();
   return started;
 }
