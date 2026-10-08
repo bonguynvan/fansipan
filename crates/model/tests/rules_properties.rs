@@ -164,3 +164,58 @@ proptest! {
         }
     }
 }
+
+/// Any decimal at all: ordinary values, zero, the extremes, the smallest
+/// step, and any bit pattern at any scale.
+fn any_decimal() -> impl Strategy<Value = Decimal> {
+    prop_oneof![
+        4 => (-1_000_000i64..1_000_000, 0u32..6).prop_map(|(m, scale)| Decimal::new(m, scale)),
+        1 => Just(Decimal::ZERO),
+        1 => Just(Decimal::MAX),
+        1 => Just(Decimal::MIN),
+        1 => Just(Decimal::new(1, 28)),
+        2 => (any::<u32>(), any::<u32>(), any::<u32>(), any::<bool>(), 0u32..=28)
+            .prop_map(|(lo, mid, hi, negative, scale)| Decimal::from_parts(lo, mid, hi, negative, scale)),
+    ]
+}
+
+/// Any ladder `TickTable::new` accepts from an adapter, however odd: ticks
+/// and boundaries of any size, not only the shape real markets use.
+fn any_ladder() -> impl Strategy<Value = TickTable> {
+    vec((any_decimal(), any_decimal()), 1..4).prop_filter_map(
+        "a ladder TickTable::new accepts",
+        |steps| {
+            let mut steps: Vec<(Decimal, Decimal)> = steps
+                .into_iter()
+                .map(|(from, tick)| (from.abs(), tick.abs()))
+                .collect();
+            steps[0].0 = Decimal::ZERO;
+            steps.sort_by_key(|step| step.0);
+            steps.dedup_by(|a, b| a.0 == b.0);
+            TickTable::new(steps).ok()
+        },
+    )
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// No panic on rules data from outside (roadmap Phase 7): whatever
+    /// ladder an adapter publishes and whatever price arrives, rounding,
+    /// stepping, and building a band answer without panicking.
+    #[test]
+    fn any_ladder_and_any_price_answer_without_panicking(
+        ticks in any_ladder(),
+        p in any_decimal(),
+        fraction in any_decimal(),
+    ) {
+        let _ = ticks.tick_at(p);
+        let _ = ticks.is_on_tick(p);
+        let _ = ticks.round_down(p);
+        let _ = ticks.round_up(p);
+        let _ = ticks.round_nearest(p);
+        let _ = ticks.step_up(p);
+        let _ = ticks.step_down(p);
+        let _ = PriceBand::from_fraction(InstrumentId::new("sim", "AAA"), p, fraction, &ticks, UnixNanos(0));
+    }
+}

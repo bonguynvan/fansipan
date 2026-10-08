@@ -10,6 +10,8 @@
 
 mod batch;
 mod dto;
+#[cfg(test)]
+mod no_panic_tests;
 mod settings;
 mod workspace;
 
