@@ -51,11 +51,27 @@ impl Position {
 pub struct AccountState {
     pub cash: Decimal,
     pub positions: Vec<Position>,
+    /// What the account can spend on buys now, as the venue reckons it:
+    /// cash less what resting buys hold back, plus margin where the account
+    /// has it, less fees the venue charges up front. `None` when the venue
+    /// does not say; core then estimates it from cash and working buys.
+    pub buying_power: Option<Decimal>,
 }
 
 impl AccountState {
     pub fn new(cash: Decimal, positions: Vec<Position>) -> Self {
-        Self { cash, positions }
+        Self {
+            cash,
+            positions,
+            buying_power: None,
+        }
+    }
+
+    pub fn with_buying_power(self, buying_power: Decimal) -> Self {
+        Self {
+            buying_power: Some(buying_power),
+            ..self
+        }
     }
 
     /// The position in `instrument`, if there is one.
@@ -84,6 +100,17 @@ mod tests {
         assert_eq!(long("300").with_settled(d("100")).sellable(), d("100"));
         assert_eq!(long("300").with_settled(d("500")).sellable(), d("300"));
         assert_eq!(long("-100").sellable(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn buying_power_is_the_venues_to_give() {
+        let account = AccountState::new(d("1000"), vec![]);
+
+        assert_eq!(account.buying_power, None);
+        assert_eq!(
+            account.with_buying_power(d("2500")).buying_power,
+            Some(d("2500"))
+        );
     }
 
     #[test]

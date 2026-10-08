@@ -193,6 +193,62 @@ fn cancel_removes_a_resting_order() {
     ));
 }
 
+/// The account the events last reported, if they reported one.
+fn last_account(events: &[Event]) -> Option<AccountState> {
+    events.iter().rev().find_map(|e| match e {
+        Event::AccountUpdate(account) => Some(account.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_resting_buy_lowers_buying_power_and_says_so() {
+    let venue = venue("1000", "10");
+
+    let events = submit(&venue, order(1, Side::Buy, "90", Some("9")));
+
+    let reported = last_account(&events).expect("an account report");
+    assert_eq!(reported.buying_power, Some(d("190")));
+    assert_eq!(reported.cash, d("1000"));
+    assert_eq!(venue.account().buying_power, Some(d("190")));
+}
+
+#[test]
+fn cancelling_a_resting_buy_gives_its_cash_back() {
+    let venue = venue("1000", "10");
+    submit(&venue, order(1, Side::Buy, "90", Some("9")));
+
+    let events = cancel(&venue, &CancelOrder::new(ClientOrderId(1), None, aaa()));
+
+    assert_eq!(
+        last_account(&events).and_then(|a| a.buying_power),
+        Some(d("1000"))
+    );
+}
+
+#[test]
+fn the_resting_rest_of_a_part_filled_buy_holds_back_cash_too() {
+    let venue = venue("100000", "10");
+
+    let events = submit(&venue, order(1, Side::Buy, "150", Some("10.05")));
+
+    // 100 filled at 10.01; the other 50 rest, holding back 50 at 10.05.
+    assert_eq!(fills(&events), vec![(d("100"), d("10.01"))]);
+    assert_eq!(
+        last_account(&events).and_then(|a| a.buying_power),
+        Some(d("98496.50"))
+    );
+}
+
+#[test]
+fn an_order_that_holds_back_nothing_reports_no_account() {
+    let venue = venue("1000", "10");
+
+    let events = cancel(&venue, &CancelOrder::new(ClientOrderId(9), None, aaa()));
+
+    assert!(last_account(&events).is_none());
+}
+
 #[test]
 fn average_price_blends_when_adding_to_a_position() {
     let venue = venue("10000", "10");

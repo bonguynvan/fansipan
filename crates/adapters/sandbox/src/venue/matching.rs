@@ -365,7 +365,7 @@ pub(super) fn crosses(side: Side, limit: Decimal, touch: Decimal) -> bool {
 
 /// Cash not already promised to resting buy orders at their reserved price.
 /// `None` only if the reservations themselves overflow.
-fn available_cash(state: &VenueState) -> Option<Decimal> {
+pub(super) fn available_cash(state: &VenueState) -> Option<Decimal> {
     state
         .resting
         .iter()

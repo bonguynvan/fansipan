@@ -35,7 +35,7 @@ use crate::day::TradingDay;
 
 use book::{print, Book};
 use listing::walk_ticks;
-use matching::{amend_locked, match_resting, phase_of, submit_locked};
+use matching::{amend_locked, available_cash, match_resting, phase_of, submit_locked};
 
 pub use book::{Tick, DEPTH_LEVELS};
 pub use listing::{Listing, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
@@ -134,7 +134,9 @@ impl SimVenue {
     /// and the new session. Call it before each beat's prices move.
     pub fn advance(&self, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
-        session::advance(&mut state, now).into_iter().for_each(sink);
+        let before = buying_power_of(&state);
+        let events = session::advance(&mut state, now);
+        send_keeping_buying_power(&state, before, events, sink);
     }
 
     /// A panic inside one venue call can at worst leave one simulated fill
@@ -253,6 +255,7 @@ impl SimVenue {
         sink: &mut dyn FnMut(Event),
     ) -> Option<Tick> {
         let mut state = self.state();
+        let before = buying_power_of(&state);
         let tick = {
             let book = state.books.get_mut(instrument)?;
             let before = book.mid;
@@ -269,9 +272,8 @@ impl SimVenue {
                 trade,
             }
         };
-        match_resting(&mut state, &tick.quote, now)
-            .into_iter()
-            .for_each(sink);
+        let fills = match_resting(&mut state, &tick.quote, now);
+        send_keeping_buying_power(&state, before, fills, sink);
         Some(tick)
     }
 
@@ -323,24 +325,25 @@ impl SimVenue {
 
     pub fn submit(&self, order: SubmitOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
-        submit_locked(&mut state, order, now)
-            .into_iter()
-            .for_each(sink);
+        let before = buying_power_of(&state);
+        let events = submit_locked(&mut state, order, now);
+        send_keeping_buying_power(&state, before, events, sink);
     }
 
     /// Amending something that is not resting is answered with
     /// `AmendRejected`, never an error: the order may simply have filled.
     pub fn amend(&self, amend: &AmendOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
-        amend_locked(&mut state, amend, now)
-            .into_iter()
-            .for_each(sink);
+        let before = buying_power_of(&state);
+        let events = amend_locked(&mut state, amend, now);
+        send_keeping_buying_power(&state, before, events, sink);
     }
 
     /// Cancelling something that is not resting is answered with
     /// `CancelRejected`, never an error: the order may simply have filled.
     pub fn cancel(&self, cancel: &CancelOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
+        let power = buying_power_of(&state);
         let before = state.resting.len();
         state
             .resting
@@ -352,7 +355,34 @@ impl SimVenue {
                 reason: "order is not open on the venue".into(),
             }
         };
-        sink(report(cancel.order_id, event, now));
+        let events = vec![report(cancel.order_id, event, now)];
+        send_keeping_buying_power(&state, power, events, sink);
+    }
+}
+
+/// What the account can spend on buys now: cash less what resting buys hold
+/// back. `None` only if those reservations overflow.
+fn buying_power_of(state: &VenueState) -> Option<Decimal> {
+    available_cash(state).map(|available| available.max(Decimal::ZERO))
+}
+
+/// Sends `events`, then the account if buying power moved without them
+/// saying so: a buy that starts or stops resting holds back or frees cash
+/// with no fill to report it, and a fill's own account report can come
+/// before the rest of its order starts resting.
+fn send_keeping_buying_power(
+    state: &VenueState,
+    before: Option<Decimal>,
+    events: Vec<Event>,
+    sink: &mut dyn FnMut(Event),
+) {
+    let last_reported = events.iter().rev().find_map(|event| match event {
+        Event::AccountUpdate(account) => Some(account.buying_power),
+        _ => None,
+    });
+    events.into_iter().for_each(&mut *sink);
+    if last_reported.unwrap_or(before) != buying_power_of(state) {
+        sink(Event::AccountUpdate(account_of(state)));
     }
 }
 
@@ -379,7 +409,11 @@ fn account_of(state: &VenueState) -> AccountState {
             None => position.clone(),
         })
         .collect();
-    AccountState::new(state.cash, positions)
+    let account = AccountState::new(state.cash, positions);
+    match buying_power_of(state) {
+        Some(buying_power) => account.with_buying_power(buying_power),
+        None => account,
+    }
 }
 
 fn report(order_id: ClientOrderId, event: OrderEvent, now: UnixNanos) -> Event {

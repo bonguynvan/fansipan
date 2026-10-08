@@ -19,9 +19,9 @@ license = "LGPL-3.0-or-later"
 # The contract crates also carry their version: crates.io needs it to
 # publish a crate that depends on them, and it must move with each release.
 [workspace.dependencies]
-model = { package = "fansipan-model", version = "0.2.0", path = "crates/model" }
-bus = { package = "fansipan-bus", version = "0.2.0", path = "crates/bus" }
-adapter-api = { package = "fansipan-adapter-api", version = "0.2.0", path = "crates/adapter-api" }
+model = { package = "fansipan-model", version = "0.2.1", path = "crates/model" }
+bus = { package = "fansipan-bus", version = "0.2.1", path = "crates/bus" }
+adapter-api = { package = "fansipan-adapter-api", version = "0.2.1", path = "crates/adapter-api" }
 data-engine = { package = "fansipan-data-engine", path = "crates/data-engine" }
 execution-engine = { package = "fansipan-execution-engine", path = "crates/execution-engine" }
 sandbox = { package = "fansipan-sandbox", path = "crates/adapters/sandbox" }
