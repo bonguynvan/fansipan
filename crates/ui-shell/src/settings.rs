@@ -98,7 +98,9 @@ impl Settings {
     /// - missing: an empty store, no warning;
     /// - present but not a JSON object (bad JSON, or not text at all, as a
     ///   torn write can leave it): moved aside as `<path>.bad`, and the store
-    ///   starts empty, so one corrupt write cannot stop the terminal;
+    ///   starts empty, so one corrupt write cannot stop the terminal; if it
+    ///   cannot be moved, the store starts empty and refuses writes, so the
+    ///   only copy is never overwritten;
     /// - present but unreadable (permissions, a lock): the store starts empty
     ///   and refuses writes, so the real file is never overwritten.
     pub fn load_with(path: impl Into<PathBuf>, limits: Limits) -> (Self, Option<String>) {
@@ -132,13 +134,18 @@ impl Settings {
             ),
             Err(e) => {
                 let aside = path.with_extension("json.bad");
-                let note = if fs::rename(&path, &aside).is_ok() {
-                    format!("moved to {}", aside.display())
-                } else {
-                    "left in place".to_string()
-                };
-                let warning = format!("settings file unreadable ({e}); {note}; starting fresh");
-                (empty(true), Some(warning))
+                if fs::rename(&path, &aside).is_ok() {
+                    let warning = format!(
+                        "settings file unreadable ({e}); moved to {}; starting fresh",
+                        aside.display()
+                    );
+                    return (empty(true), Some(warning));
+                }
+                let warning = format!(
+                    "settings file unreadable ({e}) and could not be moved aside; \
+                     changes this session will not be saved"
+                );
+                (empty(false), Some(warning))
             }
         }
     }
@@ -393,6 +400,21 @@ mod tests {
             Some(vec![0x80])
         );
         assert!(settings.set("a", json!(1)).is_ok());
+    }
+
+    #[test]
+    fn a_corrupt_file_that_cannot_be_moved_aside_is_never_overwritten() {
+        let dir = TempDir::new("stuck");
+        fs::write(dir.file(), "{ not json").unwrap();
+        // Something already at the aside path that a file cannot replace.
+        let aside = dir.0.join("settings.json.bad");
+        fs::create_dir_all(aside.join("taken")).unwrap();
+
+        let (mut settings, warning) = Settings::load(dir.file());
+
+        assert!(warning.is_some_and(|w| w.contains("will not be saved")));
+        assert!(settings.set("a", json!(1)).is_err());
+        assert_eq!(fs::read_to_string(dir.file()).unwrap(), "{ not json");
     }
 
     #[test]
