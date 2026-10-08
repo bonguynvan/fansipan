@@ -6,6 +6,10 @@
   let { row, column } = $props();
 
   const cancellable = $derived(row.open && row.status !== "cancelling");
+
+  // A key on these buttons is theirs: the grid around them would otherwise
+  // take Enter as acting on its own focus row, and press nothing here.
+  const ownKeys = (event) => event.stopPropagation();
 </script>
 
 <span class="actions">
@@ -13,6 +17,7 @@
     <button
       class="amend"
       data-amend={row.id}
+      onkeydown={ownKeys}
       onclick={(event) => {
         event.stopPropagation();
         column.onAmend?.(row.id);
@@ -24,6 +29,7 @@
     <button
       class="cancel"
       disabled={cancelling.has(row.id)}
+      onkeydown={ownKeys}
       onclick={(event) => {
         event.stopPropagation();
         cancelOrder(row.id);

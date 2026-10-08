@@ -6,8 +6,11 @@
   let { row, column } = $props();
 </script>
 
+<!-- A key on this button is its own: the grid would otherwise take Enter
+     as picking its focus row's symbol, and remove nothing. -->
 <button
   class="remove"
+  onkeydown={(event) => event.stopPropagation()}
   onclick={(event) => {
     event.stopPropagation();
     column.onRemove?.(row.symbol);
