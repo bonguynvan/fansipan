@@ -3,6 +3,7 @@
   // last match, each price coloured by where it sits against the day's
   // reference, ceiling and floor. Bands and ticks come from the adapter;
   // this screen only resolves tones and lays them out.
+  import Chips from "./Chips.svelte";
   import { Grid } from "bo-grid";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
@@ -26,6 +27,10 @@
   const scale = $derived(preset.priceScale);
   const exchange = $derived(params.exchange ?? "");
   const exchanges = $derived(exchangesOf(market.instruments));
+  const exchangeOptions = $derived([
+    { value: "", text: t("board.all") },
+    ...exchanges.map((code) => ({ value: code, text: code })),
+  ]);
   const selected = $derived(symbolOf(params, null));
 
   const rows = $derived(
@@ -99,18 +104,12 @@
 
 <div class="board" use:panelSize>
   <header>
-    <div class="chips" role="group" aria-label={t("board.exchange")}>
-      <button class:on={!exchange} aria-pressed={!exchange} onclick={() => panel?.updateParameters({ exchange: "" })}>
-        {t("board.all")}
-      </button>
-      {#each exchanges as code (code)}
-        <button
-          class:on={exchange === code}
-          aria-pressed={exchange === code}
-          onclick={() => panel?.updateParameters({ exchange: code })}>{code}</button
-        >
-      {/each}
-    </div>
+    <Chips
+      label={t("board.exchange")}
+      options={exchangeOptions}
+      value={exchange}
+      onchange={(code) => panel?.updateParameters({ exchange: code })}
+    />
 
     {#each sessions as session (session.market)}
       <span class="session session-{session.phase}" title={t("board.sessionHint")}>
@@ -169,34 +168,6 @@
   .board:global([data-compact]) .legend,
   .board:global([data-compact]) .unit {
     display: none;
-  }
-
-  .chips {
-    display: flex;
-    gap: 0.125rem;
-  }
-
-  .chips button {
-    padding: 0.1875rem 0.625rem;
-    font: 600 var(--text-xs)/1.4 var(--mono);
-    letter-spacing: 0.04em;
-    background: transparent;
-    border: 1px solid var(--rule);
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-
-  .chips button:hover,
-  .chips button:focus-visible {
-    color: var(--text);
-    border-color: var(--text-dim);
-    outline: none;
-  }
-
-  .chips button.on {
-    color: var(--ink);
-    background: var(--accent);
-    border-color: var(--accent);
   }
 
   .session {
