@@ -249,6 +249,64 @@ fn an_order_that_holds_back_nothing_reports_no_account() {
     assert!(last_account(&events).is_none());
 }
 
+/// The venue's view of order `id`, as read back after a reconnect.
+fn view(venue: &SimVenue, id: u64) -> model::VenueOrder {
+    venue
+        .order_views()
+        .into_iter()
+        .find(|(order, _)| *order == ClientOrderId(id))
+        .map(|(_, view)| view)
+        .expect("the venue has the order")
+}
+
+#[test]
+fn the_venue_reads_back_a_resting_order_then_its_fill() {
+    let venue = venue("1000", "10");
+    submit(&venue, order(1, Side::Buy, "1", Some("9.95")));
+
+    let resting = view(&venue, 1);
+    step(&venue, "-0.06");
+    let filled = view(&venue, 1);
+
+    assert_eq!(resting.state, model::VenueOrderState::Working);
+    assert!(resting.venue_order_id.is_some());
+    assert_eq!(
+        (resting.quantity, resting.limit_price),
+        (Some(d("1")), Some(d("9.95")))
+    );
+    assert_eq!(filled.state, model::VenueOrderState::Filled);
+    assert_eq!(
+        (filled.filled_quantity, filled.avg_fill_price),
+        (d("1"), Some(d("9.95")))
+    );
+}
+
+#[test]
+fn the_venue_reads_back_a_part_filled_order_it_cancelled() {
+    let venue = venue("100000", "10");
+    // 100 fill at once, the other 50 rest.
+    submit(&venue, order(1, Side::Buy, "150", Some("10.05")));
+
+    cancel(&venue, &CancelOrder::new(ClientOrderId(1), None, aaa()));
+    let cancelled = view(&venue, 1);
+
+    assert_eq!(cancelled.state, model::VenueOrderState::Cancelled);
+    assert_eq!(cancelled.filled_quantity, d("100"));
+    assert_eq!(cancelled.avg_fill_price, Some(d("10.01")));
+}
+
+#[test]
+fn the_venue_reads_back_an_order_it_refused() {
+    let venue = venue("10", "10");
+
+    submit(&venue, order(1, Side::Buy, "100", Some("10")));
+
+    assert!(matches!(
+        view(&venue, 1).state,
+        model::VenueOrderState::Rejected { .. }
+    ));
+}
+
 #[test]
 fn average_price_blends_when_adding_to_a_position() {
     let venue = venue("10000", "10");

@@ -15,6 +15,7 @@
 //! rejected the way an exchange would.
 
 mod book;
+mod ledger;
 mod listing;
 mod matching;
 mod session;
@@ -28,12 +29,13 @@ use std::time::Duration;
 use bus::Event;
 use model::{
     AccountState, AmendOrder, CancelOrder, ClientOrderId, Decimal, ExecutionReport, InstrumentId,
-    OrderEvent, Position, Quote, SessionPhase, SubmitOrder, UnixNanos,
+    OrderEvent, Position, Quote, SessionPhase, SubmitOrder, UnixNanos, VenueOrder,
 };
 
 use crate::day::TradingDay;
 
 use book::{print, Book};
+use ledger::Ledger;
 use listing::walk_ticks;
 use matching::{amend_locked, available_cash, match_resting, phase_of, submit_locked};
 
@@ -75,6 +77,8 @@ struct VenueState {
     closes: BTreeMap<InstrumentId, Decimal>,
     /// Bought shares still settling; only kept when the venue has a day.
     unsettled: Vec<Unsettled>,
+    /// Every order of the session, as the venue reported it.
+    ledger: Ledger,
 }
 
 /// Cheap to clone; every clone is the same venue.
@@ -97,6 +101,7 @@ impl SimVenue {
                 phases: BTreeMap::new(),
                 closes: BTreeMap::new(),
                 unsettled: Vec::new(),
+                ledger: Ledger::default(),
             })),
         }
     }
@@ -136,7 +141,7 @@ impl SimVenue {
         let mut state = self.state();
         let before = buying_power_of(&state);
         let events = session::advance(&mut state, now);
-        send_keeping_buying_power(&state, before, events, sink);
+        publish(&mut state, before, events, sink);
     }
 
     /// A panic inside one venue call can at worst leave one simulated fill
@@ -243,6 +248,13 @@ impl SimVenue {
         account_of(&self.state())
     }
 
+    /// Every order of the session as the venue holds it now: what an
+    /// adapter reads back after a reconnect and publishes as snapshots, so
+    /// core catches up on what the dropped stream missed (ADR 0012).
+    pub fn order_views(&self) -> Vec<(ClientOrderId, VenueOrder)> {
+        self.state().ledger.views()
+    }
+
     /// Moves the mid by `delta` (rounded to the tick ladder, kept inside the
     /// band), sends the fills for whatever resting orders the new price
     /// reaches to `sink`, and returns what a feed would publish. `None` if
@@ -273,7 +285,7 @@ impl SimVenue {
             }
         };
         let fills = match_resting(&mut state, &tick.quote, now);
-        send_keeping_buying_power(&state, before, fills, sink);
+        publish(&mut state, before, fills, sink);
         Some(tick)
     }
 
@@ -326,8 +338,9 @@ impl SimVenue {
     pub fn submit(&self, order: SubmitOrder, now: UnixNanos, sink: &mut dyn FnMut(Event)) {
         let mut state = self.state();
         let before = buying_power_of(&state);
+        state.ledger.open(&order);
         let events = submit_locked(&mut state, order, now);
-        send_keeping_buying_power(&state, before, events, sink);
+        publish(&mut state, before, events, sink);
     }
 
     /// Amending something that is not resting is answered with
@@ -336,7 +349,7 @@ impl SimVenue {
         let mut state = self.state();
         let before = buying_power_of(&state);
         let events = amend_locked(&mut state, amend, now);
-        send_keeping_buying_power(&state, before, events, sink);
+        publish(&mut state, before, events, sink);
     }
 
     /// Cancelling something that is not resting is answered with
@@ -356,7 +369,7 @@ impl SimVenue {
             }
         };
         let events = vec![report(cancel.order_id, event, now)];
-        send_keeping_buying_power(&state, power, events, sink);
+        publish(&mut state, power, events, sink);
     }
 }
 
@@ -366,12 +379,13 @@ fn buying_power_of(state: &VenueState) -> Option<Decimal> {
     available_cash(state).map(|available| available.max(Decimal::ZERO))
 }
 
-/// Sends `events`, then the account if buying power moved without them
-/// saying so: a buy that starts or stops resting holds back or frees cash
+/// Publishes what a venue call did: records each report in the ledger,
+/// sends `events`, then the account if buying power moved without them
+/// saying so. A buy that starts or stops resting holds back or frees cash
 /// with no fill to report it, and a fill's own account report can come
 /// before the rest of its order starts resting.
-fn send_keeping_buying_power(
-    state: &VenueState,
+fn publish(
+    state: &mut VenueState,
     before: Option<Decimal>,
     events: Vec<Event>,
     sink: &mut dyn FnMut(Event),
@@ -380,6 +394,9 @@ fn send_keeping_buying_power(
         Event::AccountUpdate(account) => Some(account.buying_power),
         _ => None,
     });
+    for event in &events {
+        state.ledger.note(event);
+    }
     events.into_iter().for_each(&mut *sink);
     if last_reported.unwrap_or(before) != buying_power_of(state) {
         sink(Event::AccountUpdate(account_of(state)));
