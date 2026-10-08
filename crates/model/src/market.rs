@@ -63,9 +63,16 @@ mod tests {
 
     #[test]
     fn a_mid_too_large_to_add_is_not_a_panic() {
-        let mid = quote(Decimal::MAX, Decimal::MAX).mid();
+        let two_below = Decimal::MAX - Decimal::TWO;
+        // The sum overflows, so the halves are added: within a unit of the
+        // true middle, MAX - 1, for the rounding of each half.
+        let halves = quote(two_below, Decimal::MAX).mid();
 
-        assert!(mid > Decimal::ZERO);
+        assert!(
+            (halves - (Decimal::MAX - Decimal::ONE)).abs() <= Decimal::ONE,
+            "{halves}"
+        );
+        assert_eq!(quote(Decimal::MAX, Decimal::MAX).mid(), Decimal::MAX);
         assert_eq!(quote(Decimal::MIN, Decimal::MAX).mid(), Decimal::ZERO);
     }
 }

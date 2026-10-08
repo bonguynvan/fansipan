@@ -1,16 +1,23 @@
 //! No panic on input from outside (roadmap Phase 7). Core parses no wire
 //! protocol, but it reads what it cannot trust: what an adapter publishes
-//! (quotes, prints, depth, rules, bands), whatever their values, and what
-//! a trader types. Whatever arrives, the shell answers with a value or a
+//! (quotes, prints, depth, rules, bands, order reports and read-backs, the
+//! account, sessions, connections), whatever their values, and what a
+//! trader types. Whatever arrives, the shell answers with a value or a
 //! typed error. A panic inside an engine's lock would poison it and take
 //! the terminal down over one bad message.
 //!
 //! The seed is fixed, so every run explores the same cases (CLAUDE.md:
-//! tests are deterministic). Set PROPTEST_RNG_SEED to explore others.
+//! tests are deterministic). Set PROPTEST_RNG_SEED to explore others. The
+//! generators are boxed: nested as deep as these are, their unboxed types
+//! overflow a debug build's test-thread stack.
+
+use std::sync::mpsc::Receiver;
 
 use model::{
-    BookLevel, Decimal, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote, Side, TickTable,
-    Trade, UnixNanos,
+    AccountState, BookLevel, ClientOrderId, Connection, ConnectionState, ConnectionStatus, Decimal,
+    Depth, ExecutionReport, FillId, InstrumentId, InstrumentInfo, NamedOrderType, OrderEvent,
+    OrderType, Position, PriceBand, Quote, SessionPhase, SessionStatus, Side, TickTable, Trade,
+    UnixNanos, VenueOrder, VenueOrderId, VenueOrderState,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -34,8 +41,9 @@ fn config() -> ProptestConfig {
     }
 }
 
-/// The Vietnamese sandbox, wired as `src/main.rs` wires it.
-fn shell() -> Shell {
+/// The Vietnamese sandbox, wired as `src/main.rs` wires it, with the bus
+/// the pump would read: the venue's own answers to orders come back on it.
+fn shell() -> (Shell, Receiver<Event>) {
     let profile = MarketProfile::by_id("vn", VENUE).expect("the vn profile");
     let sim = profile.venue();
     let venue = Venue::new(
@@ -49,12 +57,15 @@ fn shell() -> Shell {
         },
     )
     .subscribe(profile.listings.iter().map(|l| l.info.id.clone()));
-    connect_engines(&Bus::new(), venue).expect("the shell connects")
+    let bus = Bus::new();
+    let events = bus.subscribe();
+    let shell = connect_engines(&bus, venue).expect("the shell connects");
+    (shell, events)
 }
 
 /// Any decimal an adapter could send: ordinary prices and sizes, zero, the
 /// extremes, the smallest step, and any bit pattern at any scale.
-fn decimal() -> impl Strategy<Value = Decimal> {
+fn decimal() -> BoxedStrategy<Decimal> {
     prop_oneof![
         4 => (-1_000_000i64..1_000_000, 0u32..6).prop_map(|(m, scale)| Decimal::new(m, scale)),
         1 => Just(Decimal::ZERO),
@@ -63,30 +74,152 @@ fn decimal() -> impl Strategy<Value = Decimal> {
         1 => Just(Decimal::new(1, 28)),
         2 => (any::<u32>(), any::<u32>(), any::<u32>(), any::<bool>(), 0u32..=28)
             .prop_map(|(lo, mid, hi, negative, scale)| Decimal::from_parts(lo, mid, hi, negative, scale)),
-    ]
+    ].boxed()
 }
 
 /// A listed symbol most of the time, or one the venue never listed.
-fn symbol() -> impl Strategy<Value = String> {
-    prop_oneof![4 => Just("VNM".to_string()), 1 => Just("ZZZ".to_string())]
+fn symbol() -> BoxedStrategy<String> {
+    prop_oneof![4 => Just("VNM".to_string()), 1 => Just("ZZZ".to_string())].boxed()
 }
 
-fn instrument() -> impl Strategy<Value = InstrumentId> {
-    symbol().prop_map(|s| InstrumentId::new(VENUE, s))
+fn instrument() -> BoxedStrategy<InstrumentId> {
+    symbol().prop_map(|s| InstrumentId::new(VENUE, s)).boxed()
 }
 
 /// A tick ladder an adapter could publish: valid ones only, since
 /// `TickTable::new` refuses the rest, but with any ticks and boundaries.
-fn ticks() -> impl Strategy<Value = TickTable> {
-    vec((decimal(), decimal()), 1..4).prop_map(|steps| {
-        let mut steps: Vec<(Decimal, Decimal)> = steps
-            .into_iter()
-            .map(|(from, tick)| (from.abs(), tick.abs()))
-            .collect();
-        steps[0].0 = Decimal::ZERO;
-        TickTable::new(steps)
-            .unwrap_or_else(|_| TickTable::flat(Decimal::ONE).expect("a flat ladder"))
-    })
+fn ticks() -> BoxedStrategy<TickTable> {
+    vec((decimal(), decimal()), 1..4)
+        .prop_filter_map("a ladder TickTable::new accepts", |steps| {
+            let mut steps: Vec<(Decimal, Decimal)> = steps
+                .into_iter()
+                .map(|(from, tick)| (from.abs(), tick.abs()))
+                .collect();
+            steps[0].0 = Decimal::ZERO;
+            steps.sort_by_key(|step| step.0);
+            steps.dedup_by(|a, b| a.0 == b.0);
+            TickTable::new(steps).ok()
+        })
+        .boxed()
+}
+
+/// Anything a venue could say about an order: what it did, or its view
+/// after a reconnect, with any quantities and prices.
+fn order_event() -> BoxedStrategy<OrderEvent> {
+    let state = prop_oneof![
+        Just(VenueOrderState::Working),
+        Just(VenueOrderState::Filled),
+        Just(VenueOrderState::Cancelled),
+        Just(VenueOrderState::Rejected {
+            reason: "refused".into()
+        }),
+    ];
+    prop_oneof![
+        Just(OrderEvent::Accepted {
+            venue_order_id: VenueOrderId("V1".into())
+        }),
+        Just(OrderEvent::Rejected {
+            reason: "refused".into()
+        }),
+        (0u8..4, decimal(), decimal()).prop_map(|(f, quantity, price)| OrderEvent::Filled {
+            fill_id: FillId(format!("F{f}")),
+            quantity,
+            price,
+        }),
+        Just(OrderEvent::Cancelled),
+        Just(OrderEvent::CancelRejected {
+            reason: "too late".into()
+        }),
+        (decimal(), optional(decimal())).prop_map(|(quantity, limit_price)| OrderEvent::Amended {
+            quantity,
+            limit_price
+        }),
+        Just(OrderEvent::AmendRejected {
+            reason: "refused".into()
+        }),
+        (
+            state,
+            decimal(),
+            optional(decimal()),
+            optional(decimal()),
+            optional(decimal())
+        )
+            .prop_map(|(state, filled, average, quantity, limit)| {
+                let view = VenueOrder::new(state, filled, average);
+                let view = match quantity {
+                    Some(quantity) => view.with_terms(quantity, limit),
+                    None => view,
+                };
+                OrderEvent::Snapshot(view)
+            },),
+    ]
+    .boxed()
+}
+
+/// A market's phase of the day, as any adapter could report it.
+fn session() -> BoxedStrategy<SessionStatus> {
+    let phase = prop_oneof![
+        Just(SessionPhase::PreOpen),
+        Just(SessionPhase::OpeningAuction),
+        Just(SessionPhase::Continuous),
+        Just(SessionPhase::Break),
+        Just(SessionPhase::ClosingAuction),
+        Just(SessionPhase::AfterClose),
+        Just(SessionPhase::Closed),
+    ];
+    let market = select(vec!["HOSE", "HNX", "ZZZ", ""]);
+    (market, phase, any::<bool>())
+        .prop_map(|(market, phase, limit_only)| {
+            let types = if limit_only {
+                vec![NamedOrderType::new(OrderType::LIMIT, "LO")]
+            } else {
+                Vec::new()
+            };
+            SessionStatus::new(market, phase, UnixNanos(1)).with_order_types(types)
+        })
+        .boxed()
+}
+
+/// An account as any adapter could report it: any cash, buying power,
+/// holdings, and settled shares.
+fn account() -> BoxedStrategy<AccountState> {
+    let position = (instrument(), decimal(), decimal(), optional(decimal())).prop_map(
+        |(id, quantity, average, settled)| {
+            let position = Position::new(id, quantity, average);
+            match settled {
+                Some(settled) => position.with_settled(settled),
+                None => position,
+            }
+        },
+    );
+    (decimal(), optional(decimal()), vec(position, 0..3))
+        .prop_map(|(cash, buying_power, positions)| {
+            let account = AccountState::new(cash, positions);
+            match buying_power {
+                Some(power) => account.with_buying_power(power),
+                None => account,
+            }
+        })
+        .boxed()
+}
+
+fn connection() -> BoxedStrategy<ConnectionStatus> {
+    let state = prop_oneof![
+        Just(ConnectionState::Up),
+        Just(ConnectionState::Degraded),
+        Just(ConnectionState::Reconnecting),
+        Just(ConnectionState::Down),
+    ];
+    (any::<bool>(), state, any::<String>())
+        .prop_map(|(orders, state, detail)| {
+            let connection = if orders {
+                Connection::Orders
+            } else {
+                Connection::MarketData
+            };
+            ConnectionStatus::new(connection, state, UnixNanos(1)).with_detail(detail)
+        })
+        .boxed()
 }
 
 fn optional(value: impl Strategy<Value = Decimal>) -> impl Strategy<Value = Option<Decimal>> {
@@ -94,7 +227,7 @@ fn optional(value: impl Strategy<Value = Decimal>) -> impl Strategy<Value = Opti
 }
 
 /// Anything the adapter can tell core about a market.
-fn adapter_event() -> impl Strategy<Value = Event> {
+fn adapter_event() -> BoxedStrategy<Event> {
     prop_oneof![
         (instrument(), decimal(), decimal(), decimal(), decimal()).prop_map(
             |(instrument, bid, ask, bid_size, ask_size)| {
@@ -149,11 +282,23 @@ fn adapter_event() -> impl Strategy<Value = Event> {
             .prop_map(|(id, reference, ceiling, floor)| {
                 Event::PriceBand(PriceBand::new(id, reference, ceiling, floor, UnixNanos(1)))
             }),
+        // Reports for orders that exist (ids from 1) and ones that never did.
+        (0u64..6, order_event()).prop_map(|(id, event)| {
+            Event::Execution(ExecutionReport {
+                order_id: ClientOrderId(id),
+                event,
+                ts_event: UnixNanos(1),
+            })
+        }),
+        account().prop_map(Event::AccountUpdate),
+        session().prop_map(Event::Session),
+        connection().prop_map(Event::Connection),
     ]
+    .boxed()
 }
 
 /// Anything a trader could type into a numeric field, or send by hand.
-fn typed() -> impl Strategy<Value = String> {
+fn typed() -> BoxedStrategy<String> {
     let pieces = select(vec!['0', '1', '9', '.', '-', '+', 'e', 'E', ' ', ',', '_']);
     prop_oneof![
         3 => decimal().prop_map(|d| d.to_string()),
@@ -162,9 +307,10 @@ fn typed() -> impl Strategy<Value = String> {
         1 => Just("79228162514264337593543950336".to_string()),
         1 => Just("1e30".to_string()),
     ]
+    .boxed()
 }
 
-fn word() -> impl Strategy<Value = Option<String>> {
+fn word() -> BoxedStrategy<Option<String>> {
     let words = select(vec![
         "limit",
         "market",
@@ -179,7 +325,7 @@ fn word() -> impl Strategy<Value = Option<String>> {
         "LIMIT",
         "buy",
     ]);
-    prop_oneof![1 => Just(None), 3 => words.prop_map(|w| Some(w.to_string())), 1 => any::<String>().prop_map(Some)]
+    prop_oneof![1 => Just(None), 3 => words.prop_map(|w| Some(w.to_string())), 1 => any::<String>().prop_map(Some)].boxed()
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +354,7 @@ enum Input {
     },
 }
 
-fn input() -> impl Strategy<Value = Input> {
+fn input() -> BoxedStrategy<Input> {
     let side = || {
         prop_oneof![
             Just("buy".to_string()),
@@ -226,7 +372,7 @@ fn input() -> impl Strategy<Value = Input> {
         1 => (0u64..6).prop_map(Input::Cancel),
         1 => prop::option::of(symbol()).prop_map(Input::CancelAll),
         1 => (0u64..6, typed(), typed()).prop_map(|(id, quantity, price)| Input::Amend { id, quantity, price }),
-    ]
+    ].boxed()
 }
 
 /// Feeds one input to the shell the way its pump or a command would. The
@@ -298,9 +444,26 @@ proptest! {
 
     #[test]
     fn whatever_arrives_the_shell_answers_without_panicking(inputs in vec(input(), 1..40)) {
-        let shell = shell();
+        let (shell, events) = shell();
         for input in &inputs {
             feed(&shell, input);
+            // What the venue answered goes through the pump's routing too,
+            // so amendments and cancels reach orders the venue holds.
+            for event in events.try_iter() {
+                let _ = route(&shell, &event);
+            }
+        }
+        // The front end's other questions, about a listed symbol and not.
+        for symbol in ["VNM", "ZZZ"] {
+            let data = lock(&shell.data);
+            prop_assert!(data.is_ok());
+            if let Ok(data) = data {
+                let instrument = shell.instrument(symbol);
+                let bars: Vec<BarDto> = data.bars(&instrument, DEFAULT_BAR_LIMIT).iter().map(|bar| BarDto::new(symbol, bar)).collect();
+                let prints: Vec<PrintDto> = data.prints(&instrument, DEFAULT_PRINT_LIMIT).iter().map(PrintDto::from).collect();
+                prop_assert!(serde_json::to_string(&bars).is_ok());
+                prop_assert!(serde_json::to_string(&prints).is_ok());
+            }
         }
 
         // What the front end receives next is built and serialized too.
