@@ -3,6 +3,9 @@ name = "fansipan-data-engine"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
+# Only the contract crates go to crates.io (docs/roadmap.md, Phase 2);
+# adapters take this one from the same core source as their contract.
+publish = false
 description = "Owns quote subscriptions (ref-counted, so screens can share an instrument) and caches the latest quote per instrument."
 
 [dependencies]

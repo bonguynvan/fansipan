@@ -3,6 +3,9 @@ name = "fansipan-execution-engine"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
+# Only the contract crates go to crates.io (docs/roadmap.md, Phase 2);
+# adapters take this one from the same core source as their contract.
+publish = false
 description = "Order state machine and pre-trade risk checks; routes orders to an ExecutionClient."
 
 [dependencies]

@@ -3,6 +3,9 @@ name = "fansipan-sandbox"
 version = "0.0.1"
 edition.workspace = true
 license.workspace = true
+# Only the contract crates go to crates.io (docs/roadmap.md, Phase 2);
+# adapters take this one from the same core source as their contract.
+publish = false
 description = "Simulated venue for Fansipan: market data and execution for demos, CI, and development. Not a real venue."
 
 [dependencies]
