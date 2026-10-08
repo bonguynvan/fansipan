@@ -1,0 +1,48 @@
+# cargo-deny: what CI accepts into the dependency tree (cargo deny check).
+# The whole graph is checked, every platform's crates included, since the
+# app ships for Windows, Linux, and macOS.
+
+[graph]
+all-features = true
+
+[advisories]
+# Any vulnerability fails the build. An unmaintained crate fails it too,
+# unless it is listed here with why it cannot be replaced yet.
+ignore = [
+  # Through Tauri's Linux stack (glib-macros 0.18, the GTK 3 bindings);
+  # Tauri decides when it moves off them, and no safe upgrade exists.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro-error, pulled in by Tauri's GTK 3 stack; no upgrade available" },
+]
+
+[licenses]
+# Licences that may be combined into an LGPL-3.0-or-later application:
+# permissive ones, MPL-2.0 (copyleft per file), and the project's own.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "LGPL-3.0-or-later",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Tauri brings several versions of some crates; that costs build time, not
+# correctness, so it is reported and allowed.
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace's own path dependencies carry no version requirement.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only: a git or unknown registry dependency must be argued for.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

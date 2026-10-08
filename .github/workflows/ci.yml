@@ -1,0 +1,109 @@
+# Every push: formatting, workspace membership, licences and advisories once,
+# then the front end and the Rust workspace on Linux and Windows. macOS joins
+# weekly and on demand, as its minutes cost ten times as much on a private
+# repository. What this runs is what CLAUDE.md asks before every commit.
+#
+# Actions are pinned to a commit, with the release in a comment, so a moved
+# tag cannot change what runs here.
+
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep these in step with the Dockerfile.
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.15.0"
+  FRONTEND: crates/ui-shell/frontend
+
+jobs:
+  rules:
+    name: Format, workspace, licences
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Every crate is a workspace member
+        run: python3 scripts/check-workspace.py
+      - name: Licences, advisories, sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features --locked
+
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Tauri's Linux prerequisites, as in the Dockerfile.
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev libxdo-dev pkg-config
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          cache: true
+          cache_dependency_path: ${{ env.FRONTEND }}/pnpm-lock.yaml
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Front-end dependencies
+        working-directory: ${{ env.FRONTEND }}
+        run: pnpm install --frozen-lockfile
+      # The front end's checks do not depend on the platform; run them once.
+      - name: Front-end types and markup
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.FRONTEND }}
+        run: pnpm run check --fail-on-warnings
+      - name: Front-end tests (UI rules included)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.FRONTEND }}
+        run: pnpm test
+      # The shell embeds the built front end, so it must exist before Rust builds.
+      - name: Front-end build
+        working-directory: ${{ env.FRONTEND }}
+        run: pnpm build
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Only main's cache is kept, so branches reuse it without filling the quota.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
