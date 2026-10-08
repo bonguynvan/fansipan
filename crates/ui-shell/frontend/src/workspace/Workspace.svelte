@@ -7,6 +7,7 @@
   import { getScreen } from "./registry.js";
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
+  import PageBar from "./PageBar.svelte";
   import { MAIN_WINDOW, persist, popOut, restore, retitlePanels, workspace } from "./workspace.svelte.js";
   import { i18n, t, tn } from "../i18n/i18n.svelte.js";
 
@@ -83,20 +84,24 @@
     </p>
   {/if}
 
+  {#if label === MAIN_WINDOW}
+    <PageBar />
+  {/if}
+
   <div class="workspace" bind:this={host}></div>
 </div>
 
 <style>
-  /* The dock always takes the flexible row, notice or not. */
+  /* The dock always takes the flexible row, whether the notice and the page bar show or not. */
   .root {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
   }
 
   .workspace {
-    grid-row: 2;
+    grid-row: 3;
     min-height: 0;
   }
 

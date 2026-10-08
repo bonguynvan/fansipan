@@ -1,22 +1,20 @@
 <script>
-  // "Add panel" and "Layout" menus, filled from the registries, so a screen
-  // or layout a plugin registers shows up here with no change to this file.
-  import { listLayouts, listScreens } from "./registry.js";
-  import { addScreen, applyLayout } from "./workspace.svelte.js";
+  // "Add panel", filled from the screen registry, so a screen a plugin
+  // registers shows up here with no change to this file. Registered layouts
+  // open as new pages from the page bar (PageBar.svelte).
+  import { listScreens } from "./registry.js";
+  import { addScreen } from "./workspace.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let open = $state(null);
-  let pendingLayout = $state(null);
   let nav;
 
   function toggle(menu) {
     open = open === menu ? null : menu;
-    pendingLayout = null;
   }
 
   function close() {
     open = null;
-    pendingLayout = null;
   }
 
   // Pointer-down, not click: it fires before any menu item's click handler
@@ -55,34 +53,6 @@
     {/if}
   </div>
 
-  <div class="menu">
-    <button aria-expanded={open === "layout"} onclick={() => toggle("layout")}>{t("workspace.layout")} ▾</button>
-    {#if open === "layout"}
-      <ul role="menu">
-        {#each listLayouts() as layout (layout.id)}
-          <li role="none">
-            {#if pendingLayout === layout.id}
-              <div class="confirm">
-                <span>{t("workspace.replaceConfirm")}</span>
-                <button
-                  class="danger"
-                  onclick={() => {
-                    applyLayout(layout.id);
-                    close();
-                  }}>{t("workspace.replace")}</button
-                >
-                <button onclick={() => (pendingLayout = null)}>{t("workspace.keep")}</button>
-              </div>
-            {:else}
-              <button role="menuitem" onclick={() => (pendingLayout = layout.id)}>
-                <span class="title">{t(layout.title)}</span>
-              </button>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
 </nav>
 
 <style>
@@ -152,27 +122,5 @@
 
   .desc {
     font-size: 11px;
-  }
-
-  .confirm {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-
-  .confirm button {
-    padding: 3px 10px;
-    font-size: 11px;
-    background: transparent;
-    border: 1px solid var(--rule);
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .confirm .danger {
-    color: var(--down);
-    border-color: var(--down);
   }
 </style>

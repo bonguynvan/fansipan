@@ -1,7 +1,12 @@
-// One window's workspace: which panels it shows, where, and whether each
-// follows the shared symbol. The layout is dockview's own JSON, saved per window in the
-// shell's settings store; the shell reopens extra windows at start and each
-// window restores itself from its key.
+// One native window's workspace: its desktops and pages (pages.js), the
+// page dockview shows now, and whether each panel follows the shared
+// symbol (ADR 0013). The whole workspace is saved per window in the
+// shell's settings store; the shell reopens extra windows at start and
+// each window restores itself from its key.
+//
+// dockview holds only the active page. Before the page changes, its
+// arrangement is read back into the workspace (`capture`), so a page keeps
+// its panels while another is on screen.
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -12,20 +17,27 @@ import { isLinked, linkPatch, migrateLinkParams } from "../lib/links.svelte.js";
 import { marketInfo } from "../lib/market.svelte.js";
 import { marketPreset } from "../lib/markets.js";
 import { newWindowLabel } from "./labels.js";
+import * as pages from "./pages.js";
 import { t } from "../i18n/i18n.svelte.js";
 
 export const MAIN_WINDOW = "main";
-/** Bump when the saved shape changes; older saves then fall back to a preset. */
-export const LAYOUT_VERSION = 1;
 const SAVE_DELAY_MS = 400;
+
+/** Default names in the trader's language. */
+const names = {
+  desktop: (n) => t("workspace.desktopName", { n }),
+  page: (n) => t("workspace.pageName", { n }),
+};
 
 class WorkspaceState {
   api = $state.raw(null);
   label = $state(MAIN_WINDOW);
-  /** `{ id, vars }` of a message for the notice bar, or null. */
+  /** This window's desktops and pages (pages.js); null until restored. */
+  pages = $state.raw(null);
+  /** `{ id, vars, count }` of a message for the notice bar, or null. */
   notice = $state(null);
   /**
-   * True while a whole layout is being replaced or restored. Panels come and
+   * True while a whole page is being replaced or restored. Panels come and
    * go in bulk then, so "the last panel left" means nothing: an extra window
    * must not close itself mid-rebuild.
    */
@@ -52,17 +64,21 @@ function newPanelId(screenId) {
   return `${screenId}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-/** What a layout saves: dockview's JSON, versioned. */
-export function serialize(api) {
-  return { version: LAYOUT_VERSION, dockview: api.toJSON() };
+/** Reads the page on screen back into the workspace. */
+function capture() {
+  if (workspace.api && workspace.pages) {
+    workspace.pages = pages.withPageLayout(workspace.pages, workspace.api.toJSON());
+  }
 }
 
-/** Saves this window's layout soon; safe to call on every change. */
+/** Saves this window's workspace soon; safe to call on every change. */
 export function persist() {
-  if (workspace.api) saver?.(serialize(workspace.api));
+  if (!saver || !workspace.api || !workspace.pages || workspace.rebuilding) return;
+  capture();
+  saver(workspace.pages);
 }
 
-/** Writes a pending layout save now; see the shell's quit sequence. */
+/** Writes a pending save now; see the shell's quit sequence. */
 export function flushLayout() {
   return saver?.flush() ?? Promise.resolve();
 }
@@ -81,11 +97,11 @@ function notify(id, vars) {
 }
 
 /**
- * Adds a panel showing a registered screen. An unregistered id still gets a
- * panel, which explains what is missing instead of failing the whole layout.
- * `options.title` (a message id or plain text) overrides the screen's title
- * and is kept in the panel's `titleKey` parameter, so the tab can be
- * re-labelled in another language.
+ * Adds a panel showing a registered screen to the page on screen. An
+ * unregistered id still gets a panel, which explains what is missing
+ * instead of failing the whole page. `options.title` (a message id or plain
+ * text) overrides the screen's title and is kept in the panel's `titleKey`
+ * parameter, so the tab can be re-labelled in another language.
  */
 export function addScreen(screenId, options = {}) {
   const api = workspace.api;
@@ -104,37 +120,159 @@ export function addScreen(screenId, options = {}) {
 }
 
 /**
- * Replaces this window's panels with a registered layout. Size hints
+ * Arranges a registered layout on the (empty) page on screen. Size hints
  * (`initialWidth`, `initialHeight`) are applied once every panel is in:
  * dockview splits evenly while a layout is still being built.
  */
-export function applyLayout(layoutId) {
+function buildLayout(layout) {
+  const sized = [];
+  layout.build((screenId, options = {}) => {
+    const { initialWidth, initialHeight, ...rest } = options;
+    const panel = addScreen(screenId, rest);
+    const size = { ...(initialWidth && { width: initialWidth }), ...(initialHeight && { height: initialHeight }) };
+    if (panel && Object.keys(size).length) sized.push([panel, size]);
+    return panel;
+  });
+  for (const [panel, size] of sized) panel.group.api.setSize(size);
+}
+
+/** Saved dockview JSON with every panel's parameters brought up to ADR 0013. */
+function migratedDockview(dockview) {
+  const panels = Object.fromEntries(
+    Object.entries(dockview?.panels ?? {}).map(([id, panel]) => [
+      id,
+      panel?.params ? { ...panel, params: migrateLinkParams(panel.params) } : panel,
+    ]),
+  );
+  return { ...dockview, panels };
+}
+
+/**
+ * Puts the active page on screen: its saved arrangement, then any panels
+ * moved to it since it was last shown, then `layoutId`'s panels for a new
+ * page from a template.
+ */
+function showActivePage(layoutId = null) {
   const api = workspace.api;
-  const layout = getLayout(layoutId) ?? getLayout(DEFAULT_LAYOUT);
-  if (!api || !layout) return;
+  if (!api || !workspace.pages) return;
   rebuild(() => {
     api.clear();
-    const sized = [];
-    layout.build((screenId, options = {}) => {
-      const { initialWidth, initialHeight, ...rest } = options;
-      const panel = addScreen(screenId, rest);
-      const size = { ...(initialWidth && { width: initialWidth }), ...(initialHeight && { height: initialHeight }) };
-      if (panel && Object.keys(size).length) sized.push([panel, size]);
-      return panel;
-    });
-    for (const [panel, size] of sized) panel.group.api.setSize(size);
+    const page = pages.activePage(workspace.pages);
+    if (page.dockview) {
+      try {
+        api.fromJSON(migratedDockview(page.dockview));
+      } catch (err) {
+        api.clear();
+        notify("workspace.unrestorable", { error: String(err) });
+      }
+    }
+    const [rest, incoming] = pages.takeIncoming(workspace.pages);
+    workspace.pages = rest;
+    for (const panel of incoming) {
+      addScreen(panel.component, { title: panel.title, params: migrateLinkParams(panel.params) });
+    }
+    const layout = layoutId ? getLayout(layoutId) : null;
+    if (layout) buildLayout(layout);
   });
+  retitlePanels();
   persist();
 }
+
+/** Applies `change` to the workspace, then shows the active page if it is another one. */
+function change(apply) {
+  if (!workspace.pages) return;
+  capture();
+  const before = pages.activePage(workspace.pages).id;
+  workspace.pages = apply(workspace.pages);
+  if (pages.activePage(workspace.pages).id !== before) showActivePage();
+  else persist();
+}
+
+// Pages ----------------------------------------------------------------------
+
+export function goToPage(id) {
+  change((ws) => pages.switchPage(ws, id));
+}
+
+/** A new page: blank, or built from a registered layout (a template). */
+export function newPage(layoutId = null) {
+  if (!workspace.pages) return;
+  capture();
+  const layout = layoutId ? getLayout(layoutId) : null;
+  const name = layout ? t(layout.title) : names.page(pages.activeDesktop(workspace.pages).pages.length + 1);
+  workspace.pages = pages.addPage(workspace.pages, name);
+  showActivePage(layout?.id ?? null);
+}
+
+/** A new page holding a copy of the page on screen. */
+export function copyPage() {
+  if (!workspace.pages) return;
+  capture();
+  const page = pages.activePage(workspace.pages);
+  workspace.pages = pages.addPage(workspace.pages, t("workspace.copyOf", { name: page.name }), page.dockview);
+  showActivePage();
+}
+
+/** Closes a tab; the page stays in the saved list. */
+export function closePageTab(id) {
+  change((ws) => pages.closePage(ws, id, names));
+}
+
+export function reopenPage(id) {
+  change((ws) => pages.reopenPage(ws, id));
+}
+
+export function renamePage(id, name) {
+  change((ws) => pages.renamePage(ws, id, name));
+}
+
+/** Deletes a saved page for good. */
+export function deletePage(id) {
+  change((ws) => pages.deletePage(ws, id, names));
+}
+
+/** Moves a panel off the page on screen to another page of this desktop. */
+export function movePanelToPage(panel, pageId) {
+  if (!workspace.pages || !workspace.api) return;
+  capture();
+  const moved = {
+    component: panel.view.contentComponent,
+    params: panel.params ?? {},
+    title: panel.params?.titleKey ?? null,
+  };
+  workspace.pages = pages.movePanelToPage(workspace.pages, pageId, moved);
+  workspace.api.removePanel(panel);
+  persist();
+}
+
+// Desktops ---------------------------------------------------------------------
+
+export function newDesktop() {
+  change((ws) => pages.addDesktop(ws, names));
+}
+
+export function goToDesktop(id) {
+  change((ws) => pages.switchDesktop(ws, id));
+}
+
+export function renameDesktop(id, name) {
+  change((ws) => pages.renameDesktop(ws, id, name));
+}
+
+export function removeDesktop(id) {
+  change((ws) => pages.removeDesktop(ws, id));
+}
+
+// Restoring --------------------------------------------------------------------
 
 /** The layout a fresh main window opens with: the market preset's, else the default. */
 async function defaultLayout() {
   const info = await marketInfo();
-  return marketPreset(info?.id).layout ?? DEFAULT_LAYOUT;
+  return getLayout(marketPreset(info?.id).layout ?? DEFAULT_LAYOUT) ?? getLayout(DEFAULT_LAYOUT);
 }
 
 /**
- * Labels every tab in the current language. A saved layout holds tab text
+ * Labels every tab in the current language. A saved page holds tab text
  * in whatever language it was saved in; the source of each title is the
  * panel's `titleKey` or its screen's title.
  */
@@ -145,18 +283,28 @@ export function retitlePanels() {
   }
 }
 
+/** A fresh main window: one page built from the default layout. */
+async function startFresh(api) {
+  const layout = await defaultLayout();
+  // The window may have torn this dockview down while waiting.
+  if (workspace.api !== api) return;
+  workspace.pages = pages.seedWorkspace(names, { pageName: layout ? t(layout.title) : null });
+  showActivePage(layout?.id ?? null);
+}
+
 /**
- * Restores this window from its saved layout: dockview JSON from an earlier
- * session, or a seed (a panel list) written by the window that popped a
- * panel out. With nothing usable, the main window shows the default layout;
- * an extra window shows a watchlist if its layout was damaged, and closes
- * if it never had one (it would otherwise reopen, empty, forever).
+ * Restores this window from its save: a workspace of pages, a single
+ * layout from before pages (migrated into the first page), or a pop-out's
+ * panel. With nothing usable, the main window starts fresh; an extra
+ * window shows a watchlist if its save was damaged, and closes if it never
+ * had one (it would otherwise reopen, empty, forever).
  */
 export async function restore(api, label) {
   workspace.api = api;
   workspace.label = label;
-  // Saving stays off until the saved layout is in: a resize or an empty
-  // first layout must never overwrite it while it is still loading.
+  workspace.pages = null;
+  // Saving stays off until the save is in: a resize or an empty first page
+  // must never overwrite it while it is still loading.
   saver = null;
 
   let saved;
@@ -166,62 +314,36 @@ export async function restore(api, label) {
     // Unreadable is not the same as absent: show the default, but leave
     // whatever is stored alone rather than overwrite it.
     notify("workspace.unreadable", { error: String(err) });
-    if (label === MAIN_WINDOW) {
-      const layout = await defaultLayout();
-      if (workspace.api === api) applyLayout(layout);
-    }
+    if (label === MAIN_WINDOW) await startFresh(api);
     return;
   }
+  if (workspace.api !== api) return;
 
-  let loaded = false;
-  rebuild(() => (loaded = loadSaved(api, saved)));
-  if (!loaded) {
-    if (label === MAIN_WINDOW) {
-      const layout = await defaultLayout();
-      // The window may have torn this dockview down while waiting.
-      if (workspace.api !== api) return;
-      applyLayout(layout);
-    } else if (saved) {
-      addScreen("watchlist");
-    } else {
-      getCurrentWindow().close();
-      return;
-    }
-  }
+  const restored = pages.reviveWorkspace(saved, names) ?? pages.fromSingleLayout(saved, names, names.page(1));
   saver = debouncedSetter(layoutKey(label), SAVE_DELAY_MS, (message) => {
     notify("workspace.notSaved", { error: message });
   });
-  retitlePanels();
-  persist();
-}
-
-/** Loads a saved layout or a pop-out seed; false if there is nothing usable. */
-function loadSaved(api, saved) {
-  if (saved?.version !== LAYOUT_VERSION) return false;
-  try {
-    if (saved.dockview) {
-      api.fromJSON(migratedDockview(saved.dockview));
-      return true;
-    }
-    if (Array.isArray(saved.seed)) {
-      for (const panel of saved.seed) {
-        addScreen(panel.component, { title: panel.title, params: migrateLinkParams(panel.params) });
-      }
-      return true;
-    }
-  } catch (err) {
-    api.clear();
-    notify("workspace.unrestorable", { error: String(err) });
+  if (restored) {
+    workspace.pages = restored;
+    showActivePage();
+  } else if (label === MAIN_WINDOW) {
+    await startFresh(api);
+  } else if (saved) {
+    workspace.pages = pages.seedWorkspace(names, { panels: [{ component: "watchlist", params: {}, title: null }] });
+    showActivePage();
+  } else {
+    getCurrentWindow().close();
   }
-  return false;
 }
 
 /** Moves a panel into a new native window of its own. */
 export async function popOut(panel) {
   const label = newWindowLabel();
-  const seed = [{ component: panel.view.contentComponent, params: panel.params ?? {} }];
+  const seed = pages.seedWorkspace(names, {
+    panels: [{ component: panel.view.contentComponent, params: panel.params ?? {}, title: panel.params?.titleKey ?? null }],
+  });
   try {
-    await setSetting(layoutKey(label), { version: LAYOUT_VERSION, seed });
+    await setSetting(layoutKey(label), seed);
     await invoke("open_window", { label });
     workspace.api?.removePanel(panel);
   } catch (err) {
@@ -241,17 +363,6 @@ export function toggleLink(panel) {
 export function setPanelSymbol(panel, symbol) {
   panel.api.updateParameters({ symbol });
   persist();
-}
-
-/** Saved dockview JSON with every panel's parameters brought up to ADR 0013. */
-function migratedDockview(dockview) {
-  const panels = Object.fromEntries(
-    Object.entries(dockview?.panels ?? {}).map(([id, panel]) => [
-      id,
-      panel?.params ? { ...panel, params: migrateLinkParams(panel.params) } : panel,
-    ]),
-  );
-  return { ...dockview, panels };
 }
 
 export function screenOf(panel) {
