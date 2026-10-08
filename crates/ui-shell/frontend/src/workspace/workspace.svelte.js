@@ -1,5 +1,5 @@
-// One window's workspace: which panels it shows, where, and how they are
-// linked. The layout is dockview's own JSON, saved per window in the
+// One window's workspace: which panels it shows, where, and whether each
+// follows the shared symbol. The layout is dockview's own JSON, saved per window in the
 // shell's settings store; the shell reopens extra windows at start and each
 // window restores itself from its key.
 
@@ -8,7 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLayout, getScreen } from "./registry.js";
 import { DEFAULT_LAYOUT } from "./builtins.js";
 import { debouncedSetter, getSetting, removeSetting, setSetting } from "../lib/settings.js";
-import { isLinked, links, nextGroup } from "../lib/links.svelte.js";
+import { isLinked, linkPatch, migrateLinkParams } from "../lib/links.svelte.js";
 import { marketInfo } from "../lib/market.svelte.js";
 import { marketPreset } from "../lib/markets.js";
 import { newWindowLabel } from "./labels.js";
@@ -200,11 +200,13 @@ function loadSaved(api, saved) {
   if (saved?.version !== LAYOUT_VERSION) return false;
   try {
     if (saved.dockview) {
-      api.fromJSON(saved.dockview);
+      api.fromJSON(migratedDockview(saved.dockview));
       return true;
     }
     if (Array.isArray(saved.seed)) {
-      for (const panel of saved.seed) addScreen(panel.component, { title: panel.title, params: panel.params });
+      for (const panel of saved.seed) {
+        addScreen(panel.component, { title: panel.title, params: migrateLinkParams(panel.params) });
+      }
       return true;
     }
   } catch (err) {
@@ -229,19 +231,27 @@ export async function popOut(panel) {
   }
 }
 
-/**
- * Moves a panel to the next link group (A → B → C → none). Unlinking keeps
- * the symbol it was showing, so the panel does not jump.
- */
-export function cycleLink(panel) {
-  const current = panel.params?.link;
-  const next = nextGroup(current);
-  const update = { link: next };
-  if (!isLinked(next) && isLinked(current) && links.symbols[current]) {
-    update.symbol = links.symbols[current];
-  }
-  panel.api.updateParameters(update);
+/** Links a panel to the shared symbol, or unlinks it keeping what it shows. */
+export function toggleLink(panel) {
+  panel.api.updateParameters(linkPatch(panel.params, !isLinked(panel.params)));
   persist();
+}
+
+/** Sets an unlinked panel's own symbol. */
+export function setPanelSymbol(panel, symbol) {
+  panel.api.updateParameters({ symbol });
+  persist();
+}
+
+/** Saved dockview JSON with every panel's parameters brought up to ADR 0013. */
+function migratedDockview(dockview) {
+  const panels = Object.fromEntries(
+    Object.entries(dockview?.panels ?? {}).map(([id, panel]) => [
+      id,
+      panel?.params ? { ...panel, params: migrateLinkParams(panel.params) } : panel,
+    ]),
+  );
+  return { ...dockview, panels };
 }
 
 export function screenOf(panel) {

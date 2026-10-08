@@ -29,8 +29,9 @@ function checkId(kind, id, registry) {
  *                                   or plain text.
  * @param {import("svelte").Component} screen.component
  * @param {object} [screen.defaultParams]  Parameters a new panel starts with.
- * @param {boolean} [screen.linkable]      Shows a link-group button; the screen
- *                                         follows `params.link` (see links.svelte.js).
+ * @param {boolean} [screen.linkable]      Shows a link toggle; the screen follows
+ *                                         the shared symbol while `params.linked`
+ *                                         (see links.svelte.js).
  * @param {string} [screen.description]    One line for the "Add panel" menu.
  */
 export function registerScreen(screen) {

@@ -2,10 +2,10 @@
   import { Grid, tradecanvasTheme } from "bo-grid";
   import { mark, money, price, quantity } from "./format.js";
   import { market } from "./market.svelte.js";
-  import { selectSymbol } from "./links.svelte.js";
+  import { chooseSymbol } from "./links.svelte.js";
   import { t, tn } from "../i18n/i18n.svelte.js";
 
-  let { params } = $props();
+  let { params, panel } = $props();
 
   const account = $derived(market.account);
   const quotes = $derived(market.quotes);
@@ -51,7 +51,7 @@
       theme={tradecanvasTheme}
       fitColumns
       cellSelection={false}
-      onRowClick={(row) => selectSymbol(params.link, row.symbol)}
+      onRowClick={(row) => chooseSymbol(params, panel, row.symbol)}
       emptyMessage={t("account.empty")}
     />
   </div>

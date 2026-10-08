@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { market } from "./market.svelte.js";
-  import { isLinked, symbolOf } from "./links.svelte.js";
+  import { symbolOf } from "./links.svelte.js";
   import { picks, pickToApply } from "./picks.svelte.js";
   import { registerTicket, useTicket } from "./tickets.svelte.js";
   import { keyOf } from "./hotkeys.svelte.js";
@@ -55,12 +55,12 @@
   let message = $state(null);
   let busy = $state(false);
 
-  // A price picked on a screen in this ticket's link group (a ladder row)
-  // fills the limit, and the side when the pick names one. A pick made
+  // A price picked on a linked screen (a ladder row) fills a linked
+  // ticket's limit, and the side when the pick names one. A pick made
   // before this ticket opened is not news to it.
-  let appliedPick = untrack(() => (isLinked(params.link) ? picks.latest[params.link]?.id : null) ?? null);
+  let appliedPick = untrack(() => picks.latest?.id ?? null);
   $effect(() => {
-    const pick = pickToApply(picks.latest, params.link, selected, appliedPick);
+    const pick = pickToApply(picks.latest, params, selected, appliedPick);
     if (!pick) return;
     appliedPick = pick.id;
     untrack(() => applyPick(pick));

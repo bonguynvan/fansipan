@@ -6,7 +6,7 @@
   import { Grid, tradecanvasTheme } from "bo-grid";
   import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
-  import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
+  import { chooseSymbol, symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
   import { boardRows, exchangesOf } from "./board.js";
   import { tickDecimals, tickTable } from "./ticks.js";
@@ -42,11 +42,8 @@
       : exchanges.map((code) => market.sessions[code]).filter(Boolean),
   );
 
-  /** Linked: the whole group follows. Unlinked: only this panel remembers it. */
-  function choose(symbol) {
-    if (isLinked(params.link)) selectSymbol(params.link, symbol);
-    else panel?.updateParameters({ symbol });
-  }
+  /** Linked: every linked panel follows. Not linked: only this panel remembers it. */
+  const choose = (symbol) => chooseSymbol(params, panel, symbol);
 
   const blank = (value) => value === null || value === undefined;
   const fixed = (value, places) =>

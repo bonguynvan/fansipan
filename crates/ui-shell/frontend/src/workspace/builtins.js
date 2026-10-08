@@ -28,7 +28,7 @@ export function registerBuiltins() {
     title: "screen.watchlist.title",
     component: Watchlist,
     linkable: true,
-    defaultParams: { link: "a", list: "all" },
+    defaultParams: { linked: true, list: "all" },
     description: "screen.watchlist.description",
   });
   registerScreen({
@@ -36,7 +36,7 @@ export function registerBuiltins() {
     title: "screen.chart.title",
     component: Chart,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { linked: true },
     description: "screen.chart.description",
   });
   registerScreen({
@@ -44,7 +44,7 @@ export function registerBuiltins() {
     title: "screen.order-ticket.title",
     component: OrderTicket,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { linked: true },
     description: "screen.order-ticket.description",
   });
   registerScreen({
@@ -58,7 +58,7 @@ export function registerBuiltins() {
     title: "screen.account.title",
     component: Portfolio,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { linked: true },
     description: "screen.account.description",
   });
 
@@ -67,7 +67,7 @@ export function registerBuiltins() {
     title: "screen.price-board.title",
     component: PriceBoard,
     linkable: true,
-    defaultParams: { link: "a", exchange: "" },
+    defaultParams: { linked: true, exchange: "" },
     description: "screen.price-board.description",
   });
 
@@ -76,7 +76,7 @@ export function registerBuiltins() {
     title: "screen.time-and-sales.title",
     component: TimeAndSales,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { linked: true },
     description: "screen.time-and-sales.description",
   });
 
@@ -85,7 +85,7 @@ export function registerBuiltins() {
     title: "screen.depth-ladder.title",
     component: DepthLadder,
     linkable: true,
-    defaultParams: { link: "a" },
+    defaultParams: { linked: true },
     description: "screen.depth-ladder.description",
   });
 
@@ -109,17 +109,18 @@ export function registerBuiltins() {
   registerLayout({
     id: "two-charts",
     title: "layout.two-charts.title",
+    // One chart follows the shared symbol; the other keeps its own, picked
+    // from its tab strip.
     build(add) {
-      const watchA = add("watchlist", { initialWidth: 380, title: "layout.two-charts.watchlist-a" });
-      const chartA = add("chart", { position: { referencePanel: watchA, direction: "right" }, title: "layout.two-charts.chart-a" });
-      add("order-ticket", { position: { referencePanel: chartA, direction: "right" }, initialWidth: 320 });
-      const watchB = add("watchlist", {
-        params: { link: "b" },
-        title: "layout.two-charts.watchlist-b",
-        position: { referencePanel: watchA, direction: "below" },
+      const watchlist = add("watchlist", { initialWidth: 380 });
+      const linked = add("chart", { position: { referencePanel: watchlist, direction: "right" }, title: "layout.two-charts.linked" });
+      add("order-ticket", { position: { referencePanel: linked, direction: "right" }, initialWidth: 320 });
+      add("chart", {
+        params: { linked: false },
+        title: "layout.two-charts.own",
+        position: { referencePanel: linked, direction: "below" },
       });
-      add("chart", { params: { link: "b" }, title: "layout.two-charts.chart-b", position: { referencePanel: chartA, direction: "below" } });
-      add("orders", { position: { referencePanel: watchB, direction: "within" } });
+      add("orders", { position: { referencePanel: watchlist, direction: "below" } });
     },
   });
 

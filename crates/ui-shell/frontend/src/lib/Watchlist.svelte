@@ -5,7 +5,7 @@
   // panel shows is its own `list` parameter, saved with the layout.
   import { Grid, tradecanvasTheme } from "bo-grid";
   import { market } from "./market.svelte.js";
-  import { isLinked, selectSymbol, symbolOf } from "./links.svelte.js";
+  import { chooseSymbol, symbolOf } from "./links.svelte.js";
   import { setLists, startWatchlists, watchlists } from "./watchlists.svelte.js";
   import {
     ALL,
@@ -47,11 +47,8 @@
   );
   const suggestions = $derived(list ? [...listed].filter(([symbol]) => !list.symbols.includes(symbol)) : []);
 
-  /** Linked: the whole group follows. Unlinked: only this panel remembers it. */
-  function choose(symbol) {
-    if (isLinked(params.link)) selectSymbol(params.link, symbol);
-    else panel?.updateParameters({ symbol });
-  }
+  /** Linked: every linked panel follows. Not linked: only this panel remembers it. */
+  const choose = (symbol) => chooseSymbol(params, panel, symbol);
 
   function showList(next) {
     disarmDelete();

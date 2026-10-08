@@ -1,7 +1,7 @@
 <script>
   // A depth ladder for the linked symbol: every tradable price, highest
   // first, with the book's size where it has one, kept centred on the
-  // spread. A click fills the order ticket in the same link group: the
+  // spread. A click fills the linked order tickets: the
   // price, and the side too when the click is on the bid or ask column.
   // Scrolling (the wheel, or the page buttons) holds the ladder where the
   // trader put it until Recenter.
@@ -33,7 +33,7 @@
   const scale = $derived(preset.priceScale);
   const decimals = $derived(preset.priceDecimals ?? tickDecimals(table, scale));
   const rows = $derived(selected ? ladderRows(table, market.boards[selected], scale) : []);
-  const linked = $derived(isLinked(params.link));
+  const linked = $derived(isLinked(params));
 
   let gridHeight = $state(0);
   const visibleCount = $derived(Math.max(MIN_VISIBLE, Math.floor((gridHeight - HEADER_HEIGHT) / ROW_HEIGHT)));
@@ -88,7 +88,7 @@
   function pick(row, side) {
     if (!selected) return;
     pickError = null;
-    pickPrice(params.link, { symbol: selected, price: row.key, side }).catch((err) => (pickError = String(err)));
+    pickPrice(params, { symbol: selected, price: row.key, side }).catch((err) => (pickError = String(err)));
   }
 
   const fixed = (value, places) =>

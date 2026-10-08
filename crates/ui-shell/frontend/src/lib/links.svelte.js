@@ -1,83 +1,98 @@
-// Link groups: panels in the same group follow the same symbol. Pick a row
-// in a watchlist linked to group A and every chart and ticket on A follows,
-// in every window. A panel set to "none" keeps the symbol it was showing.
+// One shared symbol that linked panels follow (ADR 0013). A panel is linked
+// (`params.linked`) or not. Linked, it shows the shared symbol and sets it
+// when the trader picks another. Not linked, it keeps its own
+// `params.symbol`.
 //
-// Selections travel between windows as a Tauri event and are saved, so a
-// restart comes back on the same symbols.
+// The symbol travels between windows as a Tauri event and is saved, so a
+// restart comes back on it. A window that opens asks the others for
+// theirs, since one may have moved on since the last save.
 
 import { emit, listen } from "@tauri-apps/api/event";
 import { debouncedSetter, getSetting } from "./settings.js";
 
-export const UNLINKED = "none";
-
-/** The groups, in the order a panel's link button cycles through them. */
-export const LINK_GROUPS = [
-  { id: "a", label: "A", color: "var(--link-a)" },
-  { id: "b", label: "B", color: "var(--link-b)" },
-  { id: "c", label: "C", color: "var(--link-c)" },
-];
-
-const EVENT = "link-select";
-const SETTING = "workspace.links";
+const EVENT = "link-symbol";
+const ASK = "link-symbol-ask";
+const SETTING = "workspace.symbol";
+/** Where link groups (before ADR 0013) kept their symbols; group A's carries over. */
+const OLD_SETTING = "workspace.links";
 const SAVE_DELAY_MS = 500;
+/** Ignores this window's own events, which Tauri delivers back late. */
+const SOURCE = crypto.randomUUID();
 
-class Links {
-  symbols = $state(Object.fromEntries(LINK_GROUPS.map((g) => [g.id, null])));
+class Link {
+  /** The shared symbol, or null before anything has been picked. */
+  symbol = $state(null);
 }
 
-export const links = new Links();
+export const link = new Link();
 
 const save = debouncedSetter(SETTING, SAVE_DELAY_MS);
 
-/** Writes a pending selection now; see the shell's quit sequence. */
+/** Writes a pending change now; see the shell's quit sequence. */
 export function flushLinks() {
   return save.flush();
 }
 
-export function isLinked(group) {
-  return LINK_GROUPS.some((g) => g.id === group);
-}
+export const isLinked = (params) => params?.linked === true;
 
-/** The group after `group` in the cycle A → B → C → none → A. */
-export function nextGroup(group) {
-  const index = LINK_GROUPS.findIndex((g) => g.id === group);
-  if (index === -1) return LINK_GROUPS[0].id;
-  return index === LINK_GROUPS.length - 1 ? UNLINKED : LINK_GROUPS[index + 1].id;
-}
-
-export function groupColor(group) {
-  return LINK_GROUPS.find((g) => g.id === group)?.color ?? "var(--text-dim)";
-}
-
-/**
- * The symbol a panel shows: its group's symbol when linked, its own
- * `params.symbol` when not, else `fallback` (the first listed symbol).
- */
+/** The symbol a panel shows: the shared one when linked, its own when not, else `fallback`. */
 export function symbolOf(params, fallback) {
-  const own = isLinked(params?.link) ? links.symbols[params.link] : params?.symbol;
+  const own = isLinked(params) ? link.symbol : params?.symbol;
   return own ?? fallback ?? null;
 }
 
-/** Sets a group's symbol here and in every other window. */
-export function selectSymbol(group, symbol) {
-  if (!isLinked(group) || links.symbols[group] === symbol) return;
-  links.symbols[group] = symbol;
-  save($state.snapshot(links.symbols));
-  emit(EVENT, { group, symbol });
+/** Sets the shared symbol here, in every other window, and in the store. */
+export function setSharedSymbol(symbol) {
+  if (!symbol || link.symbol === symbol) return;
+  link.symbol = symbol;
+  save(symbol);
+  emit(EVENT, { source: SOURCE, symbol });
+}
+
+/** A panel's pick: the shared symbol when it is linked, its own parameter when not. */
+export function chooseSymbol(params, panel, symbol) {
+  if (isLinked(params)) setSharedSymbol(symbol);
+  else panel?.updateParameters({ symbol });
+}
+
+/**
+ * The parameters that link or unlink a panel. Unlinking keeps the symbol
+ * the panel was showing, so it does not jump.
+ */
+export function linkPatch(params, linked) {
+  if (linked) return { linked: true };
+  const shown = symbolOf(params, null);
+  return shown ? { linked: false, symbol: shown } : { linked: false };
+}
+
+/**
+ * A panel's parameters from before ADR 0013, when they named a link group
+ * (`link: "a" | "b" | "c" | "none"`): in a group means linked. Parameters
+ * without `link` come back as they are.
+ */
+export function migrateLinkParams(params) {
+  if (!params || !("link" in params)) return params;
+  const { link: group, ...rest } = params;
+  return { ...rest, linked: typeof group === "string" && group !== "none" };
 }
 
 let started = null;
 
-/** Restores saved selections and follows other windows; once per window. */
+/** Restores the saved symbol, then follows and answers other windows; once per window. */
 export function startLinks() {
   started ??= (async () => {
     await listen(EVENT, ({ payload }) => {
-      if (isLinked(payload?.group)) links.symbols[payload.group] = payload.symbol ?? null;
+      if (payload?.source === SOURCE || typeof payload?.symbol !== "string") return;
+      link.symbol = payload.symbol;
+      save(payload.symbol);
     });
-    const saved = await getSetting(SETTING);
-    for (const group of LINK_GROUPS) {
-      if (typeof saved?.[group.id] === "string") links.symbols[group.id] = saved[group.id];
-    }
+    await listen(ASK, ({ payload }) => {
+      if (payload?.source !== SOURCE && link.symbol) emit(EVENT, { source: SOURCE, symbol: link.symbol });
+    });
+    const saved = (await getSetting(SETTING)) ?? (await getSetting(OLD_SETTING))?.a;
+    // An answer from another window may already be in; it is newer.
+    if (link.symbol === null && typeof saved === "string") link.symbol = saved;
+    await emit(ASK, { source: SOURCE });
   })();
   return started;
 }
