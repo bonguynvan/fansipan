@@ -40,8 +40,10 @@
   --text-2xl: 1.125rem;
 }
 
-/* Light: the same system on white, with the accent, up, down, and tones
-   darkened until they read at 4.5:1 as text. */
+/* Light: TradeCanvas's and bo-grid's light palettes, which darken the
+   accent, up, down, and tones until they read at 4.5:1 as text. `--ink`,
+   the chrome behind the panels, is the app's own: a shade below the
+   panels' headers, as in dark. */
 :root[data-theme="light"] {
   color-scheme: light;
   --scheme: light;

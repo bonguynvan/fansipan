@@ -18,8 +18,9 @@ const HAIRLINE_MAX_PX = 3;
 const SHADOW = /^(box-shadow|text-shadow|--shadow-[a-z-]+)$/;
 const PIXEL = /(?<![\w.-])(\d*\.?\d+)px\b/g;
 const FONT_TOKEN = /var\(--text-(2xs|xs|sm|md|lg|xl|2xl)\)/;
-/** A colour written out, rather than taken from a token. */
-const COLOUR = /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
+/** A colour written out, rather than taken from a token: a hex value, a colour function, or a basic colour keyword. */
+const COLOUR =
+  /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(|(?<![\w-])(aqua|black|blue|fuchsia|gray|grey|green|lime|maroon|navy|olive|orange|purple|red|silver|teal|white|yellow)(?![\w-])/i;
 /** The one file that defines the palette. */
 const PALETTE_FILE = "app.css";
 
@@ -128,7 +129,9 @@ describe("the checker", () => {
       "border-color",
       "outline-color",
     ]);
+    expect(colours("x.svelte", "a { color: white; border: 1px solid red; }")).toEqual(["color", "border"]);
     expect(colours("x.svelte", "a { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }")).toEqual([]);
+    expect(colours("x.svelte", "a { grid-template-areas: \"redline whitespace\"; animation-name: fade-white-out; }")).toEqual([]);
   });
 
   it("reads every style block, whatever its attributes", () => {

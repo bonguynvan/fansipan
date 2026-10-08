@@ -25,10 +25,11 @@ export const theme = new Theme();
 export const resolveTheme = (choice, systemIsLight) =>
   choice === "system" ? (systemIsLight ? "light" : "dark") : choice;
 
-const systemLight = () => globalThis.matchMedia?.("(prefers-color-scheme: light)") ?? null;
+/** The system's preference, as one query whose changes `startTheme` follows. */
+const systemLight = globalThis.matchMedia?.("(prefers-color-scheme: light)") ?? null;
 
 function show() {
-  theme.resolved = resolveTheme(theme.choice, systemLight()?.matches ?? false);
+  theme.resolved = resolveTheme(theme.choice, systemLight?.matches ?? false);
   document.documentElement.dataset.theme = theme.resolved;
 }
 
@@ -50,7 +51,7 @@ export const setTheme = (choice) => shared.choose(choice);
 
 /** Applies the saved theme, follows other windows and the system's own; once per window. */
 export function startTheme(options) {
-  // The same listener twice is one listener, so a second start adds nothing.
-  systemLight()?.addEventListener("change", show);
+  // The same listener on the same query is added once, so a second start adds nothing.
+  systemLight?.addEventListener("change", show);
   return shared.start(options);
 }
