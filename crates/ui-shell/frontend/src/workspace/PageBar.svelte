@@ -302,7 +302,8 @@
     outline: none;
   }
 
-  ul {
+  /* The drop-down menus only: the page tabs are a list too. */
+  [data-popup] {
     position: absolute;
     top: calc(100% + 0.125rem);
     left: 0;
@@ -316,15 +317,15 @@
     box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
   }
 
-  li > button {
+  [data-popup] li > button {
     width: 100%;
     padding: 0.4375rem 0.625rem;
     text-align: left;
     color: var(--text);
   }
 
-  li > button:hover,
-  li > button:focus-visible {
+  [data-popup] li > button:hover,
+  [data-popup] li > button:focus-visible {
     background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
