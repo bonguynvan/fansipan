@@ -29,7 +29,7 @@
   const PAGE_OVERLAP = 2;
   const TONES = ["ceiling", "floor", "ref", "up", "down"];
 
-  const selected = $derived(symbolOf(params, market.symbols[0]));
+  const selected = $derived(symbolOf(params, market.symbols[0], market.listed));
   const instrument = $derived(selected ? market.instruments[selected] : null);
   const table = $derived(tickTable(instrument));
   const preset = $derived(marketPreset(market.info?.id));

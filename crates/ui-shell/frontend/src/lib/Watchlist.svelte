@@ -40,7 +40,7 @@
   const list = $derived(watchlists.lists.find((l) => l.id === params.list) ?? null);
   const listId = $derived(list?.id ?? ALL);
   const symbols = $derived(symbolsOf(listId, watchlists.lists, market.symbols));
-  const selected = $derived(symbolOf(params, symbols[0] ?? market.symbols[0]));
+  const selected = $derived(symbolOf(params, symbols[0] ?? market.symbols[0], market.listed));
 
   /** Every symbol the venue lists, with its name: what a list can hold. */
   const listed = $derived(

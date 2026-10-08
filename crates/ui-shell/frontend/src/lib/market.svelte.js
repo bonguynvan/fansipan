@@ -39,6 +39,8 @@ class Market {
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
+  /** Every symbol the venue lists: quoted, or with its rules published and no quote yet. */
+  listed = $derived([...new Set([...Object.keys(this.quotes), ...Object.keys(this.instruments)])].sort());
   orderList = $derived(Object.values(this.orders).sort((a, b) => b.id - a.id));
 
   apply(batch) {

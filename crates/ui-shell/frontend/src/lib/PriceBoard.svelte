@@ -32,7 +32,7 @@
     { value: "", text: t("board.all") },
     ...exchanges.map((code) => ({ value: code, text: code })),
   ]);
-  const selected = $derived(symbolOf(params, null));
+  const selected = $derived(symbolOf(params, null, market.listed));
 
   const rows = $derived(
     boardRows(market.boards, { exchange, scale }).map((row) => ({

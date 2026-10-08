@@ -44,10 +44,15 @@ export function flushLinks() {
 
 export const isLinked = (params) => params?.linked === true;
 
-/** The symbol a panel shows: the shared one when linked, its own when not, else `fallback`. */
-export function symbolOf(params, fallback) {
+/**
+ * The symbol a panel shows: the shared one when linked, its own when not,
+ * else `fallback`. Once the market's symbols are in (`listed`), one it does
+ * not list is passed over too, as a symbol saved on another market is.
+ */
+export function symbolOf(params, fallback, listed = []) {
   const own = isLinked(params) ? link.symbol : params?.symbol;
-  return own ?? fallback ?? null;
+  const shown = listed.length && !listed.includes(own) ? null : own;
+  return shown ?? fallback ?? null;
 }
 
 /** Sets the shared symbol here, in every other window, and in the store. */

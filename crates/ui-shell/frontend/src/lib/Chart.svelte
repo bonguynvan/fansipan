@@ -10,7 +10,7 @@
 
   let { params } = $props();
 
-  const symbol = $derived(symbolOf(params, market.symbols[0]));
+  const symbol = $derived(symbolOf(params, market.symbols[0], market.listed));
 
   const adapter = new ShellAdapter((symbol) => market.instruments[symbol]);
   // Chart-side trading, alerts and screenshots stay off until they are wired

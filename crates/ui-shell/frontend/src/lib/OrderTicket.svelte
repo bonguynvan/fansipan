@@ -18,7 +18,7 @@
   let { params, panel } = $props();
   const id = $props.id();
 
-  const selected = $derived(symbolOf(params, market.symbols[0]));
+  const selected = $derived(symbolOf(params, market.symbols[0], market.listed));
   const quote = $derived(selected ? market.quotes[selected] : null);
   // The instrument's rules, so the inputs offer what the venue accepts.
   // Risk checks them again in exact decimals; these only help.

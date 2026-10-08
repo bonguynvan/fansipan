@@ -15,7 +15,7 @@
     toggleLink,
     workspace,
   } from "./workspace.svelte.js";
-  import { isLinked } from "../lib/links.svelte.js";
+  import { isLinked, symbolOf } from "../lib/links.svelte.js";
   import { market } from "../lib/market.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
@@ -59,8 +59,9 @@
 
   const linkable = $derived(screenOf(panel)?.linkable ?? false);
   const linked = $derived(isLinked(params));
-  // An unlinked panel's own symbol, shown even before it has picked one.
-  const ownSymbol = $derived(params.symbol ?? market.symbols[0] ?? "");
+  // An unlinked panel's own symbol, shown even before it has picked one, and
+  // passed over as the panel passes it over when the market does not list it.
+  const ownSymbol = $derived(symbolOf(params, market.symbols[0], market.listed) ?? "");
 </script>
 
 <div class="actions">

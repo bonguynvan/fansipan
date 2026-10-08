@@ -36,6 +36,28 @@ describe("symbolOf", () => {
     expect(symbolOf({ linked: true }, "TSLA")).toBe("TSLA");
     expect(symbolOf(undefined, "TSLA")).toBe("TSLA");
   });
+
+  it("passes over a symbol the market does not list, as one saved on another market", () => {
+    link.symbol = "NVDA";
+    const listed = ["FPT", "VNM"];
+
+    expect(symbolOf({ linked: true }, "FPT", listed)).toBe("FPT");
+    expect(symbolOf({ linked: false, symbol: "AAPL" }, "FPT", listed)).toBe("FPT");
+    expect(symbolOf({ linked: true }, null, listed)).toBeNull();
+  });
+
+  it("keeps a listed symbol, and any symbol while the market's list is not in yet", () => {
+    link.symbol = "VNM";
+
+    expect(symbolOf({ linked: true }, "FPT", ["FPT", "VNM"])).toBe("VNM");
+    expect(symbolOf({ linked: true }, "FPT", [])).toBe("VNM");
+    expect(symbolOf({ linked: false, symbol: "VNM" }, "FPT", ["FPT", "VNM"])).toBe("VNM");
+  });
+
+  it("falls back when nothing has been picked, whatever the market lists", () => {
+    expect(symbolOf({ linked: true }, "FPT", ["FPT", "VNM"])).toBe("FPT");
+    expect(symbolOf({ linked: false }, "FPT", ["FPT", "VNM"])).toBe("FPT");
+  });
 });
 
 describe("choosing a symbol", () => {

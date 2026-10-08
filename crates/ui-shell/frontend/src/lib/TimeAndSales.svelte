@@ -21,7 +21,7 @@
   const TONES = ["ceiling", "floor", "ref", "up", "down"];
   const SIDE_TONES = { buy: "ts-up", sell: "ts-down" };
 
-  const selected = $derived(symbolOf(params, market.symbols[0]));
+  const selected = $derived(symbolOf(params, market.symbols[0], market.listed));
   const preset = $derived(marketPreset(market.info?.id));
   const scale = $derived(preset.priceScale);
   const decimals = $derived(preset.priceDecimals ?? tickDecimals(tickTable(market.instruments[selected]), scale));
