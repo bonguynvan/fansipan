@@ -25,3 +25,6 @@ adapter-api = { package = "fansipan-adapter-api", version = "0.2.1", path = "cra
 data-engine = { package = "fansipan-data-engine", path = "crates/data-engine" }
 execution-engine = { package = "fansipan-execution-engine", path = "crates/execution-engine" }
 sandbox = { package = "fansipan-sandbox", path = "crates/adapters/sandbox" }
+# Property tests (dev-dependency only). Without default features: no
+# process forking or timeouts, which these pure, fast tests do not need.
+proptest = { version = "1.11", default-features = false, features = ["std"] }

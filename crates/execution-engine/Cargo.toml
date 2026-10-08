@@ -12,3 +12,6 @@ description = "Order state machine and pre-trade risk checks; routes orders to a
 model.workspace = true
 bus.workspace = true
 adapter-api.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
