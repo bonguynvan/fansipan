@@ -20,6 +20,11 @@
   "app.textSize": "Text size, in every window",
   "app.textSizeOption": "Text {size}",
   "app.textSizeNotShared": "The text size did not reach the other windows: {error}",
+  "app.theme": "Theme, in every window",
+  "app.themeOption.dark": "Dark",
+  "app.themeOption.light": "Light",
+  "app.themeOption.system": "Like the system",
+  "app.themeNotShared": "The theme did not reach the other windows: {error}",
   "app.startFailed": "Part of the terminal did not start: {error}",
 
   "workspace.menu": "Workspace",

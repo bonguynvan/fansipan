@@ -20,6 +20,11 @@
   "app.textSize": "Cỡ chữ, cho mọi cửa sổ",
   "app.textSizeOption": "Chữ {size}",
   "app.textSizeNotShared": "Cỡ chữ chưa tới được các cửa sổ khác: {error}",
+  "app.theme": "Giao diện, cho mọi cửa sổ",
+  "app.themeOption.dark": "Tối",
+  "app.themeOption.light": "Sáng",
+  "app.themeOption.system": "Theo hệ thống",
+  "app.themeNotShared": "Giao diện chưa tới được các cửa sổ khác: {error}",
   "app.startFailed": "Một phần của ứng dụng không khởi động được: {error}",
 
   "workspace.menu": "Không gian làm việc",

@@ -314,7 +314,7 @@
     list-style: none;
     background: var(--panel-raised);
     border: 1px solid var(--rule);
-    box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+    box-shadow: var(--shadow-menu);
   }
 
   [data-popup] li > button {

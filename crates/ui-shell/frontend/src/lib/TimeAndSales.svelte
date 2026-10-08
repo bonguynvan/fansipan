@@ -6,7 +6,6 @@
   import { Grid } from "bo-grid";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
-  import { darkToneColors, toneColor } from "bo-grid/trading";
   import { loadTape, market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
@@ -20,7 +19,6 @@
 
   const TONES = ["ceiling", "floor", "ref", "up", "down"];
   const SIDE_TONES = { buy: "ts-up", sell: "ts-down" };
-  const toneVars = TONES.map((name) => `--ts-${name}: ${toneColor(name, darkToneColors)}`).join("; ");
 
   const selected = $derived(symbolOf(params, market.symbols[0]));
   const preset = $derived(marketPreset(market.info?.id));
@@ -82,7 +80,7 @@
   ]);
 </script>
 
-<div class="tape" style={toneVars} use:panelSize>
+<div class="tape" use:panelSize>
   <header>
     <span class="sym">{selected ?? "—"}</span>
     {#if scale !== 1}
@@ -154,22 +152,22 @@
   }
 
   .tape :global(.bo-grid .c.ts-ceiling) {
-    color: var(--ts-ceiling);
+    color: var(--tone-ceiling);
   }
 
   .tape :global(.bo-grid .c.ts-floor) {
-    color: var(--ts-floor);
+    color: var(--tone-floor);
   }
 
   .tape :global(.bo-grid .c.ts-ref) {
-    color: var(--ts-ref);
+    color: var(--tone-ref);
   }
 
   .tape :global(.bo-grid .c.ts-up) {
-    color: var(--ts-up);
+    color: var(--tone-up);
   }
 
   .tape :global(.bo-grid .c.ts-down) {
-    color: var(--ts-down);
+    color: var(--tone-down);
   }
 </style>

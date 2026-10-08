@@ -9,7 +9,6 @@
   import { gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
   import { centeredWindow } from "bo-grid/realtime";
-  import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
   import { isLinked, symbolOf } from "./links.svelte.js";
   import { pickPrice } from "./picks.svelte.js";
@@ -28,7 +27,6 @@
   /** Rows of overlap a page keeps, so the trader does not lose their place. */
   const PAGE_OVERLAP = 2;
   const TONES = ["ceiling", "floor", "ref", "up", "down"];
-  const toneVars = TONES.map((name) => `--ld-${name}: ${toneColor(name, darkToneColors)}`).join("; ");
 
   const selected = $derived(symbolOf(params, market.symbols[0]));
   const instrument = $derived(selected ? market.instruments[selected] : null);
@@ -137,7 +135,7 @@
   const rowClass = (row) => [row.last && "ld-last", row.touch && "ld-touch"].filter(Boolean).join(" ");
 </script>
 
-<div class="ladder" style={toneVars} use:panelSize>
+<div class="ladder" use:panelSize>
   <header>
     <span class="sym">{selected ?? "—"}</span>
     <span class="pager" role="group" aria-label={t("ladder.scroll")}>
@@ -291,22 +289,22 @@
   }
 
   .ladder :global(.bo-grid .c.ld-ceiling) {
-    color: var(--ld-ceiling);
+    color: var(--tone-ceiling);
   }
 
   .ladder :global(.bo-grid .c.ld-floor) {
-    color: var(--ld-floor);
+    color: var(--tone-floor);
   }
 
   .ladder :global(.bo-grid .c.ld-ref) {
-    color: var(--ld-ref);
+    color: var(--tone-ref);
   }
 
   .ladder :global(.bo-grid .c.ld-up) {
-    color: var(--ld-up);
+    color: var(--tone-up);
   }
 
   .ladder :global(.bo-grid .c.ld-down) {
-    color: var(--ld-down);
+    color: var(--tone-down);
   }
 </style>

@@ -1,6 +1,12 @@
-/* One palette with the chart and the grids: TradeCanvas's dark theme and
-   bo-grid's tradecanvasTheme share these values, so panes sit flush. */
+/* The palette (ADR 0015, docs/ui-rules.md): every colour in the app is one
+   of these tokens, so a theme is one block of values. Dark is the default;
+   light is below. The grids, the docking frame, and the screens read the
+   tokens directly; only the chart, which paints a canvas, picks its own
+   matching theme. The values are TradeCanvas's and bo-grid's, so panes sit
+   flush. */
 :root {
+  color-scheme: dark;
+  --scheme: dark;
   --ink: #0b0f15;
   --panel: #11161e;
   --panel-raised: #161c25;
@@ -10,6 +16,15 @@
   --accent: #f2a93b;
   --up: #3ccf91;
   --down: #f0616d;
+  /* Where a price sits in its day's band: the VN/TH convention of purple
+     ceiling, cyan floor, yellow reference, green up, red down. */
+  --tone-ceiling: #e879f9;
+  --tone-floor: #22d3ee;
+  --tone-ref: #facc15;
+  --tone-up: #4ade80;
+  --tone-down: #f87171;
+  --shadow-menu: 0 10px 30px rgb(0 0 0 / 45%);
+  --backdrop: rgb(0 0 0 / 55%);
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
 
@@ -23,6 +38,29 @@
   --text-lg: 0.875rem;
   --text-xl: 0.9375rem;
   --text-2xl: 1.125rem;
+}
+
+/* Light: the same system on white, with the accent, up, down, and tones
+   darkened until they read at 4.5:1 as text. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --scheme: light;
+  --ink: #eef0f3;
+  --panel: #ffffff;
+  --panel-raised: #f6f7f9;
+  --rule: #dde1e7;
+  --text: #0f131a;
+  --text-dim: #5f6774;
+  --accent: #9a5c06;
+  --up: #0b7a4b;
+  --down: #c0303d;
+  --tone-ceiling: #a21caf;
+  --tone-floor: #155e75;
+  --tone-ref: #854d0e;
+  --tone-up: #166534;
+  --tone-down: #b91c1c;
+  --shadow-menu: 0 10px 30px rgb(15 19 26 / 16%);
+  --backdrop: rgb(15 19 26 / 35%);
 }
 
 * { box-sizing: border-box; }
@@ -59,18 +97,12 @@ button, input, select {
 .down { color: var(--down); }
 .dim { color: var(--text-dim); }
 
-/* Link-group colours: one per group, used by tabs' link buttons. */
-:root {
-  --link-a: #f2a93b;
-  --link-b: #4c9ffe;
-  --link-c: #c678dd;
-}
-
-/* dockview with the app's palette. Every other dockview variable keeps the
-   dark theme's value; override any of these to restyle the docking frame.
-   dockview injects its own stylesheet after this one, so these overrides
-   name both classes to outweigh its `.dockview-theme-dark` alone. */
-.dockview-theme-dark.dockview-theme-fansipan {
+/* dockview with the app's palette, over its dark or light base theme (the
+   workspace picks the one matching the app's). Every other dockview
+   variable keeps the base theme's value; override any of these to restyle
+   the docking frame. dockview injects its own stylesheet after this one, so
+   these overrides name two classes to outweigh its base theme's one. */
+.dockview-theme-fansipan:is(.dockview-theme-dark, .dockview-theme-light) {
   --dv-group-view-background-color: var(--panel);
   --dv-tabs-and-actions-container-background-color: var(--ink);
   --dv-tabs-and-actions-container-height: 1.875rem;

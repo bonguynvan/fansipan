@@ -1,7 +1,8 @@
 <script>
   import { TradeCanvas } from "@tradecanvas/svelte";
-  import { DARK_THEME } from "@tradecanvas/chart";
+  import { DARK_THEME, LIGHT_THEME } from "@tradecanvas/chart";
   import { px } from "./ui.svelte.js";
+  import { theme as appTheme } from "./theme.svelte.js";
   import { BAR_TIMEFRAME, ShellAdapter } from "./shellAdapter.js";
   import { market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
@@ -17,15 +18,17 @@
   const features = { trading: false, alerts: false, screenshot: false };
   const indicators = [{ id: "ema", params: { period: 20 } }];
 
-  // The chart draws its text on a canvas, in pixels; its sizes follow the
-  // trader's text size like every other size (ADR 0014).
+  // The chart paints a canvas, which cannot read the app's tokens: it takes
+  // the TradeCanvas theme matching the app's (ADR 0015), with its text in
+  // pixels that follow the trader's text size like every other size (ADR 0014).
+  const base = $derived(appTheme.resolved === "light" ? LIGHT_THEME : DARK_THEME);
   const theme = $derived({
-    ...DARK_THEME,
+    ...base,
     font: {
-      ...DARK_THEME.font,
-      sizeSmall: px(DARK_THEME.font.sizeSmall),
-      sizeMedium: px(DARK_THEME.font.sizeMedium),
-      sizeLarge: px(DARK_THEME.font.sizeLarge),
+      ...base.font,
+      sizeSmall: px(base.font.sizeSmall),
+      sizeMedium: px(base.font.sizeMedium),
+      sizeLarge: px(base.font.sizeLarge),
     },
   });
 

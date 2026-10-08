@@ -1,7 +1,8 @@
-// The UI rules a machine can check (docs/ui-rules.md, ADR 0014): sizes in
-// every component's styles and in app.css are rem or relative, never
-// pixels, except for hairline borders and outlines and for shadows; font
-// sizes come from the type scale.
+// The UI rules a machine can check (docs/ui-rules.md, ADR 0014, ADR 0015):
+// sizes in every component's styles and in app.css are rem or relative,
+// never pixels, except for hairline borders and outlines and for shadows;
+// font sizes come from the type scale; colours come from the palette's
+// tokens, which only app.css defines.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -13,10 +14,14 @@ const SRC = fileURLToPath(new URL(".", import.meta.url));
 /** Hairlines: a border or outline's width, at most HAIRLINE_MAX_PX. */
 const HAIRLINE = /^(border|border-(top|right|bottom|left)|border(-(top|right|bottom|left))?-width|outline|outline-width|outline-offset)$/;
 const HAIRLINE_MAX_PX = 3;
-/** Shadows keep their pixel offsets and blur: depth, not size. */
-const SHADOW = /^(box-shadow|text-shadow)$/;
+/** Shadows keep their pixel offsets and blur: depth, not size. So do the palette's shadow tokens. */
+const SHADOW = /^(box-shadow|text-shadow|--shadow-[a-z-]+)$/;
 const PIXEL = /(?<![\w.-])(\d*\.?\d+)px\b/g;
 const FONT_TOKEN = /var\(--text-(2xs|xs|sm|md|lg|xl|2xl)\)/;
+/** A colour written out, rather than taken from a token. */
+const COLOUR = /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
+/** The one file that defines the palette. */
+const PALETTE_FILE = "app.css";
 
 /** Every style block of every component (any attributes, any number), and app.css. */
 function styleSources() {
@@ -57,7 +62,13 @@ function breaksPixelRule({ property, value }) {
   return true;
 }
 
-const all = styleSources().flatMap(declarations);
+/** Whether a declaration writes out a colour anywhere but in a palette token. */
+function breaksColourRule({ file, property, value }) {
+  if (!COLOUR.test(value)) return false;
+  return !(file === PALETTE_FILE && property.startsWith("--"));
+}
+
+const all = styleSources().flatMap((source) => declarations(source).map((d) => ({ ...d, file: source.file })));
 
 describe("UI rules", () => {
   it("finds the styles it checks", () => {
@@ -80,6 +91,12 @@ describe("UI rules", () => {
 
     expect(off).toEqual([]);
   });
+
+  it("takes every colour from the palette's tokens", () => {
+    const written = all.filter(breaksColourRule).map((d) => `${d.where}  ${d.property}: ${d.value}`);
+
+    expect(written).toEqual([]);
+  });
 });
 
 describe("the checker", () => {
@@ -99,6 +116,19 @@ describe("the checker", () => {
 
   it("reads a declaration that wraps onto the next line", () => {
     expect(check("a {\n  grid-template-columns:\n    10px 1fr;\n}")).toEqual(["grid-template-columns"]);
+  });
+
+  it("allows a colour only where app.css defines a token", () => {
+    const colours = (file, css) => declarations({ file, css, offset: 0 }).map((d) => ({ ...d, file })).filter(breaksColourRule).map((d) => d.property);
+
+    expect(colours("app.css", ":root { --ink: #0b0f15; --shadow-menu: 0 1px 2px rgb(0 0 0 / 40%); }")).toEqual([]);
+    expect(colours("app.css", "body { background: #fff; }")).toEqual(["background"]);
+    expect(colours("x.svelte", "a { color: #abc; border-color: rgba(0, 0, 0, 0.5); outline-color: hsl(10 20% 30%); }")).toEqual([
+      "color",
+      "border-color",
+      "outline-color",
+    ]);
+    expect(colours("x.svelte", "a { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }")).toEqual([]);
   });
 
   it("reads every style block, whatever its attributes", () => {

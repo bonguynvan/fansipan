@@ -135,7 +135,7 @@
   }
 
   .keys::backdrop {
-    background: rgb(0 0 0 / 0.55);
+    background: var(--backdrop);
   }
 
   h2 {

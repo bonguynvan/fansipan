@@ -16,6 +16,8 @@
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
   import LocalePicker from "./i18n/LocalePicker.svelte";
   import ScalePicker from "./lib/ScalePicker.svelte";
+  import ThemePicker from "./lib/ThemePicker.svelte";
+  import { startTheme } from "./lib/theme.svelte.js";
   import { startUiScale } from "./lib/ui.svelte.js";
 
   // Screens must be registered before any layout that names them loads.
@@ -29,6 +31,9 @@
     startLocale().catch(failed);
     startUiScale({
       onError: (error) => (workspace.notice = { id: "app.textSizeNotShared", vars: { error } }),
+    }).catch(failed);
+    startTheme({
+      onError: (error) => (workspace.notice = { id: "app.themeNotShared", vars: { error } }),
     }).catch(failed);
     startLinks({
       onError: (error) => (workspace.notice = { id: "workspace.symbolNotShared", vars: { error } }),
@@ -89,6 +94,7 @@
       <WorkspaceMenu />
       <button class="keys-button" onclick={() => (keysOpen = true)}>{t("hotkey.open")}</button>
       <ScalePicker />
+      <ThemePicker />
       <LocalePicker />
       <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
         <span class="dot"></span>{status}

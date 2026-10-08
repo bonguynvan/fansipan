@@ -6,7 +6,6 @@
   import { Grid } from "bo-grid";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
-  import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
   import { chooseSymbol, symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
@@ -22,7 +21,6 @@
   const PRICE_WIDTH = 58;
   const SIZE_WIDTH = 70;
 
-  const toneVars = TONES.map((name) => `--pb-${name}: ${toneColor(name, darkToneColors)}`).join("; ");
 
   const preset = $derived(marketPreset(market.info?.id));
   const scale = $derived(preset.priceScale);
@@ -99,7 +97,7 @@
   ]);
 </script>
 
-<div class="board" style={toneVars} use:panelSize>
+<div class="board" use:panelSize>
   <header>
     <div class="chips" role="group" aria-label={t("board.exchange")}>
       <button class:on={!exchange} aria-pressed={!exchange} onclick={() => panel?.updateParameters({ exchange: "" })}>
@@ -128,7 +126,7 @@
 
     <ul class="legend">
       {#each TONES as name (name)}
-        <li><i style:background={`var(--pb-${name})`}></i>{t(`board.tone.${name}`)}</li>
+        <li><i style:background={`var(--tone-${name})`}></i>{t(`board.tone.${name}`)}</li>
       {/each}
     </ul>
   </header>
@@ -256,22 +254,22 @@
   }
 
   .board :global(.bo-grid .c.pb-ceiling) {
-    color: var(--pb-ceiling);
+    color: var(--tone-ceiling);
   }
 
   .board :global(.bo-grid .c.pb-floor) {
-    color: var(--pb-floor);
+    color: var(--tone-floor);
   }
 
   .board :global(.bo-grid .c.pb-ref) {
-    color: var(--pb-ref);
+    color: var(--tone-ref);
   }
 
   .board :global(.bo-grid .c.pb-up) {
-    color: var(--pb-up);
+    color: var(--tone-up);
   }
 
   .board :global(.bo-grid .c.pb-down) {
-    color: var(--pb-down);
+    color: var(--tone-down);
   }
 </style>

@@ -2,7 +2,7 @@
   import { onMount, mount, unmount } from "svelte";
   // The UMD build: in dockview-core 8 only it carries the library's CSS
   // (injected on load); the ES module build ships none.
-  import { createDockview, themeDark } from "dockview-core/dist/dockview-core.js";
+  import { createDockview, themeDark, themeLight } from "dockview-core/dist/dockview-core.js";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { windowHandles } from "./dragStrips.js";
   import { getScreen } from "./registry.js";
@@ -24,13 +24,18 @@
     workspace,
   } from "./workspace.svelte.js";
   import { i18n, t, tn } from "../i18n/i18n.svelte.js";
+  import { theme } from "../lib/theme.svelte.js";
 
   let { label } = $props();
 
   let host;
 
-  // dockview's dark theme with the app's palette on top (see app.css).
-  const theme = { ...themeDark, name: "fansipan", className: `${themeDark.className} dockview-theme-fansipan` };
+  // dockview's dark or light theme, matching the app's (ADR 0015), with the
+  // app's palette on top (see app.css).
+  const dockTheme = (resolved) => {
+    const base = resolved === "light" ? themeLight : themeDark;
+    return { ...base, name: "fansipan", className: `${base.className} dockview-theme-fansipan` };
+  };
 
   function headerActions(group) {
     const element = document.createElement("div");
@@ -50,7 +55,7 @@
 
   onMount(() => {
     const api = createDockview(host, {
-      theme,
+      theme: dockTheme(theme.resolved),
       // A panel floats over its page on demand (ADR 0013), kept on screen;
       // it leaves for another monitor as a native window, never as a
       // browser pop-up.
@@ -104,6 +109,10 @@
 
   $effect(() => {
     if (i18n.locale) retitlePanels();
+  });
+
+  $effect(() => {
+    workspace.api?.updateOptions({ theme: dockTheme(theme.resolved) });
   });
 </script>
 
