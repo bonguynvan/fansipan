@@ -6,17 +6,12 @@
 // The text size is an app-wide setting (`ui.scale`), the same in every
 // window.
 
-import { emit, listen } from "@tauri-apps/api/event";
-import { debouncedSetter, getSetting } from "./settings.js";
+import { sharedChoice } from "./sharedChoice.js";
 
 /** The text sizes a trader can choose, as fractions of the default. */
 export const SCALES = [0.9, 1, 1.15, 1.3];
 /** The root font size, in pixels, at 100%: the browser's default. */
 export const BASE_ROOT_PX = 16;
-const SETTING = "ui.scale";
-const EVENT = "ui-scale";
-/** Ignores this window's own events, which Tauri delivers back late. */
-const SOURCE = crypto.randomUUID();
 
 class Ui {
   /** The chosen text size: one of SCALES. */
@@ -42,36 +37,16 @@ function apply(scale) {
   ui.rootPx = parseFloat(getComputedStyle(root).fontSize) || BASE_ROOT_PX * scale;
 }
 
-const save = debouncedSetter(SETTING, 0);
-/** Shows the trader a size that did not reach the other windows; set by `startUiScale`. */
-let report = () => {};
-/** Set once a size is chosen here or arrives from another window: newer than the save. */
-let chosen = false;
+const textSize = sharedChoice({
+  setting: "ui.scale",
+  event: "ui-scale",
+  isValid: isScale,
+  current: () => ui.scale,
+  apply,
+});
 
 /** Sets the text size here, in every other window, and in the store. */
-export function setScale(scale) {
-  if (!isScale(scale) || scale === ui.scale) return;
-  chosen = true;
-  apply(scale);
-  save(scale);
-  emit(EVENT, { source: SOURCE, scale }).catch((err) => report(String(err)));
-}
-
-let started = null;
+export const setScale = (scale) => textSize.choose(scale);
 
 /** Applies the saved text size and follows other windows' changes; once per window. */
-export function startUiScale({ onError } = {}) {
-  started ??= (async () => {
-    report = onError ?? report;
-    apply(ui.scale);
-    await listen(EVENT, ({ payload }) => {
-      if (payload?.source === SOURCE || !isScale(payload?.scale)) return;
-      chosen = true;
-      apply(payload.scale);
-    });
-    const saved = await getSetting(SETTING);
-    // A size chosen while the save was being read is the newer one.
-    if (!chosen && isScale(saved)) apply(saved);
-  })();
-  return started;
-}
+export const startUiScale = (options) => textSize.start(options);
