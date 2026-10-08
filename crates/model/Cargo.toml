@@ -7,3 +7,6 @@ description = "Fansipan domain types shared by core and every adapter: instrumen
 
 [dependencies]
 rust_decimal = { version = "1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+proptest.workspace = true
