@@ -172,10 +172,11 @@ fn fill(order: &Order, quantity: Decimal, price: Decimal) -> Result<Order, Trans
     })
 }
 
-/// The order on the venue's new terms. A cancel already sent stays pending;
-/// otherwise the order rests, or is done if the new quantity is what has
-/// already traded: filled if anything traded, cancelled if nothing did (a
-/// venue amending an order down to nothing has cancelled it).
+/// The order on the venue's new terms. Terms that leave nothing to trade
+/// end it: filled if anything traded, cancelled if nothing did (a venue
+/// amending an order down to nothing has cancelled it), even with a cancel
+/// pending, which then has nothing left to cancel. Otherwise a cancel
+/// already sent stays pending, and the order rests.
 fn amended(
     order: &Order,
     quantity: Decimal,
@@ -187,14 +188,14 @@ fn amended(
             event: "Amended below the filled quantity".into(),
         });
     }
-    let status = if order.status == OrderStatus::PendingCancel {
-        OrderStatus::PendingCancel
-    } else if quantity == order.filled_quantity {
+    let status = if quantity == order.filled_quantity {
         if order.filled_quantity.is_zero() {
             OrderStatus::Cancelled
         } else {
             OrderStatus::Filled
         }
+    } else if order.status == OrderStatus::PendingCancel {
+        OrderStatus::PendingCancel
     } else {
         resting_status(order)
     };
@@ -588,5 +589,20 @@ mod tests {
 
         assert_eq!(next.status, OrderStatus::PendingCancel);
         assert_eq!(next.quantity, d("20"));
+    }
+
+    #[test]
+    fn an_amendment_down_to_what_traded_ends_the_order_despite_a_pending_cancel() {
+        let partial = Order {
+            filled_quantity: d("4"),
+            avg_fill_price: Some(d("5")),
+            ..order(OrderStatus::PendingCancel)
+        };
+
+        let next = apply(&partial, &amended_to("4", "5")).unwrap();
+
+        assert_eq!(next.status, OrderStatus::Filled);
+        // The cancel's answer, when it comes, finds the order already done.
+        assert!(apply(&next, &OrderEvent::Cancelled).is_err());
     }
 }
