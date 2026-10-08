@@ -8,13 +8,95 @@
 //! selling beyond the settled shares where short selling is forbidden). An
 //! order a venue would refuse for breaking its rules is refused here first,
 //! with a reason.
+//!
+//! An order that passes every check comes out [`Cleared`], and only this
+//! module makes one; the adapter's client takes nothing else
+//! ([`crate::gate::Gate`]).
 
 use std::fmt;
 
 use model::{
-    Decimal, InstrumentInfo, NewOrder, OrderKind, OrderType, Position, PriceBand, SessionPhase,
-    SessionStatus, Side, TimeInForce,
+    AmendOrder, ClientOrderId, Decimal, InstrumentInfo, NewOrder, OrderKind, OrderType, Position,
+    PriceBand, SessionPhase, SessionStatus, Side, SubmitOrder, TimeInForce, VenueOrderId,
 };
+
+/// Terms that passed every check risk runs. Nothing outside this module
+/// can make one, so holding one is proof that risk ran. It is not `Clone`:
+/// one clearance is good for one send, since a sell cleared against the
+/// holding must not go twice.
+#[derive(Debug, PartialEq)]
+pub struct Cleared<T>(T);
+
+impl<T> Cleared<T> {
+    pub(crate) fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl Cleared<NewOrder> {
+    /// The cleared order, to be sent as `id`.
+    pub fn submit(self, id: ClientOrderId) -> Cleared<SubmitOrder> {
+        Cleared(SubmitOrder::new(id, self.0))
+    }
+
+    /// The cleared terms, as the new terms of order `id`.
+    pub fn amend(
+        self,
+        id: ClientOrderId,
+        venue_order_id: Option<VenueOrderId>,
+    ) -> Cleared<AmendOrder> {
+        let terms = self.0;
+        Cleared(AmendOrder::new(
+            id,
+            venue_order_id,
+            terms.instrument,
+            terms.quantity,
+            terms.limit_price,
+        ))
+    }
+}
+
+/// What the checks read besides the order: this terminal's limits, and
+/// the market's rules, session, and holding as the adapter and the venue
+/// last reported them.
+pub(crate) struct Context<'a> {
+    pub limits: &'a RiskLimits,
+    pub info: Option<&'a InstrumentInfo>,
+    pub band: Option<&'a PriceBand>,
+    pub session: Option<&'a SessionStatus>,
+    pub position: Option<&'a Position>,
+    /// Shares the working sell orders take, other than the order being
+    /// amended.
+    pub working_sells: Decimal,
+    /// What has filled of the order being amended, which its new terms do
+    /// not sell again; zero for a new order.
+    pub filled: Decimal,
+}
+
+/// Every check, in order: this terminal's limits, then the market's rules,
+/// session, and the holding a sell may take.
+pub(crate) fn clear(
+    terms: NewOrder,
+    context: &Context<'_>,
+) -> Result<Cleared<NewOrder>, RiskReject> {
+    let selling = NewOrder::new(
+        terms.instrument.clone(),
+        terms.side,
+        terms.quantity - context.filled,
+        terms.order_type,
+        terms.limit_price,
+    );
+    check(&terms, context.limits)?;
+    check_market_rules(&terms, context.info, context.band)?;
+    check_session(&terms, context.session)?;
+    check_sellable(
+        &selling,
+        context.info,
+        context.position,
+        context.working_sells,
+    )?;
+    Ok(Cleared(terms))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RiskLimits {

@@ -4,6 +4,7 @@
 //! The state machine itself is in [`lifecycle`]; see /docs/order-lifecycle.md.
 
 pub mod capacity;
+pub mod gate;
 pub mod lifecycle;
 pub mod risk;
 
@@ -15,13 +16,14 @@ use bus::BusHandle;
 use model::{
     AccountState, CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal,
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
-    OrderStatus, PriceBand, SessionStatus, Side, SubmitOrder,
+    OrderStatus, PriceBand, SessionStatus, Side,
 };
-use model::{AmendOrder, OrderKind, OrderType, VenueOrder, VenueOrderState};
+use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
+pub use gate::Gate;
 pub use lifecycle::TransitionError;
-pub use risk::{RiskLimits, RiskReject};
+pub use risk::{Cleared, RiskLimits, RiskReject};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CancelError {
@@ -147,7 +149,7 @@ impl Tracked {
 }
 
 pub struct ExecutionEngine {
-    client: Box<dyn ExecutionClient>,
+    gate: Gate,
     limits: RiskLimits,
     orders: BTreeMap<ClientOrderId, Tracked>,
     next_id: u64,
@@ -165,7 +167,7 @@ pub struct ExecutionEngine {
 impl ExecutionEngine {
     pub fn new(client: Box<dyn ExecutionClient>, limits: RiskLimits) -> Self {
         Self {
-            client,
+            gate: Gate::new(client),
             limits,
             orders: BTreeMap::new(),
             next_id: 1,
@@ -269,7 +271,7 @@ impl ExecutionEngine {
     /// holds; nor do the sessions of the last connection, which the adapter
     /// publishes again.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
-        self.client.connect(bus)?;
+        self.gate.connect(bus)?;
         self.connection = None;
         self.sessions.clear();
         Ok(())
@@ -299,14 +301,13 @@ impl ExecutionEngine {
             reason: None,
         };
 
-        let cleared = self.clear(&request, None);
-        let order = match cleared {
+        let order = match self.clear(request, None) {
             Err(reject) => Order {
                 status: OrderStatus::Denied,
                 reason: Some(reject.to_string()),
                 ..pending
             },
-            Ok(()) => match self.client.submit_order(SubmitOrder::new(id, request)) {
+            Ok(cleared) => match self.gate.submit(cleared.submit(id)) {
                 Ok(()) => pending,
                 Err(e) => Order {
                     status: OrderStatus::Rejected,
@@ -327,41 +328,31 @@ impl ExecutionEngine {
         order
     }
 
-    /// Every risk check for `terms`: this terminal's limits, then the
-    /// market's rules, session, and the holding a sell may take. For an
+    /// Runs risk on `terms` against what this engine knows. For an
     /// amendment, `amending` is the order as it stands: the sell check then
     /// counts only the shares the new terms leave to sell, against working
     /// sells other than this order.
-    fn clear(&self, terms: &NewOrder, amending: Option<&Order>) -> Result<(), RiskReject> {
+    fn clear(
+        &self,
+        terms: NewOrder,
+        amending: Option<&Order>,
+    ) -> Result<Cleared<NewOrder>, RiskReject> {
         let info = self.instruments.get(&terms.instrument);
-        let (to_sell, others_working) = match amending {
-            Some(order) => (
-                terms.quantity - order.filled_quantity,
-                self.working_sells(&terms.instrument) - order.remaining(),
-            ),
-            None => (terms.quantity, self.working_sells(&terms.instrument)),
+        let working = self.working_sells(&terms.instrument);
+        let (filled, working_sells) = match amending {
+            Some(order) => (order.filled_quantity, working - order.remaining()),
+            None => (Decimal::ZERO, working),
         };
-        let selling = NewOrder::new(
-            terms.instrument.clone(),
-            terms.side,
-            to_sell,
-            terms.order_type,
-            terms.limit_price,
-        );
-        risk::check(terms, &self.limits)
-            .and_then(|()| risk::check_market_rules(terms, info, self.bands.get(&terms.instrument)))
-            .and_then(|()| {
-                let session = info.and_then(|info| self.sessions.get(&info.exchange));
-                risk::check_session(terms, session)
-            })
-            .and_then(|()| {
-                risk::check_sellable(
-                    &selling,
-                    info,
-                    self.account.position(&terms.instrument),
-                    others_working,
-                )
-            })
+        let context = risk::Context {
+            limits: &self.limits,
+            info,
+            band: self.bands.get(&terms.instrument),
+            session: info.and_then(|info| self.sessions.get(&info.exchange)),
+            position: self.account.position(&terms.instrument),
+            working_sells,
+            filled,
+        };
+        risk::clear(terms, &context)
     }
 
     /// Asks the adapter to change a resting limit order to `quantity` (its
@@ -386,7 +377,7 @@ impl ExecutionEngine {
         if quantity <= current.filled_quantity {
             return Err(AmendError::BelowFilled(current.filled_quantity));
         }
-        if self.client.amender().is_none() {
+        if !self.gate.can_amend() {
             return Err(AmendError::Unsupported);
         }
         let terms = NewOrder::new(
@@ -396,18 +387,11 @@ impl ExecutionEngine {
             current.order_type,
             Some(limit_price),
         );
-        self.clear(&terms, Some(&current))
+        let cleared = self
+            .clear(terms, Some(&current))
             .map_err(AmendError::Denied)?;
-        let amender = self.client.amender().ok_or(AmendError::Unsupported)?;
-        amender
-            .amend_order(AmendOrder::new(
-                id,
-                current.venue_order_id.clone(),
-                current.instrument.clone(),
-                quantity,
-                Some(limit_price),
-            ))
-            .map_err(AmendError::Adapter)?;
+        self.gate
+            .amend(cleared.amend(id, current.venue_order_id.clone()))?;
 
         let pending = Order {
             status: OrderStatus::PendingAmend,
@@ -435,8 +419,8 @@ impl ExecutionEngine {
             return Ok(order.clone());
         }
 
-        self.client
-            .cancel_order(CancelOrder::new(
+        self.gate
+            .cancel(CancelOrder::new(
                 id,
                 order.venue_order_id.clone(),
                 order.instrument.clone(),
@@ -607,7 +591,7 @@ impl ExecutionEngine {
     /// Whether the adapter's venue takes amendments at all. Which orders
     /// one could change is [`is_amendable`].
     pub fn can_amend(&mut self) -> bool {
-        self.client.amender().is_some()
+        self.gate.can_amend()
     }
 
     /// Records a report on the orders connection; returns whether kept.
@@ -657,7 +641,10 @@ fn catch_up_price(order: &Order, venue: &VenueOrder) -> Option<Decimal> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::{AccountState, ConnectionState, InstrumentId, Side, UnixNanos, VenueOrderId};
+    use model::{
+        AccountState, AmendOrder, ConnectionState, InstrumentId, Side, SubmitOrder, UnixNanos,
+        VenueOrderId,
+    };
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -1004,11 +991,11 @@ mod tests {
     fn a_cancel_the_adapter_cannot_send_leaves_the_order_working() {
         let (mut engine, calls) = engine();
         let id = engine.submit(buy("4")).id;
-        engine.client = Box::new(RecordingClient {
+        engine.gate = Gate::new(Box::new(RecordingClient {
             calls,
             refuse_with: Some(AdapterError::recoverable("socket closed")),
             amends: true,
-        });
+        }));
 
         let result = engine.cancel(id);
 
@@ -1081,11 +1068,11 @@ mod tests {
         let (mut engine, calls) = engine();
         let first = resting(&mut engine, "1");
         let second = resting(&mut engine, "2");
-        engine.client = Box::new(RecordingClient {
+        engine.gate = Gate::new(Box::new(RecordingClient {
             calls,
             refuse_with: Some(AdapterError::recoverable("socket closed")),
             amends: true,
-        });
+        }));
 
         let outcome = engine.cancel_all(None);
 
