@@ -72,14 +72,14 @@
   );
 </script>
 
-<div class="terminal">
+<!-- An extra window is the screen alone: no top bar, moved by its tab strip. -->
+<div class="terminal" class:detached={label !== MAIN_WINDOW}>
+  {#if label === MAIN_WINDOW}
   <header>
     <div class="brand">
       <span class="mark" aria-hidden="true">▲</span>
       <span>Fansipan</span>
-      <span class="venue dim"
-        >{market.info?.title ?? ""}{label === MAIN_WINDOW ? "" : ` · ${t("app.extraWindow")}`}</span
-      >
+      <span class="venue dim">{market.info?.title ?? ""}</span>
     </div>
     <div class="equity">
       <span class="dim">{t("app.equity")}</span>
@@ -95,6 +95,7 @@
       </div>
     </div>
   </header>
+  {/if}
 
   <main>
     <Workspace {label} />
@@ -108,6 +109,12 @@
     display: grid;
     grid-template-rows: auto 1fr;
     height: 100vh;
+  }
+
+  /* No system frame around an extra window: a hairline keeps its edge. */
+  .terminal.detached {
+    grid-template-rows: 1fr;
+    border: 1px solid var(--rule);
   }
 
   header {

@@ -75,9 +75,21 @@
     });
 
     const subscriptions = [api.onDidLayoutChange(persist)];
-    // An extra window with nothing left in it has no reason to stay open.
     if (label !== MAIN_WINDOW) {
+      // An extra window has no title bar: the empty part of each docked tab
+      // strip moves it, as a title bar would (and maximises it on a
+      // double-click). A floating group's strip moves that group instead.
+      const markDragStrips = () => {
+        for (const strip of host.querySelectorAll(".dv-void-container")) {
+          strip.toggleAttribute("data-tauri-drag-region", !strip.closest(".dv-resize-container"));
+        }
+      };
+      const strips = new MutationObserver(markDragStrips);
+      strips.observe(host, { childList: true, subtree: true });
+      markDragStrips();
       subscriptions.push(
+        { dispose: () => strips.disconnect() },
+        // An extra window with nothing left in it has no reason to stay open.
         api.onDidRemovePanel(() => {
           if (api.totalPanels === 0 && !workspace.rebuilding) getCurrentWindow().close();
         }),

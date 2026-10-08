@@ -34,7 +34,9 @@ const EXIT_GRACE: Duration = Duration::from_millis(300);
 /// the taskbar and window switcher.
 const EXTRA_WINDOW_TITLE: &str = "Fansipan · extra window";
 const NEW_WINDOW_SIZE: (f64, f64) = (960.0, 640.0);
-const MIN_WINDOW_SIZE: (f64, f64) = (480.0, 320.0);
+/// Small enough for one narrow screen, such as a ticket, on its own.
+const MIN_WINDOW_SIZE: (f64, f64) = (240.0, 160.0);
+const MAX_WINDOW_SIZE: f64 = 8192.0;
 
 pub struct Store(Mutex<Settings>);
 
@@ -116,8 +118,16 @@ pub fn settings_remove(store: State<'_, Store>, key: String) -> Result<(), Strin
 /// cannot be built, so the list never names a window that does not exist
 /// and never misses one that does. Async because building a window from a
 /// synchronous command can deadlock on Windows.
+///
+/// `width` and `height` (logical pixels) open it at the size of the panel
+/// that leaves for it.
 #[tauri::command]
-pub async fn open_window(app: AppHandle, label: String) -> Result<(), String> {
+pub async fn open_window(
+    app: AppHandle,
+    label: String,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), String> {
     if !is_extra_window(&label) {
         return Err(format!("invalid window label \"{label}\""));
     }
@@ -126,7 +136,7 @@ pub async fn open_window(app: AppHandle, label: String) -> Result<(), String> {
     }
     let store = app.state::<Store>();
     record_window(&store, &label, true)?;
-    build_window(&app, &label).map_err(|e| {
+    build_window(&app, &label, window_size(width, height)).map_err(|e| {
         if let Err(undo) = record_window(&store, &label, false) {
             eprintln!("could not un-record window {label}: {undo}");
         }
@@ -147,11 +157,29 @@ fn record_window(store: &Store, label: &str, open: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-fn build_window(app: &AppHandle, label: &str) -> tauri::Result<()> {
-    let (width, height) = NEW_WINDOW_SIZE;
+/// The size a new extra window opens at: the one asked for, kept within
+/// bounds, or a default when none was asked.
+fn window_size(width: Option<f64>, height: Option<f64>) -> (f64, f64) {
+    let fit = |asked: Option<f64>, default: f64, min: f64| {
+        asked
+            .filter(|v| v.is_finite())
+            .map_or(default, |v| v.clamp(min, MAX_WINDOW_SIZE))
+    };
+    (
+        fit(width, NEW_WINDOW_SIZE.0, MIN_WINDOW_SIZE.0),
+        fit(height, NEW_WINDOW_SIZE.1, MIN_WINDOW_SIZE.1),
+    )
+}
+
+/// An extra window is the screen alone: no title bar or frame of the
+/// system's (the front end gives it a drag strip), but the system's shadow
+/// and edge resizing. The title still names it in the taskbar.
+fn build_window(app: &AppHandle, label: &str, (width, height): (f64, f64)) -> tauri::Result<()> {
     let (min_width, min_height) = MIN_WINDOW_SIZE;
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(EXTRA_WINDOW_TITLE)
+        .decorations(false)
+        .shadow(true)
         .inner_size(width, height)
         .min_inner_size(min_width, min_height)
         .build()
@@ -170,7 +198,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Lifecycle::default());
 
     for label in reopen {
-        if let Err(e) = build_window(app.handle(), &label) {
+        if let Err(e) = build_window(app.handle(), &label, NEW_WINDOW_SIZE) {
             eprintln!("could not reopen window {label}: {e}");
         }
     }
@@ -231,6 +259,20 @@ fn forget_window(store: &Store, label: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_new_window_opens_at_the_size_asked_within_bounds() {
+        assert_eq!(window_size(Some(320.0), Some(480.0)), (320.0, 480.0));
+        assert_eq!(window_size(None, None), NEW_WINDOW_SIZE);
+        assert_eq!(
+            window_size(Some(10.0), Some(1e9)),
+            (MIN_WINDOW_SIZE.0, MAX_WINDOW_SIZE)
+        );
+        assert_eq!(
+            window_size(Some(f64::NAN), Some(f64::INFINITY)),
+            NEW_WINDOW_SIZE
+        );
+    }
 
     #[test]
     fn only_ws_labels_are_extra_windows() {

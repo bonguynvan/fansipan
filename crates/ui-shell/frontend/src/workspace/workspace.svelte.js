@@ -454,7 +454,9 @@ export async function popOut(panel) {
   });
   try {
     await setSetting(layoutKey(label), seed);
-    await invoke("open_window", { label });
+    // The window opens at the size of the panel's group, tab strip and all.
+    const { width, height } = panel.group.api;
+    await invoke("open_window", { label, width: Math.round(width), height: Math.round(height) });
     workspace.api?.removePanel(panel);
   } catch (err) {
     notify("workspace.windowFailed", { error: String(err) });

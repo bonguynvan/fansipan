@@ -28,6 +28,7 @@ use data_engine::DataEngine;
 use execution_engine::ExecutionEngine;
 use model::{ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_window_state::StateFlags;
 
 pub use execution_engine::RiskLimits;
 
@@ -592,7 +593,13 @@ pub fn run(venue: Venue) -> ExitCode {
     };
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Whether a window has a frame is the app's call, not a saved
+                // state's: a window saved with one must not get it back.
+                .with_state_flags(StateFlags::all().difference(StateFlags::DECORATIONS))
+                .build(),
+        )
         .setup(move |app| {
             app.manage(shell);
             workspace::setup(app)?;
