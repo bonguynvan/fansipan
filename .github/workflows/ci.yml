@@ -111,3 +111,41 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
+
+  # The quote path's latency distribution (docs/performance.md), weekly and on
+  # demand. A shared runner is too noisy for a tight gate, so the numbers go
+  # in the run's summary and only budgets on medians, about a hundred times
+  # what a desktop measures, can fail it.
+  latency:
+    name: Quote-path latency
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev libxdo-dev pkg-config
+      # The shell embeds the front end at compile time; the benchmark never
+      # shows it, so a placeholder page stands in for a front-end build.
+      - name: Placeholder front end
+        run: mkdir -p "$FRONTEND/dist" && echo '<!doctype html>' > "$FRONTEND/dist/index.html"
+      - name: Rust
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: latency
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Measure
+        env:
+          FANSIPAN_LATENCY_REPORT: ${{ runner.temp }}/latency.md
+        run: cargo test -p fansipan-shell --release --locked --lib latency -- --ignored --nocapture --test-threads 1
+      - name: Report
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/latency.md" ]; then
+            { echo "## Quote-path latency ($(nproc) CPUs)"; echo; cat "$RUNNER_TEMP/latency.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
