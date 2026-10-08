@@ -43,7 +43,8 @@ export function cancelNotice({ sent, failed }, symbol = null) {
     : { id: `hotkey.nothingToCancel${scope}`, vars };
 }
 
-async function cancelAll(symbol) {
+/** Cancels every working order, or every one in `symbol`; returns the notice for the result. */
+export async function cancelAllOrders(symbol = null) {
   return cancelNotice(await invoke("cancel_all_orders", { symbol }), symbol);
 }
 
@@ -74,13 +75,13 @@ export function registerTradingActions() {
     defaultKey: "F9",
     run: () => {
       const symbol = activeTicket()?.symbol();
-      return symbol ? cancelAll(symbol) : NO_TICKET;
+      return symbol ? cancelAllOrders(symbol) : NO_TICKET;
     },
   });
   registerAction({
     id: "orders.cancel-all",
     title: "hotkey.action.cancelAll",
     defaultKey: "Shift+F9",
-    run: twoPress(() => cancelAll(null), { id: "hotkey.confirmCancelAll" }),
+    run: twoPress(() => cancelAllOrders(null), { id: "hotkey.confirmCancelAll" }),
   });
 }
