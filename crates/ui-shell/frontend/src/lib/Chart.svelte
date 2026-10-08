@@ -1,5 +1,7 @@
 <script>
   import { TradeCanvas } from "@tradecanvas/svelte";
+  import { DARK_THEME } from "@tradecanvas/chart";
+  import { px } from "./ui.svelte.js";
   import { BAR_TIMEFRAME, ShellAdapter } from "./shellAdapter.js";
   import { market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
@@ -14,6 +16,18 @@
   // to the engines; a button that does nothing is worse than no button.
   const features = { trading: false, alerts: false, screenshot: false };
   const indicators = [{ id: "ema", params: { period: 20 } }];
+
+  // The chart draws its text on a canvas, in pixels; its sizes follow the
+  // trader's text size like every other size (ADR 0014).
+  const theme = $derived({
+    ...DARK_THEME,
+    font: {
+      ...DARK_THEME.font,
+      sizeSmall: px(DARK_THEME.font.sizeSmall),
+      sizeMedium: px(DARK_THEME.font.sizeMedium),
+      sizeLarge: px(DARK_THEME.font.sizeLarge),
+    },
+  });
 
   // The instrument's details may arrive after the chart connected, in the
   // startup snapshot or a later batch.
@@ -34,7 +48,7 @@
       <TradeCanvas
         {symbol}
         timeframe={BAR_TIMEFRAME}
-        theme="dark"
+        {theme}
         {adapter}
         {features}
         {indicators}
@@ -57,9 +71,9 @@
 
   header {
     display: flex;
-    gap: 12px;
+    gap: 0.75rem;
     align-items: baseline;
-    padding: 10px 16px 8px;
+    padding: 0.625rem 1rem 0.5rem;
   }
 
 
@@ -70,7 +84,7 @@
 
   header .dim {
     margin-left: auto;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
 
   .canvas {
@@ -84,7 +98,7 @@
   }
 
   .empty {
-    margin: 16px;
-    font-size: 12px;
+    margin: 1rem;
+    font-size: var(--text-sm);
   }
 </style>

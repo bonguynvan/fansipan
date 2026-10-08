@@ -11,6 +11,7 @@
   import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
   import { orderTypeName, phaseName } from "./orderTypes.js";
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
+  import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params, panel } = $props();
@@ -150,7 +151,7 @@
   }
 </script>
 
-<div class="ticket" onfocusin={() => useTicket(handle)}>
+<div class="ticket" use:panelSize onfocusin={() => useTicket(handle)}>
   <header>
     <span class="sym">{selected ?? "—"}</span>
   </header>
@@ -254,14 +255,14 @@
 
 <style>
   .ticket {
-    padding: 10px 16px 14px;
+    padding: 0.625rem 1rem 0.875rem;
   }
 
   header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 10px;
+    margin-bottom: 0.625rem;
   }
 
 
@@ -273,12 +274,12 @@
   .sides {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    margin-bottom: 12px;
+    gap: 0.375rem;
+    margin-bottom: 0.75rem;
   }
 
   .side {
-    padding: 8px;
+    padding: 0.5rem;
     border: 1px solid var(--rule);
     background: var(--panel-raised);
     cursor: pointer;
@@ -299,25 +300,29 @@
 
   form {
     display: grid;
-    gap: 10px;
+    gap: 0.625rem;
   }
 
   label {
     display: grid;
-    gap: 4px;
-    font-size: 11px;
+    gap: 0.25rem;
+    font-size: var(--text-xs);
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
 
+  /* Fields fill their row and may shrink below their natural width, so the
+     ticket never pushes past its panel (docs/ui-rules.md, rule 3). */
   input,
   select {
-    padding: 8px 10px;
+    width: 100%;
+    min-width: 0;
+    padding: 0.5rem 0.625rem;
     background: var(--ink);
     border: 1px solid var(--rule);
     border-radius: 0;
-    font-size: 14px;
+    font-size: var(--text-lg);
   }
 
   input:focus,
@@ -328,16 +333,16 @@
 
   .closed {
     margin: 0;
-    padding: 8px 10px;
+    padding: 0.5rem 0.625rem;
     border: 1px dashed var(--rule);
     color: var(--text-dim);
     text-transform: none;
     letter-spacing: 0;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .hint {
-    margin-left: 6px;
+    margin-left: 0.375rem;
     font-style: normal;
     text-transform: none;
     letter-spacing: 0;
@@ -349,12 +354,12 @@
   }
 
   .stepper button {
-    width: 34px;
+    width: 2.125rem;
     border: 1px solid var(--rule);
     border-left: none;
     background: var(--panel-raised);
     color: var(--text-dim);
-    font-size: 15px;
+    font-size: var(--text-xl);
     cursor: pointer;
   }
 
@@ -367,28 +372,41 @@
   .summary {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 0.5rem;
     margin: 0;
+  }
+
+  /* A compact ticket stacks its figures; a narrow one drops the hints and keeps the order. */
+  .ticket:global([data-compact]) .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ticket:global([data-narrow]) {
+    padding: 0.5rem 0.625rem 0.75rem;
+  }
+
+  .ticket:global([data-narrow]) .hint {
+    display: none;
   }
 
   .summary div {
     background: var(--panel-raised);
-    padding: 8px 10px;
+    padding: 0.5rem 0.625rem;
   }
 
   dt {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
 
   dd {
-    margin: 2px 0 0;
-    font-size: 15px;
+    margin: 0.125rem 0 0;
+    font-size: var(--text-xl);
   }
 
   .submit {
-    padding: 10px;
+    padding: 0.625rem;
     border: none;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -412,8 +430,8 @@
 
   .msg {
     margin: 0;
-    padding: 8px 10px;
-    font-size: 12px;
+    padding: 0.5rem 0.625rem;
+    font-size: var(--text-sm);
     border-left: 3px solid;
   }
 

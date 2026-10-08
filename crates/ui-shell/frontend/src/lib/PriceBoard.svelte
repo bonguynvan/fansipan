@@ -3,7 +3,9 @@
   // last match, each price coloured by where it sits against the day's
   // reference, ceiling and floor. Bands and ticks come from the adapter;
   // this screen only resolves tones and lays them out.
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
+  import { px } from "./ui.svelte.js";
   import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
   import { chooseSymbol, symbolOf } from "./links.svelte.js";
@@ -11,6 +13,7 @@
   import { boardRows, exchangesOf } from "./board.js";
   import { tickDecimals, tickTable } from "./ticks.js";
   import { phaseName } from "./orderTypes.js";
+  import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params, panel } = $props();
@@ -62,10 +65,10 @@
   // autoWidth: a price gaining a digit (99.90 to 100.00) widens its column
   // instead of being cut.
   const price = (key, header, extra = {}) => ({
-    type: "price", key, header, width: PRICE_WIDTH, format: formatPrice, sortable: false, autoWidth: true, ...extra,
+    type: "price", key, header, width: px(PRICE_WIDTH), format: formatPrice, sortable: false, autoWidth: true, ...extra,
   });
   const size = (key, header, extra = {}) => ({
-    type: "volume", key, header, width: SIZE_WIDTH, format: formatSize, sortable: false, autoWidth: true, ...extra,
+    type: "volume", key, header, width: px(SIZE_WIDTH), format: formatSize, sortable: false, autoWidth: true, ...extra,
   });
 
   /** Price and size per level; bids run 3-2-1 and asks 1-2-3 so the best of each meets the match. */
@@ -77,7 +80,7 @@
   }
 
   const columns = $derived([
-    { type: "text", key: "symbol", header: t("column.symbol"), width: 64, pinned: "left", cellClass: toneOf("last") },
+    { type: "text", key: "symbol", header: t("column.symbol"), width: px(64), pinned: "left", cellClass: toneOf("last") },
     price("ref", t("board.ref"), { cellClass: "pb-ref" }),
     price("ceiling", t("board.ceiling"), { cellClass: "pb-ceiling" }),
     price("floor", t("board.floor"), { cellClass: "pb-floor" }),
@@ -86,17 +89,17 @@
     size("lastv", t("board.volume"), { group: t("board.matched"), cellClass: toneOf("last") }),
     price("change", t("board.change"), { group: t("board.matched"), format: formatChange, cellClass: toneOf("last") }),
     {
-      type: "number", key: "pct", header: t("board.pct"), width: 56, group: t("board.matched"),
+      type: "number", key: "pct", header: t("board.pct"), width: px(56), group: t("board.matched"),
       format: formatPct, cellClass: toneOf("last"),
     },
     ...levels("a", t("board.asks"), [1, 2, 3]),
-    size("volume", t("board.totalVolume"), { group: t("board.day"), width: 92, sortable: true, flash: "change" }),
+    size("volume", t("board.totalVolume"), { group: t("board.day"), width: px(92), sortable: true, flash: "change" }),
     price("high", t("board.high"), { group: t("board.day"), cellClass: toneOf("high") }),
     price("low", t("board.low"), { group: t("board.day"), cellClass: toneOf("low") }),
   ]);
 </script>
 
-<div class="board" style={toneVars}>
+<div class="board" style={toneVars} use:panelSize>
   <header>
     <div class="chips" role="group" aria-label={t("board.exchange")}>
       <button class:on={!exchange} aria-pressed={!exchange} onclick={() => panel?.updateParameters({ exchange: "" })}>
@@ -135,7 +138,8 @@
       {rows}
       {columns}
       height="100%"
-      theme={tradecanvasTheme}
+      theme={gridTheme}
+      rowHeight={px(ROW_HEIGHT_PX)}
       fitColumns
       cellSelection={false}
       selectedRowId={selected}
@@ -158,19 +162,25 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 14px;
-    padding: 8px 12px;
-    font-size: 11px;
+    gap: 0.5rem 0.875rem;
+    padding: 0.5rem 0.75rem;
+    font-size: var(--text-xs);
+  }
+
+  /* A compact board keeps the exchanges and sessions, and drops the legend and unit. */
+  .board:global([data-compact]) .legend,
+  .board:global([data-compact]) .unit {
+    display: none;
   }
 
   .chips {
     display: flex;
-    gap: 2px;
+    gap: 0.125rem;
   }
 
   .chips button {
-    padding: 3px 10px;
-    font: 600 11px/1.4 var(--mono);
+    padding: 0.1875rem 0.625rem;
+    font: 600 var(--text-xs)/1.4 var(--mono);
     letter-spacing: 0.04em;
     background: transparent;
     border: 1px solid var(--rule);
@@ -194,16 +204,16 @@
   .session {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 2px 9px;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5625rem;
     border: 1px solid var(--rule);
     border-radius: 999px;
     color: var(--text);
   }
 
   .dot {
-    width: 7px;
-    height: 7px;
+    width: 0.4375rem;
+    height: 0.4375rem;
     border-radius: 50%;
     background: var(--text-dim);
   }
@@ -222,7 +232,7 @@
 
   .legend {
     display: flex;
-    gap: 12px;
+    gap: 0.75rem;
     margin: 0 0 0 auto;
     padding: 0;
     list-style: none;
@@ -232,12 +242,12 @@
   .legend li {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 0.3125rem;
   }
 
   .legend i {
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
   }
 

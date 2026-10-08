@@ -18,6 +18,9 @@
   "app.venueState.down": "mất kết nối",
   "app.venueState.unknown": "không rõ trạng thái kết nối",
   "app.language": "Ngôn ngữ",
+  "app.textSize": "Cỡ chữ, cho mọi cửa sổ",
+  "app.textSizeOption": "Chữ {size}",
+  "app.textSizeNotShared": "Cỡ chữ chưa tới được các cửa sổ khác: {error}",
   "app.startFailed": "Một phần của ứng dụng không khởi động được: {error}",
 
   "workspace.menu": "Không gian làm việc",

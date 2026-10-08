@@ -5,6 +5,7 @@
   import { price, quantity as formatQuantity } from "./format.js";
   import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { amendProblem, amendTerm, canAmendOrder } from "./amend.js";
+  import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   // `order` is the live order: it changes as fills arrive, so the form
@@ -83,6 +84,7 @@
      A refusal stands only until the terms it refused are edited. -->
 <form
   class="amend"
+  use:panelSize
   bind:this={form}
   onsubmit={send}
   oninput={() => (error = null)}
@@ -148,9 +150,9 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
     align-items: end;
-    gap: 8px 10px;
-    margin: 0 16px 8px;
-    padding: 8px 10px 10px;
+    gap: 0.5rem 0.625rem;
+    margin: 0 1rem 0.5rem;
+    padding: 0.5rem 0.625rem 0.625rem;
     background: var(--panel-raised);
     border-left: 3px solid var(--accent);
   }
@@ -159,10 +161,10 @@
     grid-column: 1 / -1;
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 10px;
+    gap: 0.25rem 0.625rem;
     align-items: baseline;
     margin: 0;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .sym {
@@ -180,30 +182,31 @@
 
   .field {
     display: grid;
-    gap: 4px;
+    gap: 0.25rem;
   }
 
   label {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
 
   .hint {
-    margin-left: 6px;
+    margin-left: 0.375rem;
     font-style: normal;
     text-transform: none;
     letter-spacing: 0;
   }
 
   input {
+    width: 100%;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 0.375rem 0.5rem;
     background: var(--ink);
     border: 1px solid var(--rule);
     border-radius: 0;
-    font-size: 13px;
+    font-size: var(--text-md);
   }
 
   input:focus {
@@ -217,7 +220,7 @@
   }
 
   .stepper button {
-    width: 30px;
+    width: 1.875rem;
     border: 1px solid var(--rule);
     border-left: none;
     background: var(--panel);
@@ -233,14 +236,27 @@
 
   .buttons {
     display: flex;
-    gap: 6px;
+    gap: 0.375rem;
+  }
+
+  /* Compact: the fields stack, and the buttons take a row of their own. */
+  .amend:global([data-compact]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .amend:global([data-compact]) .buttons > * {
+    flex: 1;
+  }
+
+  .amend:global([data-narrow]) .hint {
+    display: none;
   }
 
   .send,
   .close {
-    padding: 7px 12px;
+    padding: 0.4375rem 0.75rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -273,7 +289,7 @@
   .note {
     grid-column: 1 / -1;
     margin: 0;
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-dim);
   }
 

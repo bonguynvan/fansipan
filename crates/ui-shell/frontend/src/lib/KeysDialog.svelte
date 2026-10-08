@@ -126,8 +126,8 @@
 
 <style>
   .keys {
-    width: min(520px, calc(100vw - 32px));
-    padding: 18px 20px 16px;
+    width: min(32.5rem, calc(100vw - 2rem));
+    padding: 1.125rem 1.25rem 1rem;
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--rule);
@@ -139,19 +139,19 @@
   }
 
   h2 {
-    margin: 0 0 4px;
-    font-size: 15px;
+    margin: 0 0 0.25rem;
+    font-size: var(--text-xl);
   }
 
   .intro {
-    margin: 0 0 12px;
-    font-size: 12px;
+    margin: 0 0 0.75rem;
+    font-size: var(--text-sm);
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: var(--text-md);
   }
 
   th {
@@ -161,12 +161,12 @@
 
   th,
   td {
-    padding: 6px 0;
+    padding: 0.375rem 0;
     border-bottom: 1px solid var(--rule);
   }
 
   td {
-    padding-left: 12px;
+    padding-left: 0.75rem;
   }
 
   .change {
@@ -174,9 +174,9 @@
   }
 
   kbd {
-    padding: 1px 6px;
+    padding: 0.0625rem 0.375rem;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     background: var(--ink);
     border: 1px solid var(--rule);
   }
@@ -186,22 +186,22 @@
   }
 
   .note {
-    margin: 10px 0 0;
-    font-size: 12px;
+    margin: 0.625rem 0 0;
+    font-size: var(--text-sm);
     color: var(--accent);
   }
 
   footer {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    margin-top: 14px;
+    gap: 0.5rem;
+    margin-top: 0.875rem;
   }
 
   button {
-    padding: 4px 12px;
+    padding: 0.25rem 0.75rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     background: transparent;

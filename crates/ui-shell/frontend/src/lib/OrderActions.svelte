@@ -36,13 +36,13 @@
 <style>
   .actions {
     display: inline-flex;
-    gap: 4px;
+    gap: 0.25rem;
   }
 
   button {
-    padding: 2px 10px;
+    padding: 0.125rem 0.625rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     background: transparent;

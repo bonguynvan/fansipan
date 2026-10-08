@@ -1,6 +1,9 @@
 <script>
   import { tick } from "svelte";
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
+  import { px, ui } from "./ui.svelte.js";
+  import { sizeMarks } from "./panelSize.svelte.js";
   import OrderActions from "./OrderActions.svelte";
   import AmendForm from "./AmendForm.svelte";
   import { canAmendOrder } from "./amend.js";
@@ -48,25 +51,31 @@
   const byText = (prefix, tones) =>
     Object.fromEntries(Object.entries(tones).map(([key, tone]) => [t(`${prefix}.${key}`), tone]));
 
-  const columns = $derived([
-    { type: "number", key: "id", header: t("column.id"), width: 44, decimals: 0 },
-    { type: "text", key: "symbol", header: t("column.symbol"), width: 64 },
-    { type: "badge", key: "sideText", header: t("column.side"), width: 64, tones: byText("side", { buy: "up", sell: "down" }) },
-    { type: "text", key: "kind", header: t("column.type"), width: 150, tooltip: true },
-    { type: "text", key: "filled", header: t("column.filled"), width: 124, align: "right", flash: "change" },
-    { type: "text", key: "avg", header: t("column.avg"), width: 92, align: "right", format: (v, row) => price(v, row && market.priceDecimals(row.symbol)) },
-    { type: "badge", key: "statusText", header: t("column.status"), width: 116, tones: byText("status", STATUS_TONES), flash: "change" },
-    { type: "text", key: "reason", header: t("column.reason"), width: 220, tooltip: true },
+  // Which columns fit: the reason goes first, then the id, type, and average.
+  let width = $state(0);
+  const marks = $derived(sizeMarks(width, ui.rootPx));
+  const fits = (column) => !(column.leavesWhen && marks[column.leavesWhen]);
+
+  const allColumns = $derived([
+    { type: "number", key: "id", header: t("column.id"), width: px(44), decimals: 0, leavesWhen: "narrow" },
+    { type: "text", key: "symbol", header: t("column.symbol"), width: px(64) },
+    { type: "badge", key: "sideText", header: t("column.side"), width: px(64), tones: byText("side", { buy: "up", sell: "down" }) },
+    { type: "text", key: "kind", header: t("column.type"), width: px(150), tooltip: true, leavesWhen: "narrow" },
+    { type: "text", key: "filled", header: t("column.filled"), width: px(124), align: "right", flash: "change" },
+    { type: "text", key: "avg", header: t("column.avg"), width: px(92), align: "right", format: (v, row) => price(v, row && market.priceDecimals(row.symbol)), leavesWhen: "narrow" },
+    { type: "badge", key: "statusText", header: t("column.status"), width: px(116), tones: byText("status", STATUS_TONES), flash: "change" },
+    { type: "text", key: "reason", header: t("column.reason"), width: px(220), tooltip: true, leavesWhen: "compact" },
     {
       type: "custom",
       key: "action",
       header: "",
-      width: 164,
+      width: px(164),
       sortable: false,
       component: OrderActions,
       onAmend: (id) => (amending = id),
     },
   ]);
+  const columns = $derived(allColumns.filter(fits));
 
   const rows = $derived(
     orders.map((o) => ({
@@ -96,7 +105,7 @@
   const working = $derived(orders.filter((o) => o.open).length);
 </script>
 
-<div class="blotter" bind:this={blotter}>
+<div class="blotter" bind:this={blotter} bind:clientWidth={width}>
   <header>
     <span class="dim">{t("orders.summary", { working, total: orders.length })}</span>
   </header>
@@ -116,7 +125,8 @@
       {rows}
       {columns}
       height="100%"
-      theme={tradecanvasTheme}
+      theme={gridTheme}
+      rowHeight={px(ROW_HEIGHT_PX)}
       fitColumns
       cellSelection={false}
       emptyMessage={t("orders.empty")}
@@ -137,7 +147,7 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 10px 16px 8px;
+    padding: 0.625rem 1rem 0.5rem;
   }
 
 
@@ -148,9 +158,9 @@
   }
 
   .error {
-    margin: 0 16px 8px;
-    padding: 6px 10px;
-    font-size: 12px;
+    margin: 0 1rem 0.5rem;
+    padding: 0.375rem 0.625rem;
+    font-size: var(--text-sm);
     color: var(--down);
     border-left: 3px solid var(--down);
   }

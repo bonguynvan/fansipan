@@ -20,8 +20,8 @@
 
 <style>
   .locale {
-    padding: 3px 6px;
-    font-size: 11px;
+    padding: 0.1875rem 0.375rem;
+    font-size: var(--text-xs);
     letter-spacing: 0.04em;
     background: transparent;
     border: 1px solid var(--rule);

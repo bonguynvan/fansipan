@@ -117,16 +117,16 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 0.25rem;
     height: 100%;
-    padding: 0 6px;
+    padding: 0 0.375rem;
   }
 
   button {
-    min-width: 22px;
-    height: 20px;
-    padding: 0 6px;
-    font: 600 11px/1 var(--mono);
+    min-width: 1.375rem;
+    height: 1.25rem;
+    padding: 0 0.375rem;
+    font: 600 var(--text-xs)/1 var(--mono);
     background: transparent;
     border: 1px solid var(--rule);
     color: var(--text-dim);
@@ -147,8 +147,8 @@
 
   /* Hollow when the panel keeps its own symbol, filled when it follows the shared one. */
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     border: 1.5px solid var(--text-dim);
   }
@@ -163,9 +163,9 @@
   }
 
   .symbol {
-    height: 20px;
-    padding: 0 4px;
-    font: 600 11px/1 var(--mono);
+    height: 1.25rem;
+    padding: 0 0.25rem;
+    font: 600 var(--text-xs)/1 var(--mono);
     background: var(--ink);
     border: 1px solid var(--rule);
     color: var(--text);

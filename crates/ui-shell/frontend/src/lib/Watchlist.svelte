@@ -3,7 +3,9 @@
   // or one of the trader's named lists, which it can rename, delete, and
   // fill. The lists are shared by every panel in every window; which one a
   // panel shows is its own `list` parameter, saved with the layout.
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
+  import { px } from "./ui.svelte.js";
   import { market } from "./market.svelte.js";
   import { chooseSymbol, symbolOf } from "./links.svelte.js";
   import { setLists, startWatchlists, watchlists } from "./watchlists.svelte.js";
@@ -22,6 +24,7 @@
     withoutSymbol,
   } from "./watchlists.js";
   import RemoveCell from "./RemoveCell.svelte";
+  import { panelSize } from "./panelSize.svelte.js";
   import { t, tn } from "../i18n/i18n.svelte.js";
   import { price } from "./format.js";
 
@@ -146,13 +149,13 @@
   // A named list keeps the trader's order, which dragging sets, so its
   // columns do not sort; "All" sorts freely.
   const columns = $derived([
-    { type: "text", key: "symbol", header: t("column.symbol"), width: 70, sortable: !list },
-    { type: "sparkline", key: "trend", sparkKey: "trend", header: t("column.trend"), width: 96, sortable: false },
-    { type: "price", key: "bid", header: t("column.bid"), width: 84, flash: "auto", format: atTick, sortable: !list },
-    { type: "price", key: "ask", header: t("column.ask"), width: 84, flash: "auto", format: atTick, sortable: !list },
-    { type: "number", key: "spread", header: t("column.spread"), width: 64, format: atTick, sortable: !list },
+    { type: "text", key: "symbol", header: t("column.symbol"), width: px(70), sortable: !list },
+    { type: "sparkline", key: "trend", sparkKey: "trend", header: t("column.trend"), width: px(96), sortable: false },
+    { type: "price", key: "bid", header: t("column.bid"), width: px(84), flash: "auto", format: atTick, sortable: !list },
+    { type: "price", key: "ask", header: t("column.ask"), width: px(84), flash: "auto", format: atTick, sortable: !list },
+    { type: "number", key: "spread", header: t("column.spread"), width: px(64), format: atTick, sortable: !list },
     ...(list
-      ? [{ type: "custom", key: "remove", header: "", width: 36, sortable: false, component: RemoveCell, onRemove: remove }]
+      ? [{ type: "custom", key: "remove", header: "", width: px(36), sortable: false, component: RemoveCell, onRemove: remove }]
       : []),
   ]);
 
@@ -179,7 +182,7 @@
   );
 </script>
 
-<div class="watch">
+<div class="watch" use:panelSize>
   <header>
     <div class="lists">
       {#if renaming && list}
@@ -249,7 +252,8 @@
         {rows}
         {columns}
         height="100%"
-        theme={tradecanvasTheme}
+        theme={gridTheme}
+        rowHeight={px(ROW_HEIGHT_PX)}
         fitColumns
         cellSelection={false}
         selectedRowId={selected}
@@ -276,15 +280,15 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
-    padding: 8px 16px 6px;
+    gap: 0.625rem;
+    padding: 0.5rem 1rem 0.375rem;
   }
 
   .lists {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 0.375rem;
     min-width: 0;
   }
 
@@ -295,9 +299,9 @@
   select,
   input {
     min-width: 0;
-    padding: 4px 8px;
+    padding: 0.25rem 0.5rem;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--text-sm);
     background: var(--ink);
     border: 1px solid var(--rule);
     border-radius: 0;
@@ -305,11 +309,11 @@
   }
 
   select {
-    max-width: 180px;
+    max-width: 11.25rem;
   }
 
   .name {
-    width: 160px;
+    width: 10rem;
   }
 
   select:focus,
@@ -319,9 +323,9 @@
   }
 
   button {
-    padding: 3px 9px;
+    padding: 0.1875rem 0.5625rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     background: transparent;
@@ -345,13 +349,13 @@
   .add {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px;
-    padding: 0 16px 8px;
+    gap: 0.375rem;
+    padding: 0 1rem 0.5rem;
   }
 
   .note {
-    margin: 0 16px 8px;
-    font-size: 12px;
+    margin: 0 1rem 0.5rem;
+    font-size: var(--text-sm);
     color: var(--text-dim);
   }
 
@@ -368,7 +372,12 @@
   .hint {
     grid-row: 5;
     margin: 0;
-    padding: 8px 16px 12px;
-    font-size: 11px;
+    padding: 0.5rem 1rem 0.75rem;
+    font-size: var(--text-xs);
+  }
+
+  .watch:global([data-compact]) .hint,
+  .watch:global([data-narrow]) .count {
+    display: none;
   }
 </style>

@@ -18,6 +18,9 @@
   "app.venueState.down": "disconnected",
   "app.venueState.unknown": "status unknown",
   "app.language": "Language",
+  "app.textSize": "Text size, in every window",
+  "app.textSizeOption": "Text {size}",
+  "app.textSizeNotShared": "The text size did not reach the other windows: {error}",
   "app.startFailed": "Part of the terminal did not start: {error}",
 
   "workspace.menu": "Workspace",

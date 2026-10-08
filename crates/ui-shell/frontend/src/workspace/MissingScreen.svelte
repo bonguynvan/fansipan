@@ -13,12 +13,12 @@
 
 <style>
   .missing {
-    padding: 16px;
-    font-size: 12px;
+    padding: 1rem;
+    font-size: var(--text-sm);
   }
 
   p {
-    margin: 0 0 6px;
+    margin: 0 0 0.375rem;
   }
 
 </style>

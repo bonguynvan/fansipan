@@ -58,7 +58,7 @@
 <style>
   .workspace-menu {
     display: flex;
-    gap: 6px;
+    gap: 0.375rem;
   }
 
   .menu {
@@ -66,8 +66,8 @@
   }
 
   .menu > button {
-    padding: 4px 10px;
-    font-size: 11px;
+    padding: 0.25rem 0.625rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     background: transparent;
@@ -86,12 +86,12 @@
 
   ul {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 0.25rem);
     right: 0;
     z-index: 1000;
-    min-width: 280px;
+    min-width: 17.5rem;
     margin: 0;
-    padding: 4px;
+    padding: 0.25rem;
     list-style: none;
     background: var(--panel-raised);
     border: 1px solid var(--rule);
@@ -100,9 +100,9 @@
 
   li > button {
     display: grid;
-    gap: 2px;
+    gap: 0.125rem;
     width: 100%;
-    padding: 8px 10px;
+    padding: 0.5rem 0.625rem;
     text-align: left;
     background: transparent;
     border: none;
@@ -117,10 +117,10 @@
   }
 
   .title {
-    font-size: 13px;
+    font-size: var(--text-md);
   }
 
   .desc {
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
 </style>

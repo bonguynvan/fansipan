@@ -3,12 +3,15 @@
   // price coloured against the day's reference, ceiling and floor as on
   // the price board. Prints come from the engines' tape: the screen reads
   // a symbol's history once, and the batches bring the rest.
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
+  import { px } from "./ui.svelte.js";
   import { darkToneColors, toneColor } from "bo-grid/trading";
   import { loadTape, market } from "./market.svelte.js";
   import { symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
   import { printRows } from "./tape.js";
+  import { panelSize } from "./panelSize.svelte.js";
   import { tickDecimals, tickTable } from "./ticks.js";
   import { timeOfDay } from "./format.js";
   import { t } from "../i18n/i18n.svelte.js";
@@ -47,12 +50,12 @@
     value.toLocaleString("en-US", { minimumFractionDigits: places, maximumFractionDigits: places });
 
   const columns = $derived([
-    { type: "text", key: "time", header: t("column.time"), width: 84, sortable: false, format: (value) => timeOfDay(value) },
+    { type: "text", key: "time", header: t("column.time"), width: px(84), sortable: false, format: (value) => timeOfDay(value) },
     {
       type: "price",
       key: "price",
       header: t("board.price"),
-      width: 72,
+      width: px(72),
       sortable: false,
       autoWidth: true,
       format: (value) => fixed(value, decimals),
@@ -62,7 +65,7 @@
       type: "volume",
       key: "quantity",
       header: t("board.volume"),
-      width: 76,
+      width: px(76),
       sortable: false,
       format: (value) => value.toLocaleString("en-US"),
     },
@@ -72,14 +75,14 @@
       type: "text",
       key: "sideText",
       header: t("column.side"),
-      width: 56,
+      width: px(56),
       sortable: false,
       cellClass: (_value, row) => SIDE_TONES[row.side],
     },
   ]);
 </script>
 
-<div class="tape" style={toneVars}>
+<div class="tape" style={toneVars} use:panelSize>
   <header>
     <span class="sym">{selected ?? "—"}</span>
     {#if scale !== 1}
@@ -98,7 +101,8 @@
       {rows}
       {columns}
       height="100%"
-      theme={tradecanvasTheme}
+      theme={gridTheme}
+      rowHeight={px(ROW_HEIGHT_PX)}
       fitColumns
       cellSelection={false}
       ariaLabel={t("tape.gridLabel", { symbol: selected ?? "" })}
@@ -120,21 +124,25 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    gap: 12px;
-    padding: 10px 16px 8px;
-    font-size: 12px;
+    gap: 0.75rem;
+    padding: 0.625rem 1rem 0.5rem;
+    font-size: var(--text-sm);
+  }
+
+  .tape:global([data-narrow]) header .dim {
+    display: none;
   }
 
   .sym {
     font-family: var(--mono);
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--text-md);
   }
 
   .error {
-    margin: 0 16px 8px;
-    padding: 6px 10px;
-    font-size: 12px;
+    margin: 0 1rem 0.5rem;
+    padding: 0.375rem 0.625rem;
+    font-size: var(--text-sm);
     color: var(--down);
     border-left: 3px solid var(--down);
   }

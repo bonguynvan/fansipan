@@ -15,6 +15,8 @@
   import { MAIN_WINDOW, currentWindowLabel, flushLayout, workspace } from "./workspace/workspace.svelte.js";
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
   import LocalePicker from "./i18n/LocalePicker.svelte";
+  import ScalePicker from "./lib/ScalePicker.svelte";
+  import { startUiScale } from "./lib/ui.svelte.js";
 
   // Screens must be registered before any layout that names them loads.
   registerBuiltins();
@@ -25,6 +27,9 @@
   onMount(() => {
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
     startLocale().catch(failed);
+    startUiScale({
+      onError: (error) => (workspace.notice = { id: "app.textSizeNotShared", vars: { error } }),
+    }).catch(failed);
     startLinks({
       onError: (error) => (workspace.notice = { id: "workspace.symbolNotShared", vars: { error } }),
     }).catch(failed);
@@ -83,6 +88,7 @@
     <div class="tools">
       <WorkspaceMenu />
       <button class="keys-button" onclick={() => (keysOpen = true)}>{t("hotkey.open")}</button>
+      <ScalePicker />
       <LocalePicker />
       <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
         <span class="dot"></span>{status}
@@ -108,14 +114,14 @@
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    padding: 8px 16px;
+    padding: 0.5rem 1rem;
     background: var(--panel);
     border-bottom: 1px solid var(--rule);
   }
 
   .brand {
     display: flex;
-    gap: 10px;
+    gap: 0.625rem;
     align-items: baseline;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -127,26 +133,26 @@
 
   .venue {
     font-weight: 400;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
 
   .equity {
     display: flex;
-    gap: 10px;
+    gap: 0.625rem;
     align-items: baseline;
-    font-size: 18px;
+    font-size: var(--text-2xl);
   }
 
   .equity .dim {
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.12em;
   }
 
   .keys-button {
-    padding: 4px 10px;
+    padding: 0.25rem 0.625rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     background: transparent;
@@ -165,23 +171,37 @@
   .tools {
     justify-self: end;
     display: flex;
-    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem 1rem;
     align-items: center;
+  }
+
+  /* The top bar gets the window, so it alone answers to the window's width. */
+  @media (max-width: 64rem) {
+    .venue,
+    .equity .dim {
+      display: none;
+    }
+
+    .tools {
+      gap: 0.375rem 0.5rem;
+    }
   }
 
   .status {
     display: flex;
-    gap: 8px;
+    gap: 0.5rem;
     align-items: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--text-dim);
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     background: var(--text-dim);
   }

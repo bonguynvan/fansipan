@@ -131,10 +131,10 @@
   .notice {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: 0.75rem;
     margin: 0;
-    padding: 6px 12px;
-    font-size: 12px;
+    padding: 0.375rem 0.75rem;
+    font-size: var(--text-sm);
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 10%, var(--panel));
     border-bottom: 1px solid var(--rule);

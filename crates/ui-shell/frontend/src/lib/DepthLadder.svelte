@@ -5,7 +5,9 @@
   // price, and the side too when the click is on the bid or ask column.
   // Scrolling (the wheel, or the page buttons) holds the ladder where the
   // trader put it until Recenter.
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { gridTheme } from "./gridTheme.js";
+  import { px } from "./ui.svelte.js";
   import { centeredWindow } from "bo-grid/realtime";
   import { darkToneColors, toneColor } from "bo-grid/trading";
   import { market } from "./market.svelte.js";
@@ -13,13 +15,15 @@
   import { pickPrice } from "./picks.svelte.js";
   import { marketPreset } from "./markets.js";
   import { centreIndex, ladderRows } from "./ladder.js";
+  import { panelSize } from "./panelSize.svelte.js";
   import { tickDecimals, tickTable } from "./ticks.js";
   import { t } from "../i18n/i18n.svelte.js";
 
   let { params } = $props();
 
-  const ROW_HEIGHT = 24;
-  const HEADER_HEIGHT = 32;
+  /** Row and header heights, in pixels at 100%; px() scales them. */
+  const ROW_DESIGN_PX = 24;
+  const HEADER_DESIGN_PX = 32;
   const MIN_VISIBLE = 5;
   /** Rows of overlap a page keeps, so the trader does not lose their place. */
   const PAGE_OVERLAP = 2;
@@ -36,7 +40,8 @@
   const linked = $derived(isLinked(params));
 
   let gridHeight = $state(0);
-  const visibleCount = $derived(Math.max(MIN_VISIBLE, Math.floor((gridHeight - HEADER_HEIGHT) / ROW_HEIGHT)));
+  const rowHeight = $derived(px(ROW_DESIGN_PX));
+  const visibleCount = $derived(Math.max(MIN_VISIBLE, Math.floor((gridHeight - px(HEADER_DESIGN_PX)) / rowHeight)));
 
   // null follows the market; `{ symbol, key }` holds the ladder on that
   // price of that symbol. A key, not an index, so the held window stays on
@@ -74,10 +79,10 @@
     if (!rows.length) return;
     event.preventDefault();
     const unit =
-      event.deltaMode === WheelEvent.DOM_DELTA_LINE ? ROW_HEIGHT : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? gridHeight : 1;
+      event.deltaMode === WheelEvent.DOM_DELTA_LINE ? rowHeight : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? gridHeight : 1;
     wheelTravel += event.deltaY * unit;
-    const whole = Math.trunc(wheelTravel / ROW_HEIGHT);
-    wheelTravel -= whole * ROW_HEIGHT;
+    const whole = Math.trunc(wheelTravel / rowHeight);
+    wheelTravel -= whole * rowHeight;
     moveBy(whole);
   }
 
@@ -100,7 +105,7 @@
       type: "volume",
       key: "bid",
       header: t("ladder.bid"),
-      width: 80,
+      width: px(80),
       sortable: false,
       format: size,
       cellClass: "ld-bid",
@@ -110,7 +115,7 @@
       type: "price",
       key: "price",
       header: t("board.price"),
-      width: 80,
+      width: px(80),
       sortable: false,
       format: (value) => fixed(value, decimals),
       cellClass: (_value, row) => (row.tone ? `ld-${row.tone}` : undefined),
@@ -119,7 +124,7 @@
       type: "volume",
       key: "ask",
       header: t("ladder.ask"),
-      width: 80,
+      width: px(80),
       sortable: false,
       // Both sides' sizes sit against the price between them.
       align: "left",
@@ -132,7 +137,7 @@
   const rowClass = (row) => [row.last && "ld-last", row.touch && "ld-touch"].filter(Boolean).join(" ");
 </script>
 
-<div class="ladder" style={toneVars}>
+<div class="ladder" style={toneVars} use:panelSize>
   <header>
     <span class="sym">{selected ?? "—"}</span>
     <span class="pager" role="group" aria-label={t("ladder.scroll")}>
@@ -154,8 +159,8 @@
       rows={shown}
       {columns}
       height="100%"
-      rowHeight={ROW_HEIGHT}
-      theme={tradecanvasTheme}
+      {rowHeight}
+      theme={gridTheme}
       fitColumns
       {rowClass}
       ariaLabel={t("ladder.gridLabel", { symbol: selected ?? "" })}
@@ -182,15 +187,15 @@
   header {
     display: flex;
     align-items: baseline;
-    gap: 10px;
-    padding: 10px 16px 8px;
-    font-size: 12px;
+    gap: 0.625rem;
+    padding: 0.625rem 1rem 0.5rem;
+    font-size: var(--text-sm);
   }
 
   .sym {
     font-family: var(--mono);
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--text-md);
   }
 
   .hint {
@@ -198,10 +203,14 @@
     text-align: right;
   }
 
+  .ladder:global([data-compact]) .hint {
+    display: none;
+  }
+
   .recenter {
-    padding: 2px 10px;
+    padding: 0.125rem 0.625rem;
     font: inherit;
-    font-size: 11px;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     background: transparent;
@@ -222,10 +231,10 @@
   }
 
   .pager button {
-    width: 26px;
-    padding: 1px 0;
+    width: 1.625rem;
+    padding: 0.0625rem 0;
     font: inherit;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     background: transparent;
     border: 1px solid var(--rule);
     color: var(--text-dim);
@@ -243,9 +252,9 @@
   }
 
   .error {
-    margin: 0 16px 8px;
-    padding: 6px 10px;
-    font-size: 12px;
+    margin: 0 1rem 0.5rem;
+    padding: 0.375rem 0.625rem;
+    font-size: var(--text-sm);
     color: var(--down);
     border-left: 3px solid var(--down);
   }

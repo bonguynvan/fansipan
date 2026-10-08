@@ -211,9 +211,9 @@
   .pages {
     display: flex;
     align-items: stretch;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 8px;
+    gap: 0.375rem;
+    min-height: 1.875rem;
+    padding: 0 0.5rem;
     background: var(--panel);
     border-bottom: 1px solid var(--rule);
   }
@@ -230,7 +230,7 @@
     padding: 0;
     list-style: none;
     align-items: stretch;
-    gap: 2px;
+    gap: 0.125rem;
     min-width: 0;
     overflow-x: auto;
   }
@@ -247,7 +247,7 @@
 
   button {
     font: inherit;
-    font-size: 12px;
+    font-size: var(--text-sm);
     background: transparent;
     border: none;
     color: var(--text-dim);
@@ -255,7 +255,7 @@
   }
 
   .tab > .page {
-    padding: 4px 8px;
+    padding: 0.25rem 0.5rem;
     white-space: nowrap;
   }
 
@@ -264,19 +264,19 @@
   }
 
   .x {
-    padding: 2px 6px;
+    padding: 0.125rem 0.375rem;
     opacity: 0.6;
   }
 
   .desktop,
   .add {
-    padding: 3px 10px;
+    padding: 0.1875rem 0.625rem;
     border: 1px solid var(--rule);
   }
 
   .add {
-    padding: 2px 9px;
-    font-size: 14px;
+    padding: 0.125rem 0.5625rem;
+    font-size: var(--text-lg);
   }
 
   button:hover,
@@ -292,10 +292,10 @@
   }
 
   .name {
-    width: 150px;
-    padding: 3px 8px;
+    width: 9.375rem;
+    padding: 0.1875rem 0.5rem;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--text-sm);
     background: var(--ink);
     border: 1px solid var(--accent);
     color: var(--text);
@@ -304,12 +304,12 @@
 
   ul {
     position: absolute;
-    top: calc(100% + 2px);
+    top: calc(100% + 0.125rem);
     left: 0;
     z-index: 1000;
-    min-width: 240px;
+    min-width: 15rem;
     margin: 0;
-    padding: 4px;
+    padding: 0.25rem;
     list-style: none;
     background: var(--panel-raised);
     border: 1px solid var(--rule);
@@ -318,7 +318,7 @@
 
   li > button {
     width: 100%;
-    padding: 7px 10px;
+    padding: 0.4375rem 0.625rem;
     text-align: left;
     color: var(--text);
   }
@@ -338,7 +338,7 @@
 
   .delete {
     width: auto;
-    padding: 7px 10px;
+    padding: 0.4375rem 0.625rem;
     color: var(--text-dim);
     white-space: nowrap;
   }
@@ -349,18 +349,18 @@
 
   .check {
     display: inline-block;
-    width: 16px;
+    width: 1rem;
     color: var(--accent);
   }
 
   li.separator {
-    margin: 4px 0;
+    margin: 0.25rem 0;
     border-top: 1px solid var(--rule);
   }
 
   .heading {
-    padding: 8px 10px 4px;
-    font-size: 10px;
+    padding: 0.5rem 0.625rem 0.25rem;
+    font-size: var(--text-2xs);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);

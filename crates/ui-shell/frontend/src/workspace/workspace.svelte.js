@@ -18,6 +18,7 @@ import { isLinked, linkPatch, migrateLinkParams } from "../lib/links.svelte.js";
 import { marketInfo } from "../lib/market.svelte.js";
 import { marketPreset } from "../lib/markets.js";
 import { newWindowLabel } from "./labels.js";
+import { px } from "../lib/ui.svelte.js";
 import * as pages from "./pages.js";
 import { t } from "../i18n/i18n.svelte.js";
 
@@ -25,7 +26,7 @@ export const MAIN_WINDOW = "main";
 const SAVE_DELAY_MS = 400;
 /** An extra window sends a panel back to the main window's page on this event. */
 const DOCK_EVENT = "workspace-dock";
-/** Where the first panel lifted off the dock floats, and how big; the next ones cascade. */
+/** Where the first panel lifted off the dock floats, and how big, in pixels at 100%; the next ones cascade. */
 const FLOATING_BOX = { x: 80, y: 60, width: 460, height: 340 };
 const FLOATING_STEP = 28;
 const FLOATING_SPAN = 8;
@@ -146,7 +147,8 @@ function buildLayout(layout) {
   layout.build((screenId, options = {}) => {
     const { initialWidth, initialHeight, ...rest } = options;
     const panel = addScreen(screenId, rest);
-    const size = { ...(initialWidth && { width: initialWidth }), ...(initialHeight && { height: initialHeight }) };
+    // Size hints are in pixels at 100%, like every size in a layout.
+    const size = { ...(initialWidth && { width: px(initialWidth) }), ...(initialHeight && { height: px(initialHeight) }) };
     if (panel && Object.keys(size).length) sized.push([panel, size]);
     return panel;
   });
@@ -288,9 +290,10 @@ export function floatGroup(group) {
   if (!api || group?.api.location.type !== "grid") return;
   const n = api.groups.filter(isFloating).length % FLOATING_SPAN;
   api.addFloatingGroup(group, {
-    ...FLOATING_BOX,
-    x: FLOATING_BOX.x + n * FLOATING_STEP,
-    y: FLOATING_BOX.y + n * FLOATING_STEP,
+    x: px(FLOATING_BOX.x + n * FLOATING_STEP),
+    y: px(FLOATING_BOX.y + n * FLOATING_STEP),
+    width: px(FLOATING_BOX.width),
+    height: px(FLOATING_BOX.height),
   });
   persist();
 }

@@ -12,17 +12,37 @@
   --down: #f0616d;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
+
+  /* The type scale (ADR 0014, docs/ui-rules.md). Every size in the app is
+     rem, so the trader's text size, zoom, and the system's scaling move
+     all of them together. Values at 100%: 10, 11, 12, 13, 14, 15, 18px. */
+  --text-2xs: 0.625rem;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-md: 0.8125rem;
+  --text-lg: 0.875rem;
+  --text-xl: 0.9375rem;
+  --text-2xl: 1.125rem;
 }
 
 * { box-sizing: border-box; }
+
+/* 1rem: the browser's default font size times the trader's text size
+   (`ui.scale`, set by lib/ui.svelte.js). */
+html {
+  font-size: calc(100% * var(--ui-scale, 1));
+}
 
 html, body {
   margin: 0;
   height: 100%;
   background: var(--ink);
   color: var(--text);
-  font: 13px/1.4 var(--sans);
   overflow: hidden;
+}
+
+body {
+  font: var(--text-md)/1.4 var(--sans);
 }
 
 button, input, select {
@@ -51,8 +71,8 @@ button, input, select {
 .dockview-theme-fansipan {
   --dv-group-view-background-color: var(--panel);
   --dv-tabs-and-actions-container-background-color: var(--ink);
-  --dv-tabs-and-actions-container-height: 30px;
-  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 1.875rem;
+  --dv-tabs-and-actions-container-font-size: var(--text-sm);
   --dv-activegroup-visiblepanel-tab-background-color: var(--panel);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--ink);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel);

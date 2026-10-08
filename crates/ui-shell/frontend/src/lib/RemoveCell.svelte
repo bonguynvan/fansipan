@@ -18,11 +18,11 @@
 
 <style>
   .remove {
-    width: 22px;
-    height: 20px;
+    width: 1.375rem;
+    height: 1.25rem;
     padding: 0;
     font: inherit;
-    font-size: 14px;
+    font-size: var(--text-lg);
     line-height: 1;
     background: transparent;
     border: 1px solid transparent;

@@ -1,5 +1,7 @@
 <script>
-  import { Grid, tradecanvasTheme } from "bo-grid";
+  import { Grid } from "bo-grid";
+  import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
+  import { px } from "./ui.svelte.js";
   import { mark, money, price, quantity } from "./format.js";
   import { market } from "./market.svelte.js";
   import { chooseSymbol } from "./links.svelte.js";
@@ -15,11 +17,11 @@
   const inCash = (value) => money(value, market.info?.currency);
 
   const columns = $derived([
-    { type: "text", key: "symbol", header: t("column.symbol"), width: 66, minWidth: 62 },
-    { type: "text", key: "quantity", header: t("column.qty"), width: 48, minWidth: 40, align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
-    { type: "text", key: "avg", header: t("column.avg"), width: 78, minWidth: 72, align: "right", format: atTick },
-    { type: "price", key: "mark", header: t("column.mark"), width: 72, minWidth: 64, flash: "auto", format: atTick },
-    { type: "number", key: "pnl", header: t("column.pnl"), width: 76, minWidth: 64, format: inCash, cellClass: (v) => tone(v) },
+    { type: "text", key: "symbol", header: t("column.symbol"), width: px(66), minWidth: px(62) },
+    { type: "text", key: "quantity", header: t("column.qty"), width: px(48), minWidth: px(40), align: "right", format: (v) => quantity(v), cellClass: (_v, row) => (Number(row.quantity) < 0 ? "down" : undefined) },
+    { type: "text", key: "avg", header: t("column.avg"), width: px(78), minWidth: px(72), align: "right", format: atTick },
+    { type: "price", key: "mark", header: t("column.mark"), width: px(72), minWidth: px(64), flash: "auto", format: atTick },
+    { type: "number", key: "pnl", header: t("column.pnl"), width: px(76), minWidth: px(64), format: inCash, cellClass: (v) => tone(v) },
   ]);
 
   const rows = $derived(
@@ -48,7 +50,8 @@
       {rows}
       {columns}
       height="100%"
-      theme={tradecanvasTheme}
+      theme={gridTheme}
+      rowHeight={px(ROW_HEIGHT_PX)}
       fitColumns
       cellSelection={false}
       onRowClick={(row) => chooseSymbol(params, panel, row.symbol)}
@@ -70,7 +73,7 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 10px 16px 8px;
+    padding: 0.625rem 1rem 0.5rem;
   }
 
 
