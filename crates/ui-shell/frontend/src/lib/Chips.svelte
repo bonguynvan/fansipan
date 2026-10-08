@@ -19,6 +19,7 @@
 <style>
   .chips {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.125rem;
   }
 
