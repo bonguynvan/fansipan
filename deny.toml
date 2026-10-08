@@ -8,6 +8,9 @@ all-features = true
 [advisories]
 # Any vulnerability fails the build. An unmaintained crate fails it too,
 # unless it is listed here with why it cannot be replaced yet.
+# An ignore that no longer matches anything fails as well, so each one is
+# dropped as soon as the dependency moves on, instead of lingering.
+unused-ignored-advisory = "deny"
 ignore = [
   # Through Tauri's Linux stack (glib-macros 0.18, the GTK 3 bindings);
   # Tauri decides when it moves off them, and no safe upgrade exists.
