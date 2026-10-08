@@ -454,9 +454,15 @@ export async function popOut(panel) {
   });
   try {
     await setSetting(layoutKey(label), seed);
-    // The window opens at the size of the panel's group, tab strip and all.
+    // The window opens at the size of the panel's group, tab strip and all;
+    // a group not laid out yet has no size, and the window takes the default.
     const { width, height } = panel.group.api;
-    await invoke("open_window", { label, width: Math.round(width), height: Math.round(height) });
+    const sized = width > 0 && height > 0;
+    await invoke("open_window", {
+      label,
+      width: sized ? Math.round(width) : undefined,
+      height: sized ? Math.round(height) : undefined,
+    });
     workspace.api?.removePanel(panel);
   } catch (err) {
     notify("workspace.windowFailed", { error: String(err) });

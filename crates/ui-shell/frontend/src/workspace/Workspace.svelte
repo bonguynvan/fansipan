@@ -4,6 +4,7 @@
   // (injected on load); the ES module build ships none.
   import { createDockview, themeDark } from "dockview-core/dist/dockview-core.js";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { windowHandles } from "./dragStrips.js";
   import { getScreen } from "./registry.js";
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
@@ -76,19 +77,16 @@
 
     const subscriptions = [api.onDidLayoutChange(persist)];
     if (label !== MAIN_WINDOW) {
-      // An extra window has no title bar: the empty part of each docked tab
-      // strip moves it, as a title bar would (and maximises it on a
-      // double-click). A floating group's strip moves that group instead.
+      // An extra window has no title bar: some of its tab strips' empty
+      // parts move it instead (and maximise it on a double-click).
       const markDragStrips = () => {
-        for (const strip of host.querySelectorAll(".dv-void-container")) {
-          strip.toggleAttribute("data-tauri-drag-region", !strip.closest(".dv-resize-container"));
-        }
+        const strips = [...host.querySelectorAll(".dv-void-container")];
+        const handles = windowHandles(strips, (strip) => strip.closest(".dv-resize-container") !== null);
+        for (const strip of strips) strip.toggleAttribute("data-tauri-drag-region", handles.has(strip));
       };
-      const strips = new MutationObserver(markDragStrips);
-      strips.observe(host, { childList: true, subtree: true });
-      markDragStrips();
       subscriptions.push(
-        { dispose: () => strips.disconnect() },
+        // Fires after groups are added, removed, floated, or docked.
+        api.onDidLayoutChange(markDragStrips),
         // An extra window with nothing left in it has no reason to stay open.
         api.onDidRemovePanel(() => {
           if (api.totalPanels === 0 && !workspace.rebuilding) getCurrentWindow().close();
