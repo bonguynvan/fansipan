@@ -4,6 +4,7 @@
   // fill. The lists are shared by every panel in every window; which one a
   // panel shows is its own `list` parameter, saved with the layout.
   import { Grid } from "bo-grid";
+  import { keyboardRow } from "./keyboardRow.js";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
   import { market } from "./market.svelte.js";
@@ -246,7 +247,7 @@
   <!-- A fresh grid per list: a sort made in "All" must not carry into a
        named list, whose order is the trader's and whose drag-to-reorder
        works only unsorted. -->
-  <div class="grid">
+  <div class="grid" use:keyboardRow>
     {#key listId}
       <Grid
         {rows}

@@ -21,6 +21,10 @@ describe("comboOf", () => {
     expect(comboOf(press("F1", "F1"))).toBe("F1");
     expect(comboOf(press("Digit5", "%", { shiftKey: true }))).toBe("Shift+5");
     expect(comboOf(press("Escape", "Escape"))).toBe("Escape");
+    // The workspace's defaults for walking panels and pages.
+    expect(comboOf(press("F6", "F6", { ctrlKey: true, shiftKey: true }))).toBe("Ctrl+Shift+F6");
+    expect(comboOf(press("Tab", "Tab", { ctrlKey: true }))).toBe("Ctrl+Tab");
+    expect(isBindable("Ctrl+Shift+Tab")).toBe(true);
     expect(comboOf(press("Space", " "))).toBe("Space");
   });
 

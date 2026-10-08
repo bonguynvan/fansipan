@@ -126,6 +126,17 @@ button, input, select {
   --dv-icon-hover-background-color: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
+/* The row the keyboard is on in a grid that draws no cell selection
+   (lib/keyboardRow.js), and the panel the keyboard is in. */
+[data-keyboard-row] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.dv-groupview:has(:focus-visible) {
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -1px;
+}
+
 /* A screen fills its panel; the screen decides what scrolls. */
 .panel-body {
   height: 100%;

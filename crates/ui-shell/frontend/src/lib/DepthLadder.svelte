@@ -6,6 +6,7 @@
   // Scrolling (the wheel, or the page buttons) holds the ladder where the
   // trader put it until Recenter.
   import { Grid } from "bo-grid";
+  import { keyboardRow } from "./keyboardRow.js";
   import { gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
   import { centeredWindow } from "bo-grid/realtime";
@@ -152,7 +153,7 @@
     <p class="error" role="alert">{t("ladder.pickFailed", { error: pickError })}</p>
   {/if}
 
-  <div class="grid" bind:clientHeight={gridHeight} onwheel={onWheel}>
+  <div class="grid" use:keyboardRow bind:clientHeight={gridHeight} onwheel={onWheel}>
     <Grid
       rows={shown}
       {columns}

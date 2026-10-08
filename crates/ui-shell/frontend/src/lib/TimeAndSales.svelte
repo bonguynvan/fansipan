@@ -4,6 +4,7 @@
   // the price board. Prints come from the engines' tape: the screen reads
   // a symbol's history once, and the batches bring the rest.
   import { Grid } from "bo-grid";
+  import { keyboardRow } from "./keyboardRow.js";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
   import { loadTape, market } from "./market.svelte.js";
@@ -94,7 +95,7 @@
     <p class="error" role="alert">{t("tape.loadFailed", { error })}</p>
   {/if}
 
-  <div class="grid">
+  <div class="grid" use:keyboardRow>
     <Grid
       {rows}
       {columns}

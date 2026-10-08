@@ -18,6 +18,8 @@ import { isLinked, linkPatch, migrateLinkParams } from "../lib/links.svelte.js";
 import { marketInfo } from "../lib/market.svelte.js";
 import { marketPreset } from "../lib/markets.js";
 import { newWindowLabel } from "./labels.js";
+import { panelOrder, stepFrom } from "./panelOrder.js";
+import { registerAction } from "../lib/hotkeys.svelte.js";
 import { px } from "../lib/ui.svelte.js";
 import * as pages from "./pages.js";
 import { t } from "../i18n/i18n.svelte.js";
@@ -220,6 +222,86 @@ function change(apply) {
 
 export function goToPage(id) {
   change((ws) => pages.switchPage(ws, id));
+}
+
+/** Shows the open page `step` away from the one on screen, wrapping round. */
+export function stepPage(step) {
+  if (!workspace.pages) return;
+  const open = pages.openPages(workspace.pages).map((page) => page.id);
+  const next = stepFrom(open, pages.activePage(workspace.pages).id, step);
+  if (next) goToPage(next);
+}
+
+// The keyboard -----------------------------------------------------------------
+
+/** What the keyboard lands on in a panel it moves to, unless a screen marks its own with `data-autofocus`. */
+const FOCUSABLE = 'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex="0"]';
+
+/**
+ * Moves to the panel `step` away in walking order (panelOrder.js): shows
+ * it, and puts the keyboard in it.
+ */
+export function stepPanel(step) {
+  const api = workspace.api;
+  if (!api) return;
+  const order = panelOrder(
+    api.groups.map((group) => {
+      const box = group.element.getBoundingClientRect();
+      return {
+        top: Math.round(box.top),
+        left: Math.round(box.left),
+        floating: group.api.location.type === "floating",
+        panels: group.panels,
+      };
+    }),
+  );
+  const next = stepFrom(order, api.activePanel, step);
+  if (!next) return;
+  next.api.setActive();
+  // A panel in a background tab is attached once it is shown: a frame later.
+  requestAnimationFrame(() => focusInto(next));
+}
+
+/**
+ * The keyboard into `panel`: the element its screen marks with
+ * `data-autofocus`, else its grid, else the first control. With none, the
+ * panel's content itself, so keys stop going to the panel left behind.
+ */
+function focusInto(panel) {
+  const content = panel.group?.element.querySelector(".dv-content-container");
+  if (!content) return;
+  const target =
+    content.querySelector("[data-autofocus]") ?? content.querySelector('[role="grid"]') ?? content.querySelector(FOCUSABLE);
+  if (target) {
+    target.focus();
+    return;
+  }
+  content.tabIndex = -1;
+  content.focus();
+}
+
+/**
+ * Moving around the workspace from the keyboard, registered as the trading
+ * actions are, so a trader can rebind them. The defaults are Windows':
+ * Ctrl+F6 walks the panels as it walks an app's windows, Ctrl+Tab the
+ * pages as it walks tabs. Keys a focused grid uses (arrows, the page keys)
+ * would never reach these.
+ */
+export function registerWorkspaceActions() {
+  registerAction({ id: "workspace.next-panel", title: "hotkey.action.nextPanel", defaultKey: "Ctrl+F6", run: () => stepPanel(1) });
+  registerAction({
+    id: "workspace.previous-panel",
+    title: "hotkey.action.previousPanel",
+    defaultKey: "Ctrl+Shift+F6",
+    run: () => stepPanel(-1),
+  });
+  registerAction({ id: "workspace.next-page", title: "hotkey.action.nextPage", defaultKey: "Ctrl+Tab", run: () => stepPage(1) });
+  registerAction({
+    id: "workspace.previous-page",
+    title: "hotkey.action.previousPage",
+    defaultKey: "Ctrl+Shift+Tab",
+    run: () => stepPage(-1),
+  });
 }
 
 /** A new page: blank, or built from a registered layout (a template). */

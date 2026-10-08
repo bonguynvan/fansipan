@@ -1,6 +1,7 @@
 <script>
   import { tick } from "svelte";
   import { Grid } from "bo-grid";
+  import { keyboardRow } from "./keyboardRow.js";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px, ui } from "./ui.svelte.js";
   import { sizeMarks } from "./panelSize.svelte.js";
@@ -193,7 +194,7 @@
     {/key}
   {/if}
 
-  <div class="grid">
+  <div class="grid" use:keyboardRow>
     <Grid
       {rows}
       {columns}
@@ -202,6 +203,11 @@
       rowHeight={px(ROW_HEIGHT_PX)}
       fitColumns
       cellSelection={false}
+      onRowClick={(row, event) => {
+        // Enter on the row the keyboard is on opens its amend form; a click
+        // on a row does nothing, so the mouse never opens one by surprise.
+        if (event instanceof KeyboardEvent && row.amendable) amending = row.id;
+      }}
       emptyMessage={t(counts.all ? EMPTY[view] : "orders.empty")}
     />
   </div>
@@ -262,6 +268,11 @@
     border-left-color: var(--down);
   }
 
+
+  /* A row answers Enter, not a click: no pointer to say otherwise. */
+  .grid :global(.bo-grid .row.clickable) {
+    cursor: default;
+  }
 
   /* Last row whichever of the result, the error, and the amend form are showing. */
   .grid {

@@ -12,7 +12,13 @@
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
   import WorkspaceMenu from "./workspace/WorkspaceMenu.svelte";
-  import { MAIN_WINDOW, currentWindowLabel, flushLayout, workspace } from "./workspace/workspace.svelte.js";
+  import {
+    MAIN_WINDOW,
+    currentWindowLabel,
+    flushLayout,
+    registerWorkspaceActions,
+    workspace,
+  } from "./workspace/workspace.svelte.js";
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
   import LocalePicker from "./i18n/LocalePicker.svelte";
   import ScalePicker from "./lib/ScalePicker.svelte";
@@ -22,6 +28,7 @@
 
   // Screens must be registered before any layout that names them loads.
   registerBuiltins();
+  registerWorkspaceActions();
 
   const label = currentWindowLabel();
   let keysOpen = $state(false);

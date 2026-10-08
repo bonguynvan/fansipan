@@ -233,6 +233,7 @@
         class="num"
         type="number"
         aria-labelledby="{id}-quantity"
+        data-autofocus
         min={lot}
         step={lot}
         bind:this={quantityInput}

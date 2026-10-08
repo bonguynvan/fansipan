@@ -1,5 +1,6 @@
 <script>
   import { Grid } from "bo-grid";
+  import { keyboardRow } from "./keyboardRow.js";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
   import { px } from "./ui.svelte.js";
   import { mark, money, price, quantity } from "./format.js";
@@ -45,7 +46,7 @@
     <span class="num">{t("account.cash", { cash: inCash(account.cash) })}</span>
   </header>
 
-  <div class="grid">
+  <div class="grid" use:keyboardRow>
     <Grid
       {rows}
       {columns}

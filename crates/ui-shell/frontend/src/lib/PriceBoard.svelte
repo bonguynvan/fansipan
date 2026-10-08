@@ -3,6 +3,7 @@
   // last match, each price coloured by where it sits against the day's
   // reference, ceiling and floor. Bands and ticks come from the adapter;
   // this screen only resolves tones and lays them out.
+  import { keyboardRow } from "./keyboardRow.js";
   import Chips from "./Chips.svelte";
   import { Grid } from "bo-grid";
   import { ROW_HEIGHT_PX, gridTheme } from "./gridTheme.js";
@@ -130,7 +131,7 @@
     </ul>
   </header>
 
-  <div class="grid">
+  <div class="grid" use:keyboardRow>
     <Grid
       {rows}
       {columns}
