@@ -251,7 +251,12 @@ impl ExecutionEngine {
                 &o.instrument == instrument && o.side == Side::Sell && o.status.is_open()
             })
             .map(Tracked::exposure)
-            .sum()
+            // Saturating, not overflowing: sizes from outside cannot be
+            // trusted to add up, and a total stuck at the maximum only
+            // makes risk refuse more sells, never fewer.
+            .fold(Decimal::ZERO, |sum, exposure| {
+                sum.checked_add(exposure).unwrap_or(Decimal::MAX)
+            })
     }
 
     /// Records a market's current session for risk to apply.
