@@ -832,6 +832,7 @@ dependencies = [
  "fansipan-execution-engine",
  "fansipan-model",
  "fansipan-sandbox",
+ "proptest",
  "serde",
  "serde_json",
  "tauri",

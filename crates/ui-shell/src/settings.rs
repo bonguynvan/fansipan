@@ -96,8 +96,9 @@ impl Settings {
     /// Loads the store at `path`, returning a warning to show if something
     /// was wrong with it:
     /// - missing: an empty store, no warning;
-    /// - present but not a JSON object: moved aside as `<path>.bad`, and the
-    ///   store starts empty, so one corrupt write cannot stop the terminal;
+    /// - present but not a JSON object (bad JSON, or not text at all, as a
+    ///   torn write can leave it): moved aside as `<path>.bad`, and the store
+    ///   starts empty, so one corrupt write cannot stop the terminal;
     /// - present but unreadable (permissions, a lock): the store starts empty
     ///   and refuses writes, so the real file is never overwritten.
     pub fn load_with(path: impl Into<PathBuf>, limits: Limits) -> (Self, Option<String>) {
@@ -108,8 +109,8 @@ impl Settings {
             limits,
             writable,
         };
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
             Err(e) if e.kind() == ErrorKind::NotFound => return (empty(true), None),
             Err(e) => {
                 let warning = format!(
@@ -119,7 +120,7 @@ impl Settings {
                 return (empty(false), Some(warning));
             }
         };
-        match serde_json::from_str::<BTreeMap<String, Value>>(&text) {
+        match serde_json::from_slice::<BTreeMap<String, Value>>(&bytes) {
             Ok(values) => (
                 Self {
                     path,
@@ -379,9 +380,25 @@ mod tests {
     }
 
     #[test]
+    fn a_file_that_is_not_text_is_set_aside_like_bad_json() {
+        let dir = TempDir::new("not-text");
+        // One byte that is not UTF-8, as a torn write can leave a file.
+        fs::write(dir.file(), [0x80]).unwrap();
+
+        let (mut settings, warning) = Settings::load(dir.file());
+
+        assert!(warning.is_some_and(|w| w.contains("starting fresh")));
+        assert_eq!(
+            fs::read(dir.0.join("settings.json.bad")).ok(),
+            Some(vec![0x80])
+        );
+        assert!(settings.set("a", json!(1)).is_ok());
+    }
+
+    #[test]
     fn an_unreadable_file_is_never_overwritten() {
         let dir = TempDir::new("unreadable");
-        // A directory where the file should be cannot be read as text.
+        // A directory where the file should be cannot be read at all.
         fs::create_dir_all(dir.file()).unwrap();
 
         let (mut settings, warning) = Settings::load(dir.file());
@@ -402,5 +419,71 @@ mod tests {
 
         assert!(matches!(result, Err(SettingsError::Io(_))));
         assert!(settings.get("a").is_none());
+    }
+
+    /// No panic on input from outside (roadmap Phase 7): the settings file
+    /// is whatever is on disk, a half-written save or a stranger's edit.
+    mod from_disk {
+        use proptest::collection::vec;
+        use proptest::prelude::*;
+        use proptest::test_runner::RngSeed;
+
+        use super::*;
+
+        fn config() -> ProptestConfig {
+            let config = ProptestConfig::default();
+            if std::env::var_os("PROPTEST_RNG_SEED").is_some() {
+                return config;
+            }
+            ProptestConfig {
+                rng_seed: RngSeed::Fixed(20_261_008),
+                ..config
+            }
+        }
+
+        /// What a settings file could hold: any bytes, text that is almost
+        /// JSON, a valid object, or one nested deeper than any parser
+        /// should recurse.
+        fn contents() -> impl Strategy<Value = Vec<u8>> {
+            let almost = vec(
+                proptest::sample::select(vec![
+                    '{', '}', '[', ']', '"', ':', ',', 'a', '1', ' ', '\\',
+                ]),
+                0..60,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>().into_bytes());
+            prop_oneof![
+                3 => vec(any::<u8>(), 0..200),
+                3 => almost,
+                1 => Just(br#"{"a": 1, "b": [true, null, "x"]}"#.to_vec()),
+                1 => (1usize..20_000).prop_map(|depth| format!(r#"{{"a": {}{}}}"#, "[".repeat(depth), "]".repeat(depth)).into_bytes()),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(config())]
+
+            #[test]
+            fn any_file_loads_into_a_store_that_still_saves(bytes in contents()) {
+                let dir = TempDir::new("from-disk");
+                fs::write(dir.file(), &bytes).unwrap();
+                let is_object = std::str::from_utf8(&bytes)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<BTreeMap<String, Value>>(text).ok())
+                    .is_some();
+
+                let (mut settings, warning) = Settings::load_with(dir.file(), Limits::DEFAULT);
+
+                // Whatever was there, this session's choices can be saved.
+                prop_assert!(settings.set("probe", Value::Bool(true)).is_ok());
+                if is_object {
+                    prop_assert!(warning.is_none());
+                } else {
+                    // Anything but a JSON object is moved aside, not lost.
+                    prop_assert!(warning.is_some());
+                    prop_assert_eq!(fs::read(dir.file().with_extension("json.bad")).ok(), Some(bytes));
+                }
+            }
+        }
     }
 }
