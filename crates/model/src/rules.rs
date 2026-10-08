@@ -13,6 +13,24 @@ use crate::{InstrumentId, OrderType, UnixNanos};
 /// `(from, tick)` steps. A flat-tick market has one step; a market whose tick
 /// widens with price (HOSE: 10 below 10,000, 50 below 50,000, else 100) has
 /// several.
+///
+/// ```
+/// use fansipan_model::{Decimal, TickTable};
+///
+/// let hose = TickTable::new(vec![
+///     (Decimal::ZERO, Decimal::from(10)),
+///     (Decimal::from(10_000), Decimal::from(50)),
+///     (Decimal::from(50_000), Decimal::from(100)),
+/// ])?;
+///
+/// assert!(hose.is_on_tick(Decimal::from(9_990)));
+/// assert!(!hose.is_on_tick(Decimal::from(10_010)));
+/// // Stepping crosses into the next tier's tick.
+/// assert_eq!(hose.step_up(Decimal::from(9_990)), Decimal::from(10_000));
+/// assert_eq!(hose.step_up(Decimal::from(10_000)), Decimal::from(10_050));
+/// assert_eq!(hose.round_down(Decimal::from(49_990)), Decimal::from(49_950));
+/// # Ok::<(), fansipan_model::TickTableError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TickTable {
     steps: Vec<(Decimal, Decimal)>,
@@ -257,6 +275,24 @@ impl InstrumentInfo {
 
     /// Whether the market takes an order for `quantity` of this type: whole
     /// lots, or an odd lot of a type it takes odd lots as.
+    ///
+    /// ```
+    /// use fansipan_model::{Decimal, InstrumentId, InstrumentInfo, OrderType, TickTable};
+    ///
+    /// // Lots of 100; odd lots only as limit orders for the day.
+    /// let info = InstrumentInfo::new(
+    ///     InstrumentId::new("sim", "ABC"),
+    ///     Decimal::from(100),
+    ///     TickTable::flat(Decimal::from(10))?,
+    /// )
+    /// .with_odd_lot_types([OrderType::LIMIT]);
+    ///
+    /// assert!(info.takes_quantity(Decimal::from(300), OrderType::MARKET));
+    /// assert!(info.takes_quantity(Decimal::from(40), OrderType::LIMIT));
+    /// assert!(!info.takes_quantity(Decimal::from(40), OrderType::MARKET));
+    /// assert!(!info.takes_quantity(Decimal::from(140), OrderType::LIMIT));
+    /// # Ok::<(), fansipan_model::TickTableError>(())
+    /// ```
     pub fn takes_quantity(&self, quantity: Decimal, order_type: OrderType) -> bool {
         self.is_lot_multiple(quantity)
             || (self.is_odd_lot(quantity) && self.odd_lot_types.contains(&order_type))
@@ -322,6 +358,31 @@ impl PriceBand {
     /// A symmetric band of `fraction` (0.07 for 7%) around `reference`, with
     /// the ceiling rounded down and the floor rounded up to tradable
     /// prices, so neither ever sits outside the true limit.
+    ///
+    /// ```
+    /// use fansipan_model::{Decimal, InstrumentId, PriceBand, TickTable, UnixNanos};
+    ///
+    /// let hose = TickTable::new(vec![
+    ///     (Decimal::ZERO, Decimal::from(10)),
+    ///     (Decimal::from(10_000), Decimal::from(50)),
+    ///     (Decimal::from(50_000), Decimal::from(100)),
+    /// ])?;
+    /// let seven_percent = Decimal::new(7, 2);
+    /// let band = PriceBand::from_fraction(
+    ///     InstrumentId::new("sim", "ABC"),
+    ///     Decimal::from(10_350),
+    ///     seven_percent,
+    ///     &hose,
+    ///     UnixNanos(0),
+    /// )?;
+    ///
+    /// // 11,074.5 rounds down on the 50 tick; 9,625.5 rounds up on the 10.
+    /// assert_eq!(band.ceiling, Some(Decimal::from(11_050)));
+    /// assert_eq!(band.floor, Some(Decimal::from(9_630)));
+    /// assert!(band.contains(Decimal::from(11_050)));
+    /// assert!(!band.contains(Decimal::from(11_100)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_fraction(
         instrument: InstrumentId,
         reference: Decimal,

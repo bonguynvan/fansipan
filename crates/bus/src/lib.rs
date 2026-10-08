@@ -56,6 +56,32 @@ impl Subscribers {
 /// Fan-out bus. Every subscriber gets its own unbounded channel, so a slow
 /// consumer can never block a publisher or another consumer. The cost is
 /// memory: a consumer that stops draining grows without bound.
+///
+/// Outside this workspace, the data types come with the adapter API, as
+/// `fansipan_adapter_api::model`, and the bus as `fansipan_adapter_api::bus`.
+///
+/// ```
+/// use fansipan_bus::{Bus, BusHandle, Event};
+/// use model::{Decimal, InstrumentId, Side, Trade, UnixNanos};
+///
+/// let bus = Bus::new();
+/// let chart = bus.subscribe();
+/// let tape = bus.subscribe();
+///
+/// // An adapter publishes through the handle its `connect` was given.
+/// let adapter = bus.handle();
+/// adapter.publish(Event::Trade(Trade {
+///     instrument: InstrumentId::new("sim", "ABC"),
+///     price: Decimal::new(10_005, 2),
+///     quantity: Decimal::from(200),
+///     side: Some(Side::Sell),
+///     ts_event: UnixNanos(0),
+/// }));
+///
+/// // Each subscriber gets its own copy.
+/// assert!(matches!(chart.try_recv(), Ok(Event::Trade(t)) if t.quantity == Decimal::from(200)));
+/// assert!(matches!(tape.try_recv(), Ok(Event::Trade(t)) if t.quantity == Decimal::from(200)));
+/// ```
 #[derive(Clone, Default)]
 pub struct Bus {
     subscribers: Arc<Subscribers>,
