@@ -11,6 +11,22 @@ use fansipan_model::{Decimal, InstrumentId, PriceBand, TickTable, UnixNanos};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::subsequence;
+use proptest::test_runner::RngSeed;
+
+const SEED: u64 = 20_261_008;
+
+/// A fixed seed, so every run explores the same cases (CLAUDE.md: tests are
+/// deterministic). Set PROPTEST_RNG_SEED to explore others.
+fn config() -> ProptestConfig {
+    let config = ProptestConfig::default();
+    if std::env::var_os("PROPTEST_RNG_SEED").is_some() {
+        return config;
+    }
+    ProptestConfig {
+        rng_seed: RngSeed::Fixed(SEED),
+        ..config
+    }
+}
 
 /// Ticks from fine to coarse, each dividing the next: 0.01, 0.05, 0.1, 0.5,
 /// 1, 5, 10, 50, 100, as `(mantissa, scale)`.
@@ -54,9 +70,41 @@ fn price() -> impl Strategy<Value = Decimal> {
     (1i64..10_000_000).prop_map(|cents| Decimal::new(cents, 2))
 }
 
+/// A ladder, and a price on it to test: anywhere, a few of its finest ticks
+/// (and a fraction) either side of where a step starts, where rounding can
+/// cross into the next step, or exactly on a tick of some step.
+fn ladder_and_price() -> impl Strategy<Value = (TickTable, Decimal)> {
+    ladder().prop_flat_map(|ticks| {
+        let steps = ticks.steps().to_vec();
+        let finest = steps[0].1;
+        let count = steps.len();
+        let near_step = {
+            let steps = steps.clone();
+            (0..count, -3i64..=3, 0i64..100).prop_map(move |(i, ticks_away, hundredths)| {
+                steps[i].0
+                    + finest * Decimal::from(ticks_away)
+                    + finest * Decimal::new(hundredths, 2)
+            })
+        };
+        // Exactly where a step starts, half the time: the tier it is in decides its next tick.
+        let on_a_tick = (0..count, prop_oneof![Just(0u32), 0u32..50])
+            .prop_map(move |(i, n)| steps[i].0 + steps[i].1 * Decimal::from(n));
+        let positive = prop_oneof![price(), near_step, on_a_tick].prop_map(|p| {
+            if p > Decimal::ZERO {
+                p
+            } else {
+                Decimal::new(1, 2)
+            }
+        });
+        (Just(ticks), positive)
+    })
+}
+
 proptest! {
+    #![proptest_config(config())]
+
     #[test]
-    fn rounding_lands_on_the_ladder_on_the_right_side(ticks in ladder(), p in price()) {
+    fn rounding_lands_on_the_ladder_on_the_right_side((ticks, p) in ladder_and_price()) {
         let down = ticks.round_down(p);
         let up = ticks.round_up(p);
         let nearest = ticks.round_nearest(p);
@@ -78,7 +126,7 @@ proptest! {
     }
 
     #[test]
-    fn stepping_moves_one_tradable_price_at_a_time(ticks in ladder(), p in price()) {
+    fn stepping_moves_one_tradable_price_at_a_time((ticks, p) in ladder_and_price()) {
         let start = ticks.round_up(p);
         let next = ticks.step_up(start);
 
@@ -91,8 +139,7 @@ proptest! {
 
     #[test]
     fn a_band_from_a_fraction_stays_inside_its_limits_on_the_ladder(
-        ticks in ladder(),
-        p in price(),
+        (ticks, p) in ladder_and_price(),
         percent in 0u32..30,
     ) {
         let reference = ticks.round_up(p);
