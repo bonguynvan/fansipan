@@ -8,7 +8,7 @@
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
   import { MAIN_WINDOW, persist, popOut, restore, retitlePanels, workspace } from "./workspace.svelte.js";
-  import { i18n, t } from "../i18n/i18n.svelte.js";
+  import { i18n, t, tn } from "../i18n/i18n.svelte.js";
 
   let { label } = $props();
 
@@ -76,7 +76,9 @@
 <div class="root">
   {#if workspace.notice}
     <p class="notice" role="status">
-      {t(workspace.notice.id, workspace.notice.vars)}
+      {workspace.notice.count === undefined
+        ? t(workspace.notice.id, workspace.notice.vars)
+        : tn(workspace.notice.id, workspace.notice.count, workspace.notice.vars)}
       <button onclick={() => (workspace.notice = null)} aria-label={t("workspace.dismiss")}>×</button>
     </p>
   {/if}

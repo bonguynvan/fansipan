@@ -33,8 +33,8 @@ pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
 use dto::{
-    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, MarketDto, OrderDto, PrintDto,
-    QuoteDto, SessionDto, Snapshot,
+    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, ConnectionDto, InstrumentDto,
+    MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -279,6 +279,28 @@ fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
     Ok(order)
 }
 
+/// Cancels every open order, or every open order in `symbol`.
+fn cancel_all(shell: &Shell, symbol: Option<&str>) -> Result<CancelAllDto, String> {
+    let instrument = symbol.map(|symbol| shell.instrument(symbol));
+    let mut exec = lock(&shell.exec)?;
+    let mut sent = Vec::new();
+    let mut failed = Vec::new();
+    for (id, result) in exec.cancel_all(instrument.as_ref()) {
+        match result {
+            Ok(order) => sent.push(OrderDto::from(&order)),
+            Err(e) => failed.push(CancelFailureDto {
+                id: id.0,
+                error: e.to_string(),
+            }),
+        }
+    }
+    let mut pending = lock(&shell.pending)?;
+    for order in &sent {
+        pending.order(order.clone());
+    }
+    Ok(CancelAllDto { sent, failed })
+}
+
 fn amend(
     shell: &Shell,
     id: u64,
@@ -356,6 +378,16 @@ fn place_order(
 #[tauri::command]
 fn cancel_order(shell: State<'_, Shell>, id: u64) -> Result<OrderDto, String> {
     cancel(&shell, id)
+}
+
+/// Every open order, or every open order in `symbol`: what was sent and
+/// what could not be. Nothing to cancel is an empty result, not an error.
+#[tauri::command]
+fn cancel_all_orders(
+    shell: State<'_, Shell>,
+    symbol: Option<String>,
+) -> Result<CancelAllDto, String> {
+    cancel_all(&shell, symbol.as_deref())
 }
 
 /// A resting limit order's new total quantity and price. The new terms pass
@@ -575,6 +607,7 @@ pub fn run(venue: Venue) -> ExitCode {
             prints,
             place_order,
             cancel_order,
+            cancel_all_orders,
             amend_order,
             workspace::settings_get,
             workspace::settings_set,
@@ -983,6 +1016,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(denied.status, "denied");
+    }
+
+    #[test]
+    fn cancel_all_cancels_a_symbols_orders_or_every_order() {
+        let shell = connect(&Bus::new(), &profile("us"));
+        let place = |symbol: &str| {
+            submit(
+                &shell,
+                new_order(VENUE, &ticket(symbol, "buy", "1", Some("100"))).unwrap(),
+            )
+            .unwrap()
+            .id
+        };
+        let apple = place("AAPL");
+        let tesla = place("TSLA");
+        take_pending(&shell);
+
+        let one = cancel_all(&shell, Some("AAPL")).unwrap();
+        let ids = |dto: &CancelAllDto| dto.sent.iter().map(|o| o.id).collect::<Vec<_>>();
+        assert_eq!(ids(&one), vec![apple]);
+        assert_eq!(one.sent[0].status, "cancelling");
+        assert!(one.failed.is_empty());
+        assert_eq!(take_pending(&shell).orders, one.sent);
+
+        let rest = cancel_all(&shell, None).unwrap();
+        assert_eq!(ids(&rest), vec![tesla]);
+        assert!(cancel_all(&shell, None).unwrap().sent.is_empty());
     }
 
     #[test]

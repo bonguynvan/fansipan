@@ -1,9 +1,11 @@
 <script>
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { market } from "./market.svelte.js";
   import { isLinked, symbolOf } from "./links.svelte.js";
   import { picks, pickToApply } from "./picks.svelte.js";
+  import { registerTicket, useTicket } from "./tickets.svelte.js";
+  import { keyOf } from "./hotkeys.svelte.js";
   import { money, price, quantity as formatQuantity } from "./format.js";
   import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
@@ -11,7 +13,7 @@
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
   import { t } from "../i18n/i18n.svelte.js";
 
-  let { params } = $props();
+  let { params, panel } = $props();
 
   const selected = $derived(symbolOf(params, market.symbols[0]));
   const quote = $derived(selected ? market.quotes[selected] : null);
@@ -63,6 +65,26 @@
     appliedPick = pick.id;
     untrack(() => applyPick(pick));
   });
+
+  // How a key reaches this ticket (F1, F2, F3): the side set, the panel
+  // brought forward, the quantity ready to type over.
+  let quantityInput = $state(null);
+  const handle = {
+    prepare(wanted) {
+      if (wanted) side = wanted;
+      panel?.setActive?.();
+      // A ticket in a background tab is attached again only after its panel
+      // is shown, so the focus waits for the next frame.
+      tick().then(() =>
+        requestAnimationFrame(() => {
+          quantityInput?.focus();
+          quantityInput?.select();
+        }),
+      );
+    },
+    symbol: () => selected,
+  };
+  $effect(() => registerTicket(handle));
 
   function applyPick(pick) {
     if (pick.side) side = pick.side;
@@ -128,14 +150,26 @@
   }
 </script>
 
-<div class="ticket">
+<div class="ticket" onfocusin={() => useTicket(handle)}>
   <header>
     <span class="sym">{selected ?? "—"}</span>
   </header>
 
   <div class="sides" role="group" aria-label={t("ticket.side")}>
-    <button class="side buy" class:active={side === "buy"} onclick={() => (side = "buy")}>{t("side.buy")}</button>
-    <button class="side sell" class:active={side === "sell"} onclick={() => (side = "sell")}>{t("side.sell")}</button>
+    <button
+      class="side buy"
+      class:active={side === "buy"}
+      aria-keyshortcuts={keyOf("ticket.buy") ?? undefined}
+      title={keyOf("ticket.buy") ?? undefined}
+      onclick={() => (side = "buy")}>{t("side.buy")}</button
+    >
+    <button
+      class="side sell"
+      class:active={side === "sell"}
+      aria-keyshortcuts={keyOf("ticket.sell") ?? undefined}
+      title={keyOf("ticket.sell") ?? undefined}
+      onclick={() => (side = "sell")}>{t("side.sell")}</button
+    >
   </div>
 
   <!-- novalidate: the quantity steps in lots, but an odd lot is a valid
@@ -151,6 +185,7 @@
         type="number"
         min={lot}
         step={lot}
+        bind:this={quantityInput}
         bind:value={() => quantity, (value) => (typedQuantity = value)}
       />
     </label>

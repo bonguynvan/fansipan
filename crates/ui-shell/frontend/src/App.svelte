@@ -6,6 +6,8 @@
   import { flushLinks, startLinks } from "./lib/links.svelte.js";
   import { startPicks } from "./lib/picks.svelte.js";
   import { flushWatchlists } from "./lib/watchlists.svelte.js";
+  import { flushHotkeys, startHotkeys } from "./lib/hotkeys.svelte.js";
+  import KeysDialog from "./lib/KeysDialog.svelte";
   import { mark, money } from "./lib/format.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
@@ -18,12 +20,14 @@
   registerBuiltins();
 
   const label = currentWindowLabel();
+  let keysOpen = $state(false);
 
   onMount(() => {
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
     startLocale().catch(failed);
     startLinks().catch(failed);
     startPicks().catch(failed);
+    startHotkeys({ onNotice: (notice) => (workspace.notice = notice) }).catch(failed);
     startMarket().catch(failed);
     // The shell sends this just before quitting and waits briefly, so saves
     // still inside their debounce window are not lost.
@@ -32,6 +36,7 @@
       flushLinks();
       flushLocale();
       flushWatchlists();
+      flushHotkeys();
     });
     return () => flushing.then((unlisten) => unlisten());
   });
@@ -75,6 +80,7 @@
     </div>
     <div class="tools">
       <WorkspaceMenu />
+      <button class="keys-button" onclick={() => (keysOpen = true)}>{t("hotkey.open")}</button>
       <LocalePicker />
       <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
         <span class="dot"></span>{status}
@@ -86,6 +92,8 @@
     <Workspace {label} />
   </main>
 </div>
+
+<KeysDialog bind:open={keysOpen} />
 
 <style>
   .terminal {
@@ -131,6 +139,25 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
+  }
+
+  .keys-button {
+    padding: 4px 10px;
+    font: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .keys-button:hover,
+  .keys-button:focus-visible {
+    color: var(--text);
+    border-color: var(--text-dim);
+    outline: none;
   }
 
   .tools {

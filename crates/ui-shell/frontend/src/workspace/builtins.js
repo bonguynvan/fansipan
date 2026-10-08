@@ -5,6 +5,7 @@
 
 import { registerLayout, registerScreen } from "./registry.js";
 import { registerMarketPreset } from "../lib/markets.js";
+import { registerTradingActions } from "../lib/tradingActions.js";
 import Watchlist from "../lib/Watchlist.svelte";
 import Chart from "../lib/Chart.svelte";
 import OrderTicket from "../lib/OrderTicket.svelte";
@@ -87,6 +88,8 @@ export function registerBuiltins() {
     defaultParams: { link: "a" },
     description: "screen.depth-ladder.description",
   });
+
+  registerTradingActions();
 
   registerLayout({
     id: DEFAULT_LAYOUT,

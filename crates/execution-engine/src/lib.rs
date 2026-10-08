@@ -399,6 +399,25 @@ impl ExecutionEngine {
         Ok(tracked.order.clone())
     }
 
+    /// Asks the adapter to cancel every open order, or every open order in
+    /// `instrument`. An order already being cancelled is not asked again.
+    /// Each order's outcome is its own: one the adapter cannot cancel stays
+    /// working, and the rest still go.
+    pub fn cancel_all(
+        &mut self,
+        instrument: Option<&InstrumentId>,
+    ) -> Vec<(ClientOrderId, Result<Order, CancelError>)> {
+        let ids: Vec<ClientOrderId> = self
+            .orders
+            .values()
+            .map(|tracked| &tracked.order)
+            .filter(|order| order.status.is_open() && order.status != OrderStatus::PendingCancel)
+            .filter(|order| instrument.is_none_or(|wanted| &order.instrument == wanted))
+            .map(|order| order.id)
+            .collect();
+        ids.into_iter().map(|id| (id, self.cancel(id))).collect()
+    }
+
     /// Applies one venue report. On error the order is left exactly as it was.
     pub fn apply(&mut self, report: &ExecutionReport) -> Result<Order, ApplyError> {
         if let OrderEvent::Snapshot(venue) = &report.event {
@@ -882,6 +901,88 @@ mod tests {
             engine.order(id).map(|o| o.status),
             Some(OrderStatus::Submitted)
         );
+    }
+
+    #[test]
+    fn cancel_all_asks_for_every_open_order_once() {
+        let (mut engine, calls) = engine();
+        let working = resting(&mut engine, "2");
+        let unacked = engine.submit(buy("1")).id;
+        let cancelling = resting(&mut engine, "3");
+        engine.cancel(cancelling).unwrap();
+        let filled = resting(&mut engine, "1");
+        engine.apply(&report(filled, fill("F1", "1"))).unwrap();
+        let denied = engine.submit(buy("99")).id;
+        calls.lock().unwrap().cancelled.clear();
+
+        let outcome = engine.cancel_all(None);
+
+        let asked: Vec<ClientOrderId> = outcome.iter().map(|(id, _)| *id).collect();
+        assert_eq!(asked, vec![working, unacked]);
+        assert!(outcome.iter().all(|(_, result)| result.is_ok()));
+        assert_eq!(calls.lock().unwrap().cancelled.len(), 2);
+        for id in [working, unacked, cancelling] {
+            assert_eq!(
+                engine.order(id).map(|o| o.status),
+                Some(OrderStatus::PendingCancel)
+            );
+        }
+        assert_eq!(
+            engine.order(filled).map(|o| o.status),
+            Some(OrderStatus::Filled)
+        );
+        assert_eq!(
+            engine.order(denied).map(|o| o.status),
+            Some(OrderStatus::Denied)
+        );
+    }
+
+    #[test]
+    fn cancel_all_for_one_instrument_leaves_the_others() {
+        let (mut engine, _) = engine();
+        let here = resting(&mut engine, "2");
+        let elsewhere = engine
+            .submit(NewOrder::limit(
+                InstrumentId::new("sim", "BBB"),
+                Side::Buy,
+                d("1"),
+                d("5"),
+            ))
+            .id;
+
+        let outcome = engine.cancel_all(Some(&InstrumentId::new("sim", "AAA")));
+
+        assert_eq!(outcome.len(), 1);
+        assert_eq!(outcome[0].0, here);
+        assert_eq!(
+            engine.order(elsewhere).map(|o| o.status),
+            Some(OrderStatus::Submitted)
+        );
+    }
+
+    #[test]
+    fn cancel_all_reports_each_order_the_adapter_could_not_cancel() {
+        let (mut engine, calls) = engine();
+        let first = resting(&mut engine, "1");
+        let second = resting(&mut engine, "2");
+        engine.client = Box::new(RecordingClient {
+            calls,
+            refuse_with: Some(AdapterError::recoverable("socket closed")),
+            amends: true,
+        });
+
+        let outcome = engine.cancel_all(None);
+
+        assert_eq!(outcome.len(), 2);
+        assert!(outcome
+            .iter()
+            .all(|(_, result)| matches!(result, Err(CancelError::Adapter(_)))));
+        for id in [first, second] {
+            assert_eq!(
+                engine.order(id).map(|o| o.status),
+                Some(OrderStatus::Accepted)
+            );
+        }
     }
 
     #[test]

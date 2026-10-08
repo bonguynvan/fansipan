@@ -427,6 +427,20 @@ pub fn parse_order_type(kind: &str, time_in_force: &str) -> Option<OrderType> {
     Some(OrderType::new(kind, time_in_force))
 }
 
+/// What a cancel-all did: the orders now being cancelled, and those whose
+/// cancel could not be sent, which stay working.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CancelAllDto {
+    pub sent: Vec<OrderDto>,
+    pub failed: Vec<CancelFailureDto>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CancelFailureDto {
+    pub id: u64,
+    pub error: String,
+}
+
 /// One of the venue's connections, for the status badge.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ConnectionDto {
