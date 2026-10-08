@@ -303,6 +303,47 @@ fn the_close_expires_what_still_rests() {
     assert!(ended(&closing, 1));
 }
 
+/// The buying power the events last reported, if they reported an account.
+fn buying_power(events: &[Event]) -> Option<Decimal> {
+    events.iter().rev().find_map(|e| match e {
+        Event::AccountUpdate(account) => account.buying_power,
+        _ => None,
+    })
+}
+
+#[test]
+fn the_close_gives_back_the_cash_an_expired_buy_held() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    let resting = submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("60000")),
+        at(MORNING),
+    );
+
+    let closing = advance(&venue, at(CLOSED));
+
+    // 2,000,000,000 VND to start; the buy held back 100 x 60,000 until the close.
+    assert_eq!(buying_power(&resting), Some(d("1994000000")));
+    assert!(ended(&closing, 1));
+    assert_eq!(buying_power(&closing), Some(d("2000000000")));
+}
+
+#[test]
+fn an_amended_buy_holds_back_its_new_value() {
+    let venue = venue();
+    advance(&venue, at(MORNING));
+    submit(
+        &venue,
+        order(1, "VNM", "100", OrderType::LIMIT, Some("60000")),
+        at(MORNING),
+    );
+
+    let amended = amend(&venue, 1, "200", "61000", at(MORNING + 1));
+
+    assert_eq!(buying_power(&amended), Some(d("1987800000")));
+}
+
 #[test]
 fn a_late_beat_still_ends_the_auction_it_missed() {
     let venue = venue();
