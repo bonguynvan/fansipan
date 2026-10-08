@@ -11,6 +11,7 @@
   import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
   import { orderTypeName, phaseName } from "./orderTypes.js";
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
+  import { capacityArgs } from "./capacity.js";
   import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
@@ -97,6 +98,48 @@
   }
 
   const reference = $derived(quote ? Number(side === "buy" ? quote.ask : quote.bid) : null);
+
+  // How large one order can be (ADR 0016): core's answer for this side,
+  // type, and price, asked again whenever the account or the orders move,
+  // since both change what fits. A slower, older answer never overwrites a
+  // newer one.
+  let capacity = $state(null);
+  let asked = 0;
+  $effect(() => {
+    const args = capacityArgs({ symbol: selected, side, orderType, priced, limitPrice });
+    void market.account;
+    void market.orders;
+    const ask = ++asked;
+    if (!args) {
+      capacity = null;
+      return;
+    }
+    invoke("order_capacity", args)
+      .then((answer) => ask === asked && (capacity = answer))
+      .catch(() => ask === asked && (capacity = null));
+  });
+  const maxQuantity = $derived(capacity?.max_quantity == null ? null : Number(capacity.max_quantity));
+  const overMax = $derived(maxQuantity !== null && Number(quantity) > maxQuantity);
+  /** What sets the largest order, in the trader's words. */
+  const capacityNote = $derived.by(() => {
+    if (!capacity) return "";
+    switch (capacity.bound) {
+      case "holding":
+        return t("ticket.bound.holding", { quantity: formatQuantity(capacity.sellable) });
+      case "order_size":
+        return t("ticket.bound.order_size");
+      case "order_value":
+        return t("ticket.bound.order_value");
+      default:
+        return t(capacity.buying_power_estimated ? "ticket.bound.estimated" : "ticket.bound.buying_power", {
+          amount: money(capacity.buying_power, market.info?.currency),
+        });
+    }
+  });
+
+  // Today's floor, reference, and ceiling, one click from the limit price.
+  const BAND_PRICES = ["floor", "reference", "ceiling"];
+  const bandPrices = $derived(BAND_PRICES.filter((name) => band?.[name]).map((name) => ({ name, value: band[name] })));
   // A limit order is valued at its limit, which is also what risk checks.
   const valuedAt = $derived(priced && Number(limitPrice) > 0 ? Number(limitPrice) : reference);
   const notional = $derived(valuedAt && quantity > 0 ? valuedAt * quantity : null);
@@ -189,6 +232,18 @@
         bind:this={quantityInput}
         bind:value={() => quantity, (value) => (typedQuantity = value)}
       />
+      {#if capacity}
+        <span class="capacity" class:over={overMax}>
+          {#if maxQuantity !== null}
+            <button type="button" class="max" disabled={maxQuantity <= 0} title={t("ticket.useMax")} onclick={() => (typedQuantity = maxQuantity)}
+              >{capacity.valued_at
+                ? t("ticket.maxAt", { quantity: formatQuantity(maxQuantity), price: price(capacity.valued_at, decimals) })
+                : t("ticket.max", { quantity: formatQuantity(maxQuantity) })}</button
+            >
+          {/if}
+          <span class="note">{capacityNote}</span>
+        </span>
+      {/if}
     </label>
 
     <label>
@@ -209,14 +264,7 @@
 
     {#if priced}
       <label>
-        <span>
-          {t("ticket.limitPrice")}
-          {#if band?.ceiling && band?.floor}
-            <em class="hint">
-              {t("ticket.band", { floor: price(band.floor, decimals), ceiling: price(band.ceiling, decimals) })}
-            </em>
-          {/if}
-        </span>
+        <span>{t("ticket.limitPrice")}</span>
         <span class="stepper">
           <!-- step="any": the browser measures steps from 0, which a ladder
                whose tiers start off a tick multiple would fail; risk checks
@@ -229,6 +277,16 @@
             >+</button
           >
         </span>
+        {#if bandPrices.length}
+          <span class="band" role="group" aria-label={t("ticket.bandPrices")}>
+            {#each bandPrices as { name, value } (name)}
+              <button type="button" class="band-price {name}" title={t(`ticket.use.${name}`)} onclick={() => (limitPrice = Number(value))}>
+                <span>{t(`ticket.bandName.${name}`)}</span>
+                <span class="num">{price(value, decimals)}</span>
+              </button>
+            {/each}
+          </span>
+        {/if}
       </label>
     {/if}
 
@@ -367,6 +425,93 @@
   .stepper button:focus-visible {
     color: var(--text);
     outline: none;
+  }
+
+  /* The largest order and what sets it, under the quantity. */
+  .capacity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.5rem;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: var(--text-sm);
+  }
+
+  .max {
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--rule);
+    background: var(--panel-raised);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .max:hover:not(:disabled),
+  .max:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+  }
+
+  .max:disabled {
+    color: var(--text-dim);
+    cursor: default;
+  }
+
+  .note {
+    min-width: 0;
+    color: var(--text-dim);
+  }
+
+  /* More than the largest order: risk or the venue will refuse it. */
+  .capacity.over .max,
+  .capacity.over .note {
+    color: var(--down);
+  }
+
+  /* Floor, reference, and ceiling, each in its price tone. */
+  .band {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  .band-price {
+    display: grid;
+    min-width: 0;
+    padding: 0.25rem 0.375rem;
+    border: 1px solid var(--rule);
+    border-top: 2px solid currentColor;
+    background: var(--panel-raised);
+    font-size: var(--text-xs);
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+  }
+
+  .band-price .num {
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .band-price:hover,
+  .band-price:focus-visible {
+    background: color-mix(in srgb, currentColor 12%, var(--panel-raised));
+    outline: none;
+  }
+
+  .band-price.floor {
+    color: var(--tone-floor);
+  }
+
+  .band-price.reference {
+    color: var(--tone-ref);
+  }
+
+  .band-price.ceiling {
+    color: var(--tone-ceiling);
   }
 
   .summary {
