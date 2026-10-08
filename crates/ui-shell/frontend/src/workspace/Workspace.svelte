@@ -8,7 +8,20 @@
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
   import PageBar from "./PageBar.svelte";
-  import { MAIN_WINDOW, persist, popOut, restore, retitlePanels, workspace } from "./workspace.svelte.js";
+  import {
+    MAIN_WINDOW,
+    dockGroup,
+    dockInMain,
+    floatGroup,
+    isFloating,
+    movePanelToPage,
+    otherPages,
+    persist,
+    popOut,
+    restore,
+    retitlePanels,
+    workspace,
+  } from "./workspace.svelte.js";
   import { i18n, t, tn } from "../i18n/i18n.svelte.js";
 
   let { label } = $props();
@@ -37,14 +50,24 @@
   onMount(() => {
     const api = createDockview(host, {
       theme,
-      // Panels leave the main window as native windows, not as dockview's
-      // floating groups or browser pop-ups.
-      disableFloatingGroups: true,
+      // A panel floats over its page on demand (ADR 0013), kept on screen;
+      // it leaves for another monitor as a native window, never as a
+      // browser pop-up.
+      floatingGroupBounds: "boundedWithinViewport",
       createComponent: ({ name }) => createRenderer(getScreen(name), name),
       createRightHeaderActionComponent: headerActions,
       getTabContextMenuItems: ({ panel }) => [
         "maximize",
-        { label: t("workspace.moveToNewWindow"), action: () => popOut(panel) },
+        isFloating(panel.group)
+          ? { label: t("workspace.dock"), action: () => dockGroup(panel.group) }
+          : { label: t("workspace.float"), action: () => floatGroup(panel.group) },
+        ...otherPages().map((page) => ({
+          label: t("workspace.moveToPage", { name: page.name }),
+          action: () => movePanelToPage(panel, page.id),
+        })),
+        label === MAIN_WINDOW
+          ? { label: t("workspace.moveToNewWindow"), action: () => popOut(panel) }
+          : { label: t("workspace.dockInMain"), action: () => dockInMain(panel) },
         "separator",
         "close",
         "closeOthers",

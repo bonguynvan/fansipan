@@ -9,6 +9,7 @@
 // its panels while another is on screen.
 
 import { invoke } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLayout, getScreen } from "./registry.js";
 import { DEFAULT_LAYOUT } from "./builtins.js";
@@ -22,6 +23,10 @@ import { t } from "../i18n/i18n.svelte.js";
 
 export const MAIN_WINDOW = "main";
 const SAVE_DELAY_MS = 400;
+/** An extra window sends a panel back to the main window's page on this event. */
+const DOCK_EVENT = "workspace-dock";
+/** Where a panel floats when lifted off the dock, and how big. */
+const FLOATING_BOX = { x: 80, y: 60, width: 460, height: 340 };
 
 /** Default names in the trader's language. */
 const names = {
@@ -231,18 +236,70 @@ export function deletePage(id) {
   change((ws) => pages.deletePage(ws, id, names));
 }
 
+/** What a panel is, apart from where it sits: enough to show it again elsewhere. */
+function specOf(panel) {
+  return { component: panel.view.contentComponent, params: panel.params ?? {}, title: panel.params?.titleKey ?? null };
+}
+
 /** Moves a panel off the page on screen to another page of this desktop. */
 export function movePanelToPage(panel, pageId) {
   if (!workspace.pages || !workspace.api) return;
   capture();
-  const moved = {
-    component: panel.view.contentComponent,
-    params: panel.params ?? {},
-    title: panel.params?.titleKey ?? null,
-  };
-  workspace.pages = pages.movePanelToPage(workspace.pages, pageId, moved);
+  workspace.pages = pages.movePanelToPage(workspace.pages, pageId, specOf(panel));
   workspace.api.removePanel(panel);
   persist();
+}
+
+/** The open pages of this desktop other than the one on screen: where a panel can move. */
+export function otherPages() {
+  if (!workspace.pages) return [];
+  const here = pages.activePage(workspace.pages).id;
+  return pages.openPages(workspace.pages).filter((p) => p.id !== here);
+}
+
+// Floating and docking -------------------------------------------------------
+
+export const isFloating = (group) => group?.api.location.type === "floating";
+
+/** Lifts a group off the dock to float over the page, leaving the dock as it was. */
+export function floatGroup(group) {
+  if (!workspace.api || group?.api.location.type !== "grid") return;
+  workspace.api.addFloatingGroup(group, FLOATING_BOX);
+  persist();
+}
+
+/** Puts a floating group back into the dock, at the right. */
+export function dockGroup(group) {
+  if (!isFloating(group)) return;
+  group.api.moveTo({ position: "right" });
+  persist();
+}
+
+/**
+ * Sends a panel from an extra window back to the main window, which docks
+ * it into its page on screen. The panel leaves this window only once the
+ * main window has been sent it.
+ */
+export async function dockInMain(panel) {
+  try {
+    await emit(DOCK_EVENT, specOf(panel));
+    workspace.api?.removePanel(panel);
+  } catch (err) {
+    notify("workspace.dockFailed", { error: String(err) });
+  }
+}
+
+let docking = null;
+
+/** The main window takes panels sent back from extra windows; once. */
+function takeDockedPanels() {
+  docking ??= listen(DOCK_EVENT, ({ payload }) => {
+    if (typeof payload?.component !== "string" || !payload.component) return;
+    const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+    addScreen(payload.component, { title: payload.title ?? undefined, params: migrateLinkParams(params) });
+    persist();
+  });
+  return docking;
 }
 
 // Desktops ---------------------------------------------------------------------
@@ -303,6 +360,7 @@ export async function restore(api, label) {
   workspace.api = api;
   workspace.label = label;
   workspace.pages = null;
+  if (label === MAIN_WINDOW) takeDockedPanels().catch((err) => notify("workspace.dockFailed", { error: String(err) }));
   // Saving stays off until the save is in: a resize or an empty first page
   // must never overwrite it while it is still loading.
   saver = null;
