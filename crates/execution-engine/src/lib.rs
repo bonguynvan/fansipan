@@ -25,8 +25,8 @@ use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use emulator::{
-    Conditional, ConditionalError, ConditionalId, ConditionalRequest, ConditionalStatus, Offset,
-    Then, Trigger,
+    BracketRequest, Conditional, ConditionalError, ConditionalId, ConditionalRequest,
+    ConditionalStatus, Offset, Then, Trigger,
 };
 pub use gate::Gate;
 pub use lifecycle::TransitionError;
@@ -279,6 +279,70 @@ impl ExecutionEngine {
         Ok(conditional)
     }
 
+    /// Sends `request`'s entry through risk as any order, and holds its
+    /// exits until the entry fills (ADR 0022): each watches for what has
+    /// filled, and the first to fire cancels the other. An entry that does
+    /// not go out (risk denies it, the adapter refuses it) places no exits;
+    /// the order says why.
+    pub fn place_bracket(
+        &mut self,
+        request: BracketRequest,
+    ) -> Result<(Order, Vec<Conditional>), ConditionalError> {
+        let exits = request.exits()?;
+        let order = self.submit(request.entry);
+        if !order.status.is_open() && order.filled_quantity == Decimal::ZERO {
+            return Ok((order, Vec::new()));
+        }
+        let ids: Vec<ConditionalId> = exits
+            .iter()
+            .map(|_| {
+                let id = ConditionalId(self.next_conditional);
+                self.next_conditional += 1;
+                id
+            })
+            .collect();
+        let placed: Vec<Conditional> = ids
+            .iter()
+            .zip(exits)
+            .map(|(id, (exit, level))| Conditional {
+                oco: ids.iter().copied().find(|other| other != id),
+                ..Conditional::exit(*id, exit, level, order.id)
+            })
+            .collect();
+        for conditional in &placed {
+            self.conditionals
+                .insert(conditional.id, conditional.clone());
+        }
+        Ok((order, placed))
+    }
+
+    /// Brings the exits waiting on `order` up to date after a venue report
+    /// (ADR 0022): they watch once it has filled, for what has filled, and
+    /// are cancelled when it ends with nothing filled.
+    pub fn on_order(&mut self, order: &Order) -> Vec<Conditional> {
+        let mut changed = Vec::new();
+        for conditional in self.conditionals.values_mut() {
+            let live = matches!(
+                conditional.status,
+                ConditionalStatus::Pending | ConditionalStatus::Waiting
+            );
+            if conditional.after != Some(order.id) || !live {
+                continue;
+            }
+            let before = conditional.clone();
+            if order.filled_quantity > Decimal::ZERO {
+                conditional.quantity = order.filled_quantity;
+                conditional.status = ConditionalStatus::Waiting;
+            } else if !order.status.is_open() {
+                conditional.status = ConditionalStatus::Cancelled;
+            }
+            if *conditional != before {
+                changed.push(conditional.clone());
+            }
+        }
+        changed
+    }
+
     /// Stops a waiting conditional order from firing.
     pub fn cancel_conditional(
         &mut self,
@@ -288,7 +352,10 @@ impl ExecutionEngine {
             .conditionals
             .get_mut(&id)
             .ok_or(ConditionalError::Unknown(id))?;
-        if conditional.status != ConditionalStatus::Waiting {
+        if !matches!(
+            conditional.status,
+            ConditionalStatus::Pending | ConditionalStatus::Waiting
+        ) {
             return Err(ConditionalError::NotWaiting(id));
         }
         conditional.status = ConditionalStatus::Cancelled;
@@ -377,7 +444,38 @@ impl ExecutionEngine {
                 changed.push(held.clone());
             }
             orders.push(order);
+            let (spent, cancelled) = self.close_bracket(&conditional);
+            changed.extend(spent);
+            orders.extend(cancelled);
         }
+        (changed, orders)
+    }
+
+    /// Once an exit fires, the position it protects is being closed: its
+    /// other exit is cancelled, and so is what of its entry still works, so
+    /// nothing opens more of what is being closed (ADR 0022). An entry the
+    /// adapter cannot cancel stays working, as the blotter shows.
+    fn close_bracket(&mut self, fired: &Conditional) -> (Vec<Conditional>, Vec<Order>) {
+        let mut changed = Vec::new();
+        if let Some(other) = fired.oco.and_then(|id| self.conditionals.get_mut(&id)) {
+            if matches!(
+                other.status,
+                ConditionalStatus::Pending | ConditionalStatus::Waiting
+            ) {
+                other.status = ConditionalStatus::Cancelled;
+                other.blocked = None;
+                changed.push(other.clone());
+            }
+        }
+        let working = fired.after.filter(|entry| {
+            self.orders
+                .get(entry)
+                .is_some_and(|tracked| tracked.order.status.is_open())
+        });
+        let orders = working
+            .and_then(|entry| self.cancel(entry).ok())
+            .into_iter()
+            .collect();
         (changed, orders)
     }
 
@@ -2151,6 +2249,171 @@ mod tests {
             engine.size_for_risk(&percent, |_| None),
             Err(SizingError::EquityUnknown(aaa))
         );
+    }
+
+    /// A buy of `quantity` at 5, out at 4 on the way down or 6 on the way up.
+    fn bracket(quantity: &str) -> BracketRequest {
+        BracketRequest {
+            entry: buy(quantity),
+            stop_loss: Some(Trigger::AtOrBelow(d("4"))),
+            take_profit: Some(d("6")),
+        }
+    }
+
+    /// Accepts `id` and fills `quantity` of it, as the venue would report.
+    fn fill_entry(
+        engine: &mut ExecutionEngine,
+        id: ClientOrderId,
+        fill_id: &str,
+        quantity: &str,
+    ) -> Order {
+        let accepted = OrderEvent::Accepted {
+            venue_order_id: VenueOrderId("V1".into()),
+        };
+        // A second acknowledgement does not fit the lifecycle; only the first counts.
+        let _ = engine.apply(&report(id, accepted));
+        engine.apply(&report(id, fill(fill_id, quantity))).unwrap()
+    }
+
+    #[test]
+    fn a_brackets_exits_wait_for_the_entry_and_follow_its_fills() {
+        let (mut engine, _) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        let (entry, exits) = engine.place_bracket(bracket("10")).unwrap();
+
+        assert_eq!(entry.status, OrderStatus::Submitted);
+        assert_eq!(exits.len(), 2);
+        assert!(exits
+            .iter()
+            .all(|exit| exit.status == ConditionalStatus::Pending
+                && exit.quantity == Decimal::ZERO
+                && exit.side == Side::Sell
+                && exit.after == Some(entry.id)));
+        assert_eq!(exits[0].oco, Some(exits[1].id));
+        assert_eq!(exits[1].oco, Some(exits[0].id));
+        assert!(
+            engine.on_trade(&aaa, d("3")).0.is_empty(),
+            "nothing to protect before a fill"
+        );
+
+        let partly = fill_entry(&mut engine, entry.id, "f1", "4");
+        let watching = engine.on_order(&partly);
+        assert_eq!(watching.len(), 2);
+        assert!(watching
+            .iter()
+            .all(|exit| exit.status == ConditionalStatus::Waiting && exit.quantity == d("4")));
+
+        let full = engine.apply(&report(entry.id, fill("f2", "6"))).unwrap();
+        assert!(engine
+            .on_order(&full)
+            .iter()
+            .all(|exit| exit.quantity == d("10")));
+    }
+
+    #[test]
+    fn the_first_exit_to_fire_cancels_the_other_and_the_rest_of_its_entry() {
+        let (mut engine, calls) = engine();
+        let (entry, exits) = engine.place_bracket(bracket("10")).unwrap();
+        let partly = fill_entry(&mut engine, entry.id, "f1", "4");
+        engine.on_order(&partly);
+
+        let (changed, orders) = engine.on_trade(&InstrumentId::new("sim", "AAA"), d("3.9"));
+
+        let status = |id| changed.iter().find(|c| c.id == id).map(|c| c.status);
+        let sent = orders.iter().find(|o| o.id != entry.id).unwrap();
+        assert_eq!(status(exits[0].id), Some(ConditionalStatus::Fired(sent.id)));
+        assert_eq!(status(exits[1].id), Some(ConditionalStatus::Cancelled));
+        assert_eq!((sent.side, sent.quantity), (Side::Sell, d("4")));
+        let rest = orders.iter().find(|o| o.id == entry.id).unwrap();
+        assert_eq!(rest.status, OrderStatus::PendingCancel);
+        assert_eq!(calls.lock().unwrap().cancelled.len(), 1);
+        assert!(
+            engine
+                .on_trade(&InstrumentId::new("sim", "AAA"), d("7"))
+                .1
+                .is_empty(),
+            "the take-profit no longer fires"
+        );
+    }
+
+    #[test]
+    fn an_entry_that_ends_unfilled_cancels_its_exits() {
+        let (mut engine, _) = engine();
+        let (entry, _) = engine.place_bracket(bracket("10")).unwrap();
+        let accepted = OrderEvent::Accepted {
+            venue_order_id: VenueOrderId("V1".into()),
+        };
+        engine.apply(&report(entry.id, accepted)).unwrap();
+        let cancelled = engine
+            .apply(&report(entry.id, OrderEvent::Cancelled))
+            .unwrap();
+
+        let changed = engine.on_order(&cancelled);
+
+        assert_eq!(changed.len(), 2);
+        assert!(changed
+            .iter()
+            .all(|exit| exit.status == ConditionalStatus::Cancelled));
+    }
+
+    #[test]
+    fn a_refused_entry_places_no_exits() {
+        let (mut engine, _) = engine();
+
+        // Twenty is above this engine's per-order limit of ten.
+        let (entry, exits) = engine.place_bracket(bracket("20")).unwrap();
+
+        assert_eq!(entry.status, OrderStatus::Denied);
+        assert!(exits.is_empty());
+        assert_eq!(engine.conditionals().count(), 0);
+    }
+
+    #[test]
+    fn exits_on_the_wrong_side_are_refused_before_anything_is_sent() {
+        let (mut engine, calls) = engine();
+        let wrong = [
+            BracketRequest {
+                stop_loss: Some(Trigger::AtOrBelow(d("5.5"))),
+                ..bracket("10")
+            },
+            BracketRequest {
+                take_profit: Some(d("4.5")),
+                ..bracket("10")
+            },
+            BracketRequest {
+                stop_loss: Some(Trigger::AtOrAbove(d("4"))),
+                ..bracket("10")
+            },
+        ];
+        for request in wrong {
+            assert_eq!(
+                engine.place_bracket(request),
+                Err(ConditionalError::ExitOnWrongSide)
+            );
+        }
+        let bare = BracketRequest {
+            stop_loss: None,
+            take_profit: None,
+            ..bracket("10")
+        };
+        assert_eq!(engine.place_bracket(bare), Err(ConditionalError::NoExit));
+        assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    #[test]
+    fn a_short_brackets_stop_is_above_its_entry() {
+        let (mut engine, _) = engine();
+        let short = BracketRequest {
+            entry: NewOrder::limit(InstrumentId::new("sim", "AAA"), Side::Sell, d("2"), d("5")),
+            stop_loss: Some(Trigger::AtOrAbove(d("6"))),
+            take_profit: Some(d("4")),
+        };
+
+        let (_, exits) = engine.place_bracket(short).unwrap();
+
+        assert!(exits.iter().all(|exit| exit.side == Side::Buy));
+        assert_eq!(exits[1].trigger, Trigger::AtOrBelow(d("4")));
+        assert_eq!(exits[1].then, Then::Limit(d("4")));
     }
 
     #[test]

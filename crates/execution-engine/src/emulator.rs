@@ -5,11 +5,15 @@
 //! moment. It serves venues that take no stops of their own, where brokers
 //! typically hold such orders on their servers instead.
 //!
+//! An exit can wait on an entry order: it watches only once the entry has
+//! filled, for as much as has filled, and two exits can cancel each other,
+//! so a bracket's stop-loss and take-profit never both go out (ADR 0022).
+//!
 //! They live as long as the terminal runs.
 
 use std::fmt;
 
-use model::{ClientOrderId, Decimal, InstrumentId, Side, TickTable};
+use model::{ClientOrderId, Decimal, InstrumentId, NewOrder, Side, TickTable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConditionalId(pub u64);
@@ -57,6 +61,8 @@ pub enum Then {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionalStatus {
+    /// An exit whose entry has not filled yet: it does not watch the tape.
+    Pending,
     Waiting,
     /// Fired, and sent as this order, whatever became of it.
     Fired(ClientOrderId),
@@ -71,6 +77,74 @@ pub struct ConditionalRequest {
     pub quantity: Decimal,
     pub trigger: Trigger,
     pub then: Then,
+}
+
+/// An entry order with the exits that protect what it fills (ADR 0022).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BracketRequest {
+    pub entry: NewOrder,
+    /// Where the position is cut: a trade at or past a price on the losing
+    /// side, or a trailing stop. It sends a marketable order.
+    pub stop_loss: Option<Trigger>,
+    /// Where profit is taken: a trade at or past this price on the winning
+    /// side sends a limit order at it.
+    pub take_profit: Option<Decimal>,
+}
+
+impl BracketRequest {
+    /// The exits as conditional requests, stop-loss first, each at no
+    /// quantity yet: on the other side of the entry, a stop on the losing
+    /// side of its limit and a take-profit on the winning side.
+    pub(crate) fn exits(
+        &self,
+    ) -> Result<Vec<(ConditionalRequest, Option<Decimal>)>, ConditionalError> {
+        if self.stop_loss.is_none() && self.take_profit.is_none() {
+            return Err(ConditionalError::NoExit);
+        }
+        let entry = &self.entry;
+        let long = entry.side == Side::Buy;
+        // Losing and winning are below and above the entry for a long.
+        let losing = |a: Decimal, b: Decimal| if long { a < b } else { a > b };
+        let stop_at = match self.stop_loss {
+            Some(Trigger::AtOrBelow(price)) if long => Some(price),
+            Some(Trigger::AtOrAbove(price)) if !long => Some(price),
+            Some(Trigger::Trailing(_)) | None => None,
+            Some(_) => return Err(ConditionalError::ExitOnWrongSide),
+        };
+        let in_order = [
+            stop_at.zip(entry.limit_price),
+            entry.limit_price.zip(self.take_profit),
+            stop_at.zip(self.take_profit),
+        ]
+        .into_iter()
+        .flatten()
+        .all(|(low, high)| losing(low, high));
+        if !in_order {
+            return Err(ConditionalError::ExitOnWrongSide);
+        }
+        let exit = |trigger, then| ConditionalRequest {
+            instrument: entry.instrument.clone(),
+            side: if long { Side::Sell } else { Side::Buy },
+            quantity: Decimal::ZERO,
+            trigger,
+            then,
+        };
+        let stop = self
+            .stop_loss
+            .map(|trigger| exit(trigger, Then::Marketable));
+        let profit = self.take_profit.map(|price| {
+            let trigger = if long {
+                Trigger::AtOrAbove(price)
+            } else {
+                Trigger::AtOrBelow(price)
+            };
+            exit(trigger, Then::Limit(price))
+        });
+        stop.into_iter()
+            .chain(profit)
+            .map(|request| level_of(&request).map(|level| (request, level)))
+            .collect()
+    }
 }
 
 /// A conditional order as the terminal holds it.
@@ -93,6 +167,12 @@ pub struct Conditional {
     /// out then (trading halted, a session that takes no such order, a
     /// holding not yet settled), and it tries again on the next trade.
     pub blocked: Option<String>,
+    /// The entry order this exit protects: it waits for the entry's fills,
+    /// and its quantity is what has filled.
+    pub after: Option<ClientOrderId>,
+    /// The other exit of the same position: when either fires, the other
+    /// is cancelled.
+    pub oco: Option<ConditionalId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +184,11 @@ pub enum ConditionalError {
     Unknown(ConditionalId),
     /// Already fired or cancelled.
     NotWaiting(ConditionalId),
+    /// A bracket with neither a stop-loss nor a take-profit.
+    NoExit,
+    /// An exit on the wrong side of the entry: a long's stop-loss must be
+    /// below its entry and its take-profit above, a short's the reverse.
+    ExitOnWrongSide,
     /// The last trade is already past the trigger, so it would fire at
     /// once, at whatever the market gives.
     AlreadyMet {
@@ -123,6 +208,10 @@ impl fmt::Display for ConditionalError {
             Self::NotWaiting(id) => {
                 write!(f, "conditional order {id} already fired or was cancelled")
             }
+            Self::NoExit => f.write_str("a bracket needs a stop-loss, a take-profit, or both"),
+            Self::ExitOnWrongSide => f.write_str(
+                "the stop-loss must be on the losing side of the entry and the take-profit on the winning side",
+            ),
             Self::AlreadyMet { last } => {
                 write!(f, "the last trade, {last}, is already past the trigger")
             }
@@ -153,21 +242,7 @@ impl Conditional {
         if request.quantity <= Decimal::ZERO {
             return Err(ConditionalError::QuantityNotPositive);
         }
-        let level = match request.trigger {
-            Trigger::AtOrBelow(price) | Trigger::AtOrAbove(price) => Some(positive(price)?),
-            Trigger::Trailing(Offset::Amount(amount)) if amount <= Decimal::ZERO => {
-                return Err(ConditionalError::OffsetOutOfRange)
-            }
-            Trigger::Trailing(Offset::Percent(pct))
-                if pct <= Decimal::ZERO || pct >= Decimal::ONE_HUNDRED =>
-            {
-                return Err(ConditionalError::OffsetOutOfRange)
-            }
-            Trigger::Trailing(_) => None,
-        };
-        if let Then::Limit(price) = request.then {
-            positive(price)?;
-        }
+        let level = level_of(&request)?;
         let met = match (request.trigger, mark) {
             (Trigger::AtOrBelow(at), Some(last)) => last <= at,
             (Trigger::AtOrAbove(at), Some(last)) => last >= at,
@@ -187,11 +262,39 @@ impl Conditional {
             best: None,
             level,
             blocked: None,
+            after: None,
+            oco: None,
         };
         if let Some(mark) = mark {
             conditional.trail(mark, ticks);
         }
         Ok(conditional)
+    }
+
+    /// An exit for entry order `after`, from a request and level that
+    /// [`BracketRequest::exits`] checked: pending, at no quantity, until the
+    /// entry fills. Whether the market has already passed its trigger is a
+    /// question for when it watches.
+    pub(crate) fn exit(
+        id: ConditionalId,
+        request: ConditionalRequest,
+        level: Option<Decimal>,
+        after: ClientOrderId,
+    ) -> Self {
+        Self {
+            id,
+            instrument: request.instrument,
+            side: request.side,
+            quantity: Decimal::ZERO,
+            trigger: request.trigger,
+            then: request.then,
+            status: ConditionalStatus::Pending,
+            best: None,
+            level,
+            blocked: None,
+            after: Some(after),
+            oco: None,
+        }
     }
 
     /// Moves a trailing stop's best price and level with a trade.
@@ -230,6 +333,27 @@ impl Conditional {
             (Trigger::Trailing(_), None) => false,
         }
     }
+}
+
+/// The price a trigger fires at as placed (`None` for a trailing stop until
+/// it sees a trade), once its prices and offset are checked.
+fn level_of(request: &ConditionalRequest) -> Result<Option<Decimal>, ConditionalError> {
+    let level = match request.trigger {
+        Trigger::AtOrBelow(price) | Trigger::AtOrAbove(price) => Some(positive(price)?),
+        Trigger::Trailing(Offset::Amount(amount)) if amount <= Decimal::ZERO => {
+            return Err(ConditionalError::OffsetOutOfRange)
+        }
+        Trigger::Trailing(Offset::Percent(pct))
+            if pct <= Decimal::ZERO || pct >= Decimal::ONE_HUNDRED =>
+        {
+            return Err(ConditionalError::OffsetOutOfRange)
+        }
+        Trigger::Trailing(_) => None,
+    };
+    if let Then::Limit(price) = request.then {
+        positive(price)?;
+    }
+    Ok(level)
 }
 
 /// `offset` back from `best`, rounded onto the ladder the far side: down

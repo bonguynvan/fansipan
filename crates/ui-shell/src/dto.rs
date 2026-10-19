@@ -59,7 +59,8 @@ pub struct ConditionalDto {
     /// "limit" or "marketable".
     pub then: &'static str,
     pub limit_price: Option<String>,
-    /// "waiting", "fired", or "cancelled".
+    /// "pending" (an exit whose entry has not filled), "waiting", "fired",
+    /// or "cancelled".
     pub status: &'static str,
     /// The order it sent, once fired.
     pub order_id: Option<u64>,
@@ -68,6 +69,17 @@ pub struct ConditionalDto {
     pub level: Option<String>,
     /// Why it reached its trigger and waits still.
     pub blocked: Option<String>,
+    /// The entry order an exit protects (ADR 0022).
+    pub after_order: Option<u64>,
+    /// The other exit, cancelled when this one fires.
+    pub oco: Option<u64>,
+}
+
+/// A bracket as placed: its entry order and the exits waiting on it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct BracketDto {
+    pub order: OrderDto,
+    pub exits: Vec<ConditionalDto>,
 }
 
 impl From<&Conditional> for ConditionalDto {
@@ -83,6 +95,7 @@ impl From<&Conditional> for ConditionalDto {
             Then::Marketable => ("marketable", None),
         };
         let (status, order_id) = match c.status {
+            ConditionalStatus::Pending => ("pending", None),
             ConditionalStatus::Waiting => ("waiting", None),
             ConditionalStatus::Fired(id) => ("fired", Some(id.0)),
             ConditionalStatus::Cancelled => ("cancelled", None),
@@ -103,6 +116,8 @@ impl From<&Conditional> for ConditionalDto {
             best: c.best.map(number),
             level: c.level.map(number),
             blocked: c.blocked.clone(),
+            after_order: c.after.map(|id| id.0),
+            oco: c.oco.map(|id| id.0),
         }
     }
 }

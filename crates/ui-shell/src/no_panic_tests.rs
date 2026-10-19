@@ -362,6 +362,24 @@ enum Input {
         limit_price: Option<String>,
     },
     CancelConditional(u64),
+    Bracket {
+        symbol: String,
+        side: String,
+        quantity: String,
+        price: Option<String>,
+        stop: Option<String>,
+        trail: Option<String>,
+        percent: bool,
+        take_profit: Option<String>,
+    },
+    Sizing {
+        symbol: String,
+        side: String,
+        entry: String,
+        stop: String,
+        risk: String,
+        percent: bool,
+    },
 }
 
 fn input() -> BoxedStrategy<Input> {
@@ -401,6 +419,28 @@ fn input() -> BoxedStrategy<Input> {
                 limit_price,
             }),
         1 => (0u64..6).prop_map(Input::CancelConditional),
+        2 => (
+            symbol(),
+            side(),
+            typed(),
+            prop::option::of(typed()),
+            prop::option::of(typed()),
+            prop::option::of(typed()),
+            any::<bool>(),
+            prop::option::of(typed()),
+        )
+            .prop_map(|(symbol, side, quantity, price, stop, trail, percent, take_profit)| Input::Bracket {
+                symbol,
+                side,
+                quantity,
+                price,
+                stop,
+                trail,
+                percent,
+                take_profit,
+            }),
+        1 => (symbol(), side(), typed(), typed(), typed(), any::<bool>())
+            .prop_map(|(symbol, side, entry, stop, risk, percent)| Input::Sizing { symbol, side, entry, stop, risk, percent }),
     ].boxed()
 }
 
@@ -488,6 +528,52 @@ fn feed(shell: &Shell, input: &Input) {
         }
         Input::CancelConditional(id) => {
             let _ = cancel_conditional_order(shell, *id);
+        }
+        Input::Bracket {
+            symbol,
+            side,
+            quantity,
+            price,
+            stop,
+            trail,
+            percent,
+            take_profit,
+        } => {
+            let ticket = BracketTicket {
+                entry: Ticket {
+                    symbol,
+                    side,
+                    quantity,
+                    limit_price: price.as_deref(),
+                    kind: None,
+                    time_in_force: None,
+                },
+                stop_price: stop.as_deref(),
+                trail: trail.as_deref(),
+                trail_percent: *percent,
+                take_profit: take_profit.as_deref(),
+            };
+            let _ = place_bracket_order(shell, &ticket);
+        }
+        Input::Sizing {
+            symbol,
+            side,
+            entry,
+            stop,
+            risk,
+            percent,
+        } => {
+            let ticket = SizingTicket {
+                symbol,
+                side,
+                kind: None,
+                time_in_force: None,
+                entry,
+                stop,
+                risk,
+                percent: *percent,
+            };
+            let _ = sizing_of(shell, &ticket);
         }
     }
 }

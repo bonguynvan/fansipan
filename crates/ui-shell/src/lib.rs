@@ -30,8 +30,8 @@ use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
 use data_engine::DataEngine;
 use execution_engine::{
-    ConditionalId, ConditionalRequest, ExecutionEngine, Offset, RiskBudget, SizeRequest, Then,
-    Trigger,
+    BracketRequest, ConditionalId, ConditionalRequest, ExecutionEngine, Offset, RiskBudget,
+    SizeRequest, Then, Trigger,
 };
 use model::{ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -41,9 +41,9 @@ pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
 use dto::{
-    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConditionalDto,
-    ConnectionDto, DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto,
-    SizingDto, Snapshot,
+    AccountDto, BarDto, BoardDto, BracketDto, CancelAllDto, CancelFailureDto, CapacityDto,
+    ConditionalDto, ConnectionDto, DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto,
+    SessionDto, SizingDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -490,6 +490,65 @@ fn context() -> tauri::Context<tauri::Wry> {
     context
 }
 
+/// What the ticket asked for with exits, parsed exactly.
+struct BracketTicket<'a> {
+    entry: Ticket<'a>,
+    stop_price: Option<&'a str>,
+    trail: Option<&'a str>,
+    trail_percent: bool,
+    take_profit: Option<&'a str>,
+}
+
+fn bracket_request(venue: &str, ticket: &BracketTicket<'_>) -> Result<BracketRequest, String> {
+    let entry = new_order(venue, &ticket.entry)?;
+    let stop_loss = match (ticket.stop_price, ticket.trail) {
+        (Some(_), Some(_)) => {
+            return Err("a stop-loss is a price or a trailing distance, not both".to_string())
+        }
+        (Some(raw), None) => {
+            let price = parse_decimal("stop-loss", raw)?;
+            Some(match entry.side {
+                Side::Buy => Trigger::AtOrBelow(price),
+                Side::Sell => Trigger::AtOrAbove(price),
+            })
+        }
+        (None, Some(raw)) => {
+            let distance = parse_decimal("trailing distance", raw)?;
+            Some(Trigger::Trailing(if ticket.trail_percent {
+                Offset::Percent(distance)
+            } else {
+                Offset::Amount(distance)
+            }))
+        }
+        (None, None) => None,
+    };
+    let take_profit = ticket
+        .take_profit
+        .map(|raw| parse_decimal("take-profit", raw))
+        .transpose()?;
+    Ok(BracketRequest {
+        entry,
+        stop_loss,
+        take_profit,
+    })
+}
+
+fn place_bracket_order(shell: &Shell, ticket: &BracketTicket<'_>) -> Result<BracketDto, String> {
+    let request = bracket_request(&shell.venue, ticket)?;
+    let mut exec = lock(&shell.exec)?;
+    let (order, exits) = exec.place_bracket(request).map_err(|e| e.to_string())?;
+    let placed = BracketDto {
+        order: OrderDto::from(&order),
+        exits: exits.iter().map(ConditionalDto::from).collect(),
+    };
+    let mut pending = lock(&shell.pending)?;
+    pending.order(placed.order.clone());
+    for exit in &placed.exits {
+        pending.conditional(exit.clone());
+    }
+    Ok(placed)
+}
+
 /// Sets the trader's switch, for every window. Orders already working stay
 /// working: halting cancels nothing by itself.
 fn set_trading(shell: &Shell, state: &str) -> Result<(), String> {
@@ -596,6 +655,44 @@ fn place_order(
         time_in_force: time_in_force.as_deref(),
     };
     submit(&shell, new_order(&shell.venue, &ticket)?)
+}
+
+/// An entry order with its exits (ADR 0022): the entry as `place_order`
+/// takes it; a stop-loss at `stop_price`, or trailing by `trail` (in
+/// percent with `trail_percent`); a take-profit at `take_profit`. The exits
+/// wait for the entry's fills. A denied entry comes back with no exits.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn place_bracket(
+    shell: State<'_, Shell>,
+    symbol: String,
+    side: String,
+    quantity: String,
+    limit_price: Option<String>,
+    kind: Option<String>,
+    time_in_force: Option<String>,
+    stop_price: Option<String>,
+    trail: Option<String>,
+    trail_percent: Option<bool>,
+    take_profit: Option<String>,
+) -> Result<BracketDto, String> {
+    place_bracket_order(
+        &shell,
+        &BracketTicket {
+            entry: Ticket {
+                symbol: &symbol,
+                side: &side,
+                quantity: &quantity,
+                limit_price: limit_price.as_deref(),
+                kind: kind.as_deref(),
+                time_in_force: time_in_force.as_deref(),
+            },
+            stop_price: given(&stop_price),
+            trail: given(&trail),
+            trail_percent: trail_percent.unwrap_or(false),
+            take_profit: given(&take_profit),
+        },
+    )
 }
 
 /// How large one order could be now (ADR 0016): what the account can pay
@@ -721,6 +818,11 @@ fn cancel_conditional(shell: State<'_, Shell>, id: u64) -> Result<ConditionalDto
     cancel_conditional_order(&shell, id)
 }
 
+/// A field the ticket left empty is no field at all.
+fn given(raw: &Option<String>) -> Option<&str> {
+    raw.as_deref().filter(|raw| !raw.trim().is_empty())
+}
+
 /// A resting limit order's new total quantity and price. The new terms pass
 /// risk as a new order would; the venue's answer arrives in a later batch.
 #[tauri::command]
@@ -818,7 +920,18 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
         Event::Execution(report) => {
             let mut exec = lock(&shell.exec)?;
             match exec.apply(report) {
-                Ok(order) => lock(&shell.pending)?.order(OrderDto::from(&order)),
+                Ok(order) => {
+                    // A fill wakes the exits that wait on this order (ADR 0022).
+                    let exits = exec.on_order(&order);
+                    shell
+                        .waiting
+                        .store(exec.waiting_conditionals(), Ordering::Release);
+                    let mut pending = lock(&shell.pending)?;
+                    pending.order(OrderDto::from(&order));
+                    for exit in &exits {
+                        pending.conditional(ConditionalDto::from(exit));
+                    }
+                }
                 Err(e) => eprintln!(
                     "execution report for order {} ignored: {e}",
                     report.order_id
@@ -956,6 +1069,7 @@ pub fn run(venue: Venue) -> ExitCode {
             place_conditional,
             cancel_conditional,
             size_for_risk,
+            place_bracket,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -978,6 +1092,7 @@ pub fn run(venue: Venue) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use execution_engine::ConditionalError;
     use model::{Quote, UnixNanos};
     use sandbox::{MarketProfile, SandboxDataClient, SandboxExecutionClient};
 
@@ -1224,6 +1339,92 @@ mod tests {
             "a buy's stop must be below its entry"
         );
         assert!(sizing_of(&shell, &size_aapl("abc")).is_err());
+    }
+
+    fn aapl_bracket(
+        stop: Option<&'static str>,
+        trail: Option<&'static str>,
+    ) -> BracketTicket<'static> {
+        BracketTicket {
+            entry: Ticket {
+                symbol: "AAPL",
+                side: "buy",
+                quantity: "10",
+                limit_price: Some("100"),
+                kind: Some("limit"),
+                time_in_force: Some("day"),
+            },
+            stop_price: stop,
+            trail,
+            trail_percent: false,
+            take_profit: Some("120"),
+        }
+    }
+
+    #[test]
+    fn a_brackets_exits_wake_when_the_venue_reports_its_entry_filled() {
+        let shell = shell();
+        announce(&shell, &profile("us"));
+        let placed = place_bracket_order(&shell, &aapl_bracket(Some("95"), None)).unwrap();
+        let first = take_pending(&shell);
+        assert_eq!(placed.exits.len(), 2);
+        assert!(placed
+            .exits
+            .iter()
+            .all(|exit| exit.status == "pending" && exit.after_order == Some(placed.order.id)));
+        assert_eq!(first.conditionals.len(), 2);
+        assert_eq!(shell.waiting.load(Ordering::Acquire), 0);
+
+        let id = ClientOrderId(placed.order.id);
+        for event in [
+            model::OrderEvent::Accepted {
+                venue_order_id: model::VenueOrderId("V1".into()),
+            },
+            model::OrderEvent::Filled {
+                fill_id: model::FillId("F1".into()),
+                quantity: Decimal::from(4),
+                price: Decimal::from(100),
+            },
+        ] {
+            let report = model::ExecutionReport {
+                order_id: id,
+                event,
+                ts_event: UnixNanos(1),
+            };
+            route(&shell, &Event::Execution(report)).unwrap();
+        }
+        let batch = take_pending(&shell);
+
+        assert!(batch
+            .conditionals
+            .iter()
+            .all(|exit| exit.status == "waiting" && exit.quantity == "4"));
+        assert_eq!(
+            shell.waiting.load(Ordering::Acquire),
+            2,
+            "trades reach them now"
+        );
+    }
+
+    #[test]
+    fn a_bracket_is_parsed_exactly_and_says_what_is_wrong() {
+        let shell = shell();
+        assert_eq!(
+            place_bracket_order(&shell, &aapl_bracket(Some("95"), Some("2"))).unwrap_err(),
+            "a stop-loss is a price or a trailing distance, not both"
+        );
+        assert_eq!(
+            place_bracket_order(&shell, &aapl_bracket(Some("105"), None)).unwrap_err(),
+            ConditionalError::ExitOnWrongSide.to_string()
+        );
+        let trailing = place_bracket_order(&shell, &aapl_bracket(None, Some("2"))).unwrap();
+        assert_eq!(
+            (
+                trailing.exits[0].trigger,
+                trailing.exits[0].offset.as_deref()
+            ),
+            ("trailing", Some("2"))
+        );
     }
 
     #[test]
