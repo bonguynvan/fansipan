@@ -964,6 +964,16 @@ mod tests {
         for event in events.try_iter() {
             route(&shell, &event).unwrap();
         }
+        // A price to mark it at, however far the venue's account report
+        // has got: held, it is marked; not yet, it counts from the band.
+        let print = Event::Trade(model::Trade {
+            instrument: InstrumentId::new(VENUE, "AAPL"),
+            price: Decimal::from(190),
+            quantity: Decimal::ONE,
+            side: None,
+            ts_event: UnixNanos(1),
+        });
+        route(&shell, &print).unwrap();
 
         let day = take_pending(&shell)
             .day
