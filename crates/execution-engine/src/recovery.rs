@@ -20,13 +20,16 @@ pub struct OrderRecord {
     pub amending_to: Option<Decimal>,
 }
 
-/// The session as recorded: every order and conditional order, and the
-/// trader's switch.
+/// The session as recorded: every order and conditional order, the
+/// trader's switch, and the order ids reserved before a crash could use
+/// them, which new ids must start past.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Restored {
     pub orders: Vec<OrderRecord>,
     pub conditionals: Vec<Conditional>,
     pub trading: Option<TradingState>,
+    /// The first order id no earlier session can have sent.
+    pub next_order_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

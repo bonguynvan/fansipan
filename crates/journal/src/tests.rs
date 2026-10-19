@@ -109,6 +109,7 @@ fn a_session_written_reads_back_exactly_with_the_last_record_winning() {
             ],
             conditionals: vec![stop(5)],
             trading: Some(TradingState::Reducing),
+            next_order_id: None,
         }
     );
     assert_eq!(again.damaged, None);

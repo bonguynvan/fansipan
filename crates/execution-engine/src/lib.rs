@@ -97,6 +97,9 @@ impl fmt::Display for AmendError {
 
 impl std::error::Error for AmendError {}
 
+/// Why an exit waits after a restart until its entry is confirmed.
+const ENTRY_UNCONFIRMED: &str = "its entry is not yet confirmed by the venue since the restart";
+
 /// Whether a risk refusal can pass with time alone: the trader resumes
 /// trading, the session moves on, a position changes, shares settle. A
 /// conditional order whose order meets one of these waits rather than fire.
@@ -417,6 +420,9 @@ impl ExecutionEngine {
             .map(|info| info.ticks.clone());
         let mut changed = Vec::new();
         let mut fired = Vec::new();
+        // Each fired conditional as it was before this trade, to tell
+        // whether one held back has changed.
+        let mut moved_from: HashMap<ConditionalId, Conditional> = HashMap::new();
         for conditional in self.conditionals.values_mut() {
             if &conditional.instrument != instrument
                 || conditional.status != ConditionalStatus::Waiting
@@ -426,6 +432,7 @@ impl ExecutionEngine {
             let before = conditional.clone();
             if conditional.observe(price, ticks.as_ref()) {
                 fired.push(conditional.id);
+                moved_from.insert(conditional.id, before);
                 continue;
             }
             // Back from its trigger, it is no longer held back from anything.
@@ -448,15 +455,25 @@ impl ExecutionEngine {
             };
             let order = self.released(&conditional);
             // A reason that passes with time keeps it waiting, so a stop is
-            // not spent where its order could not go out yet.
-            let blocked = match self.clear(order.clone(), None) {
-                Err(reason) if passes_with_time(&reason) => Some(reason.to_string()),
-                _ => None,
+            // not spent where its order could not go out yet. So does an
+            // exit whose entry the venue has not confirmed since a restart:
+            // what it would sell may have moved while the terminal was shut.
+            let entry_unconfirmed = conditional
+                .after
+                .is_some_and(|entry| self.is_unconfirmed(entry));
+            let blocked = if entry_unconfirmed {
+                Some(ENTRY_UNCONFIRMED.to_string())
+            } else {
+                match self.clear(order.clone(), None) {
+                    Err(reason) if passes_with_time(&reason) => Some(reason.to_string()),
+                    _ => None,
+                }
             };
             if let Some(reason) = blocked {
                 if let Some(held) = self.conditionals.get_mut(&id) {
-                    if held.blocked.as_deref() != Some(reason.as_str()) {
-                        held.blocked = Some(reason);
+                    held.blocked = Some(reason);
+                    // Its trailing level may have moved with this trade too.
+                    if Some(&*held) != moved_from.get(&id) {
                         changed.push(held.clone());
                     }
                 }
@@ -898,7 +915,6 @@ impl ExecutionEngine {
             tracked.amending_to = None;
         }
         tracked.order = next;
-        tracked.unconfirmed = false;
         Ok(tracked.order.clone())
     }
 
@@ -997,6 +1013,9 @@ impl ExecutionEngine {
             tracked.amending_to = None;
         }
         tracked.order = next;
+        // The venue's whole view of the order, after a reconnect or a
+        // restart, is what confirms one restored unconfirmed; a single
+        // fill might follow others the journal never recorded.
         tracked.unconfirmed = false;
         Ok(tracked.order.clone())
     }
@@ -1067,7 +1086,15 @@ impl ExecutionEngine {
         if let Some(state) = restored.trading {
             self.trading = state;
         }
+        if let Some(reserved) = restored.next_order_id {
+            self.next_id = self.next_id.max(reserved);
+        }
         Ok(())
+    }
+
+    /// The id the next order will take.
+    pub fn next_order_id(&self) -> u64 {
+        self.next_id
     }
 
     /// Asks the venue about every restored order still unconfirmed; its
@@ -2659,6 +2686,7 @@ mod tests {
                 .collect(),
             conditionals: engine.conditionals().cloned().collect(),
             trading: Some(engine.trading_state()),
+            next_order_id: None,
         }
     }
 
@@ -2731,6 +2759,11 @@ mod tests {
             after.is_unconfirmed(open.id),
             "a refused report says nothing"
         );
+        after.apply(&report(open.id, fill("f2", "1"))).unwrap();
+        assert!(
+            after.is_unconfirmed(open.id),
+            "one live fill may follow others the journal never recorded"
+        );
 
         // While the terminal was closed the venue filled two more.
         let venue = VenueOrder::new(VenueOrderState::Working, d("3"), Some(d("5")));
@@ -2739,7 +2772,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(caught_up.filled_quantity, d("3"));
-        assert!(!after.is_unconfirmed(open.id));
+        assert!(
+            !after.is_unconfirmed(open.id),
+            "the venue's whole view confirms it"
+        );
     }
 
     #[test]
@@ -2764,6 +2800,54 @@ mod tests {
         assert_eq!(silent.recover_unconfirmed(), Ok(false));
         assert!(silent.is_unconfirmed(open.id));
         assert!(calls.lock().unwrap().recovered.is_empty());
+    }
+
+    #[test]
+    fn new_ids_start_past_those_reserved_before_a_crash() {
+        let (mut engine, _) = engine();
+
+        engine
+            .restore(Restored {
+                next_order_id: Some(1_001),
+                ..Restored::default()
+            })
+            .unwrap();
+
+        assert_eq!(engine.next_order_id(), 1_001);
+        assert_eq!(engine.submit(buy("1")).id, ClientOrderId(1_001));
+    }
+
+    #[test]
+    fn a_restored_exit_waits_until_the_venue_confirms_its_entry() {
+        let (mut before, _) = engine();
+        let (entry, exits) = before.place_bracket(bracket("10"), None).unwrap();
+        let partly = fill_entry(&mut before, entry.id, "f1", "4");
+        before.on_order(&partly);
+        let (mut after, calls) = engine();
+        after.restore(recorded(&before)).unwrap();
+        let aaa = InstrumentId::new("sim", "AAA");
+
+        let (held, orders) = after.on_trade(&aaa, d("3.9"));
+
+        assert!(orders.is_empty(), "nothing is sold on a stale count");
+        assert_eq!(held[0].id, exits[0].id);
+        assert_eq!(held[0].status, ConditionalStatus::Waiting);
+        assert_eq!(held[0].blocked.as_deref(), Some(ENTRY_UNCONFIRMED));
+
+        // The venue says the entry filled 6 while the terminal was shut.
+        let venue = VenueOrder::new(VenueOrderState::Working, d("6"), Some(d("5")));
+        let confirmed = after
+            .apply(&report(entry.id, OrderEvent::Snapshot(venue)))
+            .unwrap();
+        after.on_order(&confirmed);
+        let (_, orders) = after.on_trade(&aaa, d("3.9"));
+
+        assert_eq!(
+            orders[0].quantity,
+            d("6"),
+            "the exit sells what the venue says"
+        );
+        assert!(calls.lock().unwrap().submitted.len() == 1);
     }
 
     #[test]

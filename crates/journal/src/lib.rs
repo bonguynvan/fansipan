@@ -206,6 +206,7 @@ fn read(path: &Path, bytes: &[u8]) -> Result<(Restored, Option<PathBuf>), Journa
         orders: orders.into_values().collect(),
         conditionals: conditionals.into_values().collect(),
         trading,
+        next_order_id: None,
     };
     Ok((restored, damaged))
 }
