@@ -23,6 +23,10 @@
     { type: "text", key: "avg", header: t("column.avg"), width: px(78), minWidth: px(72), align: "right", format: atTick },
     { type: "price", key: "mark", header: t("column.mark"), width: px(72), minWidth: px(64), flash: "auto", format: atTick },
     { type: "number", key: "pnl", header: t("column.pnl"), width: px(76), minWidth: px(64), format: inCash, cellClass: (v) => tone(v) },
+    {
+      type: "number", key: "today", header: t("column.today"), width: px(76), minWidth: px(64),
+      format: (v) => (v === null || v === undefined ? "—" : inCash(v)), cellClass: (v) => tone(v),
+    },
   ]);
 
   const rows = $derived(
@@ -35,6 +39,7 @@
         avg: p.avg_price,
         mark: last,
         pnl: (last - Number(p.avg_price)) * Number(p.quantity),
+        today: market.dayBySymbol[p.symbol] ?? null,
       };
     }),
   );

@@ -38,6 +38,12 @@ class Market {
   canAmend = $state(false);
   /** The trader's switch, for every window: "active", "reducing", or "halted". */
   trading = $state("active");
+  /** The day's P&L as the shell counts it (ADR 0019): `{ total, costs, partial, instruments }`. */
+  day = $state.raw(null);
+  /** Each instrument's day P&L, by symbol: a number, or null when unknown. */
+  dayBySymbol = $derived(
+    Object.fromEntries((this.day?.instruments ?? []).map((line) => [line.symbol, line.pnl === null ? null : Number(line.pnl)])),
+  );
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -61,6 +67,7 @@ class Market {
     this.typeNames = withTypeNames(this.typeNames, batch.sessions);
     this.tapes = withPrints(this.tapes, batch.prints ?? []);
     if (batch.trading) this.trading = batch.trading;
+    if (batch.day) this.day = batch.day;
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
@@ -121,6 +128,7 @@ export function startMarket() {
       market.info = snap.market ?? null;
       market.canAmend = Boolean(snap.can_amend);
       market.trading = snap.trading ?? "active";
+      market.day = snap.day ?? null;
       infoIn(market.info);
       await loadTrends(snap.quotes.map((q) => q.symbol));
       market.ready = true;

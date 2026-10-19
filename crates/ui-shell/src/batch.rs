@@ -17,8 +17,8 @@ use data_engine::DEFAULT_TAPE_CAPACITY;
 use serde::Serialize;
 
 use crate::dto::{
-    AccountDto, BarDto, BoardDto, ConnectionDto, InstrumentDto, OrderDto, PrintDto, QuoteDto,
-    SessionDto,
+    AccountDto, BarDto, BoardDto, ConnectionDto, DayDto, InstrumentDto, OrderDto, PrintDto,
+    QuoteDto, SessionDto,
 };
 
 #[derive(Default)]
@@ -54,6 +54,8 @@ pub struct BatchDto {
     pub prints: Vec<PrintDto>,
     /// The trading state, when it changed since the last batch.
     pub trading: Option<&'static str>,
+    /// The day's profit and loss as of this batch.
+    pub day: Option<DayDto>,
 }
 
 impl Batch {
@@ -131,6 +133,7 @@ impl Batch {
             sessions: self.sessions.into_values().collect(),
             prints: self.prints.into_values().flatten().collect(),
             trading: self.trading,
+            day: None,
         }
     }
 }

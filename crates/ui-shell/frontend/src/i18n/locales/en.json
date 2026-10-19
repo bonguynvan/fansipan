@@ -347,5 +347,10 @@
   "trading.banner.halted": "Trading halted",
   "trading.notice.active": "Trading resumed: orders go out as risk allows.",
   "trading.notice.reducing": "Reduce only: only orders that close a position go out. Working orders stay.",
-  "trading.notice.halted": "Trading halted: new orders and amendments are refused. Working orders stay; Trade › Cancel every working order cancels them."
+  "trading.notice.halted": "Trading halted: new orders and amendments are refused. Working orders stay; Trade › Cancel every working order cancels them.",
+
+  "app.day": "Day P&L",
+  "app.dayHint": "Net of {costs} in commission and sell tax, from this terminal's trades today and the venue's positions.",
+  "app.dayPartial": "Some holdings have no price yet and are left out.",
+  "column.today": "Today"
 }

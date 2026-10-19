@@ -17,7 +17,7 @@ mod no_panic_tests;
 mod settings;
 mod workspace;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::mem;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,7 +39,7 @@ pub use execution_engine::RiskLimits;
 use batch::{Batch, BatchDto};
 use dto::{
     AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConnectionDto,
-    InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
+    DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -233,6 +233,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             data.sessions().map(SessionDto::from).collect(),
         )
     };
+    let day = day_of(shell)?;
     let (orders, orders_connection, account, can_amend, trading) = {
         let mut exec = lock(&shell.exec)?;
         (
@@ -255,7 +256,28 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         sessions,
         can_amend,
         trading,
+        day,
     })
+}
+
+/// The day's profit and loss now: each instrument marked at its last
+/// trade, or the middle of its quote before any trade. Prices are read
+/// first and the data engine let go, so no two engine locks are held.
+fn day_of(shell: &Shell) -> Result<DayDto, String> {
+    let marks: HashMap<InstrumentId, Decimal> = {
+        let data = lock(&shell.data)?;
+        data.quotes()
+            .map(|quote| {
+                let last = data.stats(&quote.instrument).and_then(|s| s.last);
+                (
+                    quote.instrument.clone(),
+                    last.unwrap_or_else(|| quote.mid()),
+                )
+            })
+            .collect()
+    };
+    let exec = lock(&shell.exec)?;
+    Ok(DayDto::of(&exec.day_pnl(|id| marks.get(id).copied())))
 }
 
 /// Takes everything pending as the next numbered batch; `None` if nothing
@@ -266,7 +288,12 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
         return Ok(None);
     }
     let seq = shell.flushed.fetch_add(1, Ordering::SeqCst) + 1;
-    Ok(Some(batch.into_dto(seq)))
+    // Every batch moves a price, an order, or the account, any of which
+    // moves the day; recounting it costs a pass over a few positions.
+    Ok(Some(BatchDto {
+        day: Some(day_of(shell)?),
+        ..batch.into_dto(seq)
+    }))
 }
 
 fn submit(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
@@ -755,6 +782,7 @@ mod tests {
             sessions: vec![],
             prints: vec![],
             trading: None,
+            day: None,
         })
     }
 
@@ -793,6 +821,54 @@ mod tests {
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn a_fill_reaches_the_batch_with_the_day_it_made() {
+        let bus = Bus::new();
+        let events = bus.subscribe();
+        let shell = connect(&bus, &profile("us"));
+        announce(&shell, &profile("us"));
+
+        submit(
+            &shell,
+            new_order(VENUE, &ticket("AAPL", "buy", "1", None)).unwrap(),
+        )
+        .unwrap();
+        for event in events.try_iter() {
+            route(&shell, &event).unwrap();
+        }
+
+        let day = take_pending(&shell)
+            .day
+            .expect("every batch carries the day");
+        let line = day.instruments.iter().find(|l| l.symbol == "AAPL").unwrap();
+        assert!(line.pnl.is_some(), "{day:?}");
+        assert_eq!(
+            snapshot_of(&shell).unwrap().day.instruments.len(),
+            day.instruments.len()
+        );
+    }
+
+    #[test]
+    fn the_days_total_adds_what_is_known_and_says_what_is_not() {
+        let day = |symbol: &str, pnl: Option<&str>, costs: &str| execution_engine::DayPnl {
+            instrument: InstrumentId::new(VENUE, symbol),
+            pnl: pnl.map(|p| p.parse().unwrap()),
+            costs: costs.parse().unwrap(),
+        };
+
+        let dto = DayDto::of(&[
+            day("A", Some("10.5"), "1"),
+            day("B", None, "2"),
+            day("C", Some("-4"), "0"),
+        ]);
+
+        assert_eq!(
+            (dto.total.as_str(), dto.costs.as_str(), dto.partial),
+            ("6.5", "3", true)
+        );
+        assert_eq!(dto.instruments[1].pnl, None);
     }
 
     #[test]

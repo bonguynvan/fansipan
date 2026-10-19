@@ -342,5 +342,10 @@
   "trading.banner.halted": "Đã tạm dừng giao dịch",
   "trading.notice.active": "Đã giao dịch lại: lệnh được gửi đi nếu qua kiểm tra rủi ro.",
   "trading.notice.reducing": "Chỉ giảm vị thế: chỉ lệnh đóng bớt vị thế được gửi đi. Lệnh đang chờ vẫn giữ nguyên.",
-  "trading.notice.halted": "Đã tạm dừng giao dịch: lệnh mới và lệnh sửa bị từ chối. Lệnh đang chờ vẫn giữ nguyên; dùng Giao dịch › Hủy mọi lệnh đang chờ để hủy chúng."
+  "trading.notice.halted": "Đã tạm dừng giao dịch: lệnh mới và lệnh sửa bị từ chối. Lệnh đang chờ vẫn giữ nguyên; dùng Giao dịch › Hủy mọi lệnh đang chờ để hủy chúng.",
+
+  "app.day": "Lãi/lỗ hôm nay",
+  "app.dayHint": "Đã trừ {costs} phí môi giới và thuế bán, tính từ lệnh khớp hôm nay trên phần mềm này và danh mục do công ty chứng khoán báo.",
+  "app.dayPartial": "Một số mã chưa có giá nên chưa được tính.",
+  "column.today": "Hôm nay"
 }

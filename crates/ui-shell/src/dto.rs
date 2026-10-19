@@ -6,7 +6,7 @@
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
 use data_engine::{Bar, DataEngine, Print};
-use execution_engine::{is_amendable, Bound, OrderCapacity, TradingState};
+use execution_engine::{is_amendable, Bound, DayPnl, OrderCapacity, TradingState};
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
     InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
@@ -34,6 +34,50 @@ pub struct Snapshot {
     pub can_amend: bool,
     /// The trader's switch: "active", "reducing", or "halted".
     pub trading: &'static str,
+    pub day: DayDto,
+}
+
+/// The day's profit and loss (ADR 0019), net of commission and sell tax.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct DayDto {
+    /// The sum over every instrument whose day is known.
+    pub total: String,
+    /// Commission and sell tax on today's fills, already in the total.
+    pub costs: String,
+    /// Whether some instrument's day is unknown and left out of the total.
+    pub partial: bool,
+    pub instruments: Vec<DayLineDto>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct DayLineDto {
+    pub symbol: String,
+    /// `None` when a price it needs is unknown.
+    pub pnl: Option<String>,
+    pub costs: String,
+}
+
+impl DayDto {
+    pub fn of(days: &[DayPnl]) -> Self {
+        // Saturating: a sum that does not fit only overstates in the
+        // direction it was already going, and the lines stay exact.
+        let add = |sum: Decimal, value: Decimal| sum.checked_add(value).unwrap_or(sum);
+        let total = days.iter().filter_map(|d| d.pnl).fold(Decimal::ZERO, add);
+        let costs = days.iter().map(|d| d.costs).fold(Decimal::ZERO, add);
+        Self {
+            total: number(total),
+            costs: number(costs),
+            partial: days.iter().any(|d| d.pnl.is_none()),
+            instruments: days
+                .iter()
+                .map(|d| DayLineDto {
+                    symbol: d.instrument.symbol.clone(),
+                    pnl: d.pnl.map(number),
+                    costs: number(d.costs),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The trading state as the front end names it.

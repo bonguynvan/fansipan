@@ -71,6 +71,14 @@
       ),
   );
 
+  const signedMoney = (value) => `${Number(value) > 0 ? "+" : ""}${money(Number(value), market.info?.currency)}`;
+  const dayHint = $derived(
+    market.day
+      ? t("app.dayHint", { costs: money(Number(market.day.costs), market.info?.currency) }) +
+          (market.day.partial ? ` ${t("app.dayPartial")}` : "")
+      : "",
+  );
+
   const connectionText = ({ connection, state }) =>
     connection
       ? t(`app.connectionState.${state}`, { connection: t(`app.connection.${connection}`) })
@@ -99,9 +107,19 @@
       </div>
       <MenuBar onNotice={(notice) => (workspace.notice = notice)} />
     </div>
-    <div class="equity">
-      <span class="dim">{t("app.equity")}</span>
-      <span class="num">{money(equity, market.info?.currency)}</span>
+    <div class="figures">
+      <div class="equity">
+        <span class="dim">{t("app.equity")}</span>
+        <span class="num">{money(equity, market.info?.currency)}</span>
+      </div>
+      {#if market.day}
+        <div class="day" title={dayHint}>
+          <span class="dim">{t("app.day")}</span>
+          <span class="num {Number(market.day.total) > 0 ? 'up' : Number(market.day.total) < 0 ? 'down' : ''}"
+            >{market.day.partial ? "≈ " : ""}{signedMoney(market.day.total)}</span
+          >
+        </div>
+      {/if}
     </div>
     <div class="right">
       {#if market.trading !== "active"}
@@ -170,8 +188,29 @@
     white-space: nowrap;
   }
 
-  .equity {
+  .figures {
     justify-self: center;
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    min-width: 0;
+  }
+
+  .day {
+    display: flex;
+    gap: 0.625rem;
+    align-items: baseline;
+    font-size: var(--text-lg);
+    white-space: nowrap;
+  }
+
+  .day .dim {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .equity {
     display: flex;
     gap: 0.625rem;
     align-items: baseline;
@@ -187,7 +226,8 @@
   /* The top bar gets the window, so it alone answers to the window's width. */
   @media (max-width: 64rem) {
     .venue,
-    .equity .dim {
+    .equity .dim,
+    .day .dim {
       display: none;
     }
   }
