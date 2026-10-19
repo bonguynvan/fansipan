@@ -60,6 +60,7 @@ fn order_record() -> impl Strategy<Value = OrderRecord> {
         TimeInForce::FillOrKill,
         TimeInForce::AtOpen,
         TimeInForce::AtClose,
+        TimeInForce::AfterClose,
     ]);
     (
         (

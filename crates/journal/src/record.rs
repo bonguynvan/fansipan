@@ -45,6 +45,8 @@ pub enum Record {
     Order(OrderLine),
     Conditional(ConditionalLine),
     Trading(String),
+    /// Order ids up to here may have been sent; new ones start past it.
+    Reserved(u64),
 }
 
 impl Record {
@@ -58,6 +60,11 @@ impl Record {
 
     pub fn trading(state: TradingState) -> Self {
         Self::Trading(trading_label(state).to_string())
+    }
+
+    /// Reserves order ids below `next_order_id`: a restart starts past them.
+    pub fn reserved(next_order_id: u64) -> Self {
+        Self::Reserved(next_order_id)
     }
 }
 
@@ -137,6 +144,7 @@ fn time_in_force_label(tif: TimeInForce) -> Result<&'static str, RecordError> {
         TimeInForce::FillOrKill => Ok("fok"),
         TimeInForce::AtOpen => Ok("at_open"),
         TimeInForce::AtClose => Ok("at_close"),
+        TimeInForce::AfterClose => Ok("after_close"),
         other => Err(unknown("the time in force", other)),
     }
 }
@@ -148,6 +156,7 @@ fn parse_time_in_force(raw: &str) -> Result<TimeInForce, RecordError> {
         "fok" => Ok(TimeInForce::FillOrKill),
         "at_open" => Ok(TimeInForce::AtOpen),
         "at_close" => Ok(TimeInForce::AtClose),
+        "after_close" => Ok(TimeInForce::AfterClose),
         other => Err(unknown("the time in force", other)),
     }
 }

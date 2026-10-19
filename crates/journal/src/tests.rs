@@ -113,9 +113,16 @@ fn a_session_written_reads_back_exactly_with_the_last_record_winning() {
         }
     );
     assert_eq!(again.damaged, None);
+    drop(again);
     assert_eq!(
         Journal::open(&folder, "2026-10-20").unwrap().restored,
-        Restored::default()
+        Restored {
+            orders: vec![order(1, OrderStatus::PartiallyFilled, "40")],
+            conditionals: vec![],
+            trading: Some(TradingState::Reducing),
+            next_order_id: Some(3),
+        },
+        "the next day starts with what was live; the fired stop is spent"
     );
     let _ = fs::remove_dir_all(&folder);
 }
@@ -141,19 +148,22 @@ fn an_unfinished_last_line_is_set_aside_and_the_rest_kept() {
         vec![order(1, OrderStatus::Accepted, "0")]
     );
     let aside = again.damaged.clone().expect("the torn line set aside");
-    assert_eq!(fs::read(&aside).unwrap(), br#"{"order":{"id":2,"#.to_vec());
+    assert_eq!(
+        fs::read_to_string(&aside).unwrap(),
+        "{\"order\":{\"id\":2,\n"
+    );
     drop(again);
     let third = Journal::open(&folder, "2026-10-19").unwrap();
     assert_eq!(
         third.damaged, None,
-        "the journal was cut back to its good lines"
+        "the journal was rewritten with its good lines"
     );
     assert_eq!(third.restored.orders.len(), 1);
     let _ = fs::remove_dir_all(&folder);
 }
 
 #[test]
-fn a_line_that_does_not_parse_sets_it_and_everything_after_aside() {
+fn a_line_that_cannot_be_read_is_set_aside_and_the_lines_after_it_still_count() {
     let folder = scratch();
     let mut opened = Journal::open(&folder, "2026-10-19").unwrap();
     let path = opened.journal.path().to_path_buf();
@@ -169,13 +179,27 @@ fn a_line_that_does_not_parse_sets_it_and_everything_after_aside() {
 
     let again = Journal::open(&folder, "2026-10-19").unwrap();
 
-    assert_eq!(
-        again.restored.trading, None,
-        "nothing after the bad line is applied"
-    );
+    assert_eq!(again.restored.trading, Some(TradingState::Halted));
     assert_eq!(again.restored.orders.len(), 1);
     let aside = fs::read_to_string(again.damaged.clone().unwrap()).unwrap();
-    assert!(aside.starts_with("{\"trading\":\"sideways\"}\n{\"trading\":\"halted\"}"));
+    assert_eq!(aside, "{\"trading\":\"sideways\"}\n");
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_header_that_names_no_format_is_set_aside_not_taken_for_a_newer_one() {
+    let folder = scratch();
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("2026-10-19.jsonl"),
+        b"garbage\n{\"trading\":\"halted\"}\n",
+    )
+    .unwrap();
+
+    let opened = Journal::open(&folder, "2026-10-19").unwrap();
+
+    assert!(opened.damaged.is_some());
+    assert_eq!(opened.restored.trading, Some(TradingState::Halted));
     let _ = fs::remove_dir_all(&folder);
 }
 
@@ -192,6 +216,127 @@ fn a_journal_from_a_newer_version_is_left_as_it_is() {
         Err(JournalError::Format(2))
     ));
     assert_eq!(fs::read(&path).unwrap(), newer.to_vec());
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn every_order_type_and_status_reads_back() {
+    let kinds = [
+        OrderKind::Limit,
+        OrderKind::Market,
+        OrderKind::MarketToLimit,
+    ];
+    let forces = [
+        TimeInForce::Day,
+        TimeInForce::ImmediateOrCancel,
+        TimeInForce::FillOrKill,
+        TimeInForce::AtOpen,
+        TimeInForce::AtClose,
+        TimeInForce::AfterClose,
+    ];
+    let statuses = [
+        OrderStatus::Submitted,
+        OrderStatus::Accepted,
+        OrderStatus::PartiallyFilled,
+        OrderStatus::Filled,
+        OrderStatus::PendingCancel,
+        OrderStatus::PendingAmend,
+        OrderStatus::Cancelled,
+        OrderStatus::Rejected,
+        OrderStatus::Denied,
+    ];
+    for kind in kinds {
+        for tif in forces {
+            for status in statuses {
+                let mut record = order(1, status, "0");
+                record.order.order_type = OrderType::new(kind, tif);
+                let Record::Order(line) = Record::order(&record).expect("every shape records")
+                else {
+                    unreachable!("an order records as one");
+                };
+                assert_eq!(line.to_record().unwrap(), record);
+            }
+        }
+    }
+}
+
+#[test]
+fn the_highest_reservation_wins() {
+    let folder = scratch();
+    let mut opened = Journal::open(&folder, "2026-10-19").unwrap();
+    opened
+        .journal
+        .append(&[
+            Record::reserved(1_001),
+            Record::reserved(3_001),
+            Record::reserved(2_001),
+        ])
+        .unwrap();
+    drop(opened);
+
+    assert_eq!(
+        Journal::open(&folder, "2026-10-19")
+            .unwrap()
+            .restored
+            .next_order_id,
+        Some(3_001)
+    );
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_new_day_starts_from_what_was_live_in_the_last_one() {
+    let folder = scratch();
+    let mut monday = Journal::open(&folder, "2026-10-19").unwrap();
+    let waiting = Conditional {
+        status: ConditionalStatus::Waiting,
+        ..stop(5)
+    };
+    monday
+        .journal
+        .append(&[
+            Record::order(&order(1, OrderStatus::Accepted, "0")).unwrap(),
+            Record::order(&order(40, OrderStatus::Filled, "100")).unwrap(),
+            Record::conditional(&waiting).unwrap(),
+            Record::conditional(&stop(6)).unwrap(),
+            Record::trading(TradingState::Halted),
+        ])
+        .unwrap();
+    drop(monday);
+
+    let tuesday = Journal::open(&folder, "2026-10-21").unwrap();
+
+    assert_eq!(
+        tuesday.restored,
+        Restored {
+            orders: vec![order(1, OrderStatus::Accepted, "0")],
+            conditionals: vec![waiting],
+            trading: Some(TradingState::Halted),
+            next_order_id: Some(41),
+        },
+        "only what is live comes over, with ids past every order, finished ones too"
+    );
+    drop(tuesday);
+    let again = Journal::open(&folder, "2026-10-21").unwrap();
+    assert_eq!(
+        again.restored.next_order_id,
+        Some(41),
+        "and it is in the new day's file"
+    );
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn one_terminal_at_a_time_keeps_an_accounts_journal() {
+    let folder = scratch();
+    let held = AccountLock::acquire(&folder).unwrap();
+
+    assert!(matches!(
+        AccountLock::acquire(&folder),
+        Err(JournalError::Locked)
+    ));
+    drop(held);
+    assert!(AccountLock::acquire(&folder).is_ok());
     let _ = fs::remove_dir_all(&folder);
 }
 
