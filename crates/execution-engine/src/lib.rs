@@ -99,40 +99,42 @@ impl fmt::Display for AmendError {
 
 impl std::error::Error for AmendError {}
 
-/// Whether an order placed elsewhere has terms that can stand: a quantity
-/// above zero, a limit order's price above zero, fills no more than the
-/// quantity, and fills that carry their price, without which they could
-/// not be counted and the order would look open when the venue says not.
-fn external_terms(external: &ExternalOrder) -> Result<(), ApplyError> {
+/// The limit price of an order placed elsewhere, first reported, if its
+/// terms can stand: a quantity above zero, a limit order priced above zero,
+/// and fills no more than the quantity. Any other type has no limit price,
+/// whatever the venue sends in its place. A filled order's fills must carry
+/// a price, without which they could not be counted and the order would
+/// look open when the venue says not; any other state's unpriced fills are
+/// noted as a reason, as for any order caught up.
+fn external_terms(external: &ExternalOrder) -> Result<Option<Decimal>, ApplyError> {
     let invalid = |why: &str| {
         Err(ApplyError::Invalid(format!(
             "{}: {why}",
             external.venue_order_id.0
         )))
     };
-    if external.quantity <= Decimal::ZERO {
+    let view = &external.view;
+    let quantity = view.quantity.unwrap_or(external.quantity);
+    if external.quantity <= Decimal::ZERO || quantity <= Decimal::ZERO {
         return invalid("its quantity is not above zero");
     }
-    let limit = external.order_type.kind == OrderKind::Limit;
-    match external.limit_price {
-        Some(price) if price <= Decimal::ZERO => {
-            return invalid("its limit price is not above zero")
-        }
-        None if limit => return invalid("a limit order with no price"),
-        _ => {}
-    }
-    let filled = external.view.filled_quantity;
-    if filled < Decimal::ZERO || filled > external.quantity {
+    let limit_price = match external.order_type.kind {
+        OrderKind::Limit => match external.limit_price {
+            Some(price) if price > Decimal::ZERO => Some(price),
+            _ => return invalid("a limit order with no price above zero"),
+        },
+        _ => None,
+    };
+    if view.filled_quantity < Decimal::ZERO || view.filled_quantity > quantity {
         return invalid("its fills are outside its quantity");
     }
-    let priced = external
-        .view
+    let priced = view
         .avg_fill_price
         .is_some_and(|price| price > Decimal::ZERO);
-    if filled > Decimal::ZERO && !priced {
-        return invalid("its fills carry no price");
+    if matches!(view.state, VenueOrderState::Filled) && !priced {
+        return invalid("it filled at no price");
     }
-    Ok(())
+    Ok(limit_price)
 }
 
 /// Why an exit waits after a restart until its entry is confirmed.
@@ -1116,17 +1118,22 @@ impl ExecutionEngine {
     /// the same venue id catches that order up. Terms that cannot stand are
     /// refused, and an order that cannot be taken in uses no id.
     pub fn on_external(&mut self, external: &ExternalOrder) -> Result<Order, ApplyError> {
-        external_terms(external)?;
-        let view = external
+        let mut view = external
             .view
             .clone()
             .with_venue_order_id(external.venue_order_id.clone());
         if let Some(id) = self.by_venue.get(&external.venue_order_id).copied() {
+            // Caught up as any order is, whatever the report lacks.
             let order = self.catch_up(id, &view)?;
-            if self.is_external(id) && self.introduced.insert(id) {
+            let told = !order.status.is_open() || !self.is_external(id);
+            if !told && self.introduced.insert(id) {
                 self.gate.adopt(&external.venue_order_id, id);
             }
             return Ok(order);
+        }
+        let limit_price = external_terms(external)?;
+        if limit_price.is_none() {
+            view.limit_price = None;
         }
         let id = ClientOrderId(self.next_id);
         let order = Order {
@@ -1136,7 +1143,7 @@ impl ExecutionEngine {
             side: external.side,
             quantity: external.quantity,
             order_type: external.order_type,
-            limit_price: external.limit_price,
+            limit_price,
             status: OrderStatus::Submitted,
             filled_quantity: Decimal::ZERO,
             avg_fill_price: None,
@@ -1154,7 +1161,7 @@ impl ExecutionEngine {
         );
         match self.catch_up(id, &view) {
             Ok(order) => {
-                self.next_id += 1;
+                self.next_id = self.next_id.saturating_add(1);
                 self.introduced.insert(id);
                 self.gate.adopt(&external.venue_order_id, id);
                 Ok(order)
@@ -3162,6 +3169,63 @@ mod tests {
             ));
         }
         assert_eq!(engine.next_order_id(), 1);
+    }
+
+    #[test]
+    fn a_later_report_with_unpriced_fills_still_ends_an_adopted_order() {
+        let (mut engine, _) = engine();
+        let adopted = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "0"))
+            .unwrap();
+        let ended = ExternalOrder::new(
+            VenueOrderId("W-1".into()),
+            InstrumentId::new("sim", "AAA"),
+            Side::Sell,
+            d("10"),
+            model::OrderType::LIMIT,
+            Some(d("5")),
+            VenueOrder::new(VenueOrderState::Cancelled, d("4"), None),
+        );
+
+        let order = engine.on_external(&ended).unwrap();
+
+        assert_eq!(order.id, adopted.id);
+        assert_eq!(order.status, OrderStatus::Cancelled, "not left open");
+        assert!(order.reason.is_some(), "the unpriced fills are noted");
+    }
+
+    #[test]
+    fn a_market_order_sent_with_a_zero_price_is_adopted_with_none() {
+        let (mut engine, _) = engine();
+        let market = ExternalOrder::new(
+            VenueOrderId("W-3".into()),
+            InstrumentId::new("sim", "AAA"),
+            Side::Buy,
+            d("10"),
+            model::OrderType::MARKET,
+            Some(d("0")),
+            VenueOrder::new(VenueOrderState::Working, d("0"), None),
+        );
+
+        let adopted = engine.on_external(&market).unwrap();
+
+        assert_eq!(adopted.limit_price, None);
+    }
+
+    #[test]
+    fn an_adopted_order_restored_closed_is_not_introduced_again() {
+        let (mut before, _) = engine();
+        before
+            .on_external(&placed_elsewhere(VenueOrderState::Filled, "10"))
+            .unwrap();
+        let (mut after, calls) = engine();
+        after.restore(recorded(&before)).unwrap();
+
+        after
+            .on_external(&placed_elsewhere(VenueOrderState::Filled, "10"))
+            .unwrap();
+
+        assert!(calls.lock().unwrap().adopted.is_empty());
     }
 
     #[test]
