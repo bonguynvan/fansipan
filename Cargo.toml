@@ -6,6 +6,7 @@ members = [
   "crates/adapter-api",
   "crates/data-engine",
   "crates/execution-engine",
+  "crates/journal",
   "crates/adapters/sandbox",
   "crates/ui-shell",
 ]
@@ -24,6 +25,7 @@ bus = { package = "fansipan-bus", version = "0.2.3", path = "crates/bus" }
 adapter-api = { package = "fansipan-adapter-api", version = "0.2.3", path = "crates/adapter-api" }
 data-engine = { package = "fansipan-data-engine", path = "crates/data-engine" }
 execution-engine = { package = "fansipan-execution-engine", path = "crates/execution-engine" }
+journal = { package = "fansipan-journal", path = "crates/journal" }
 sandbox = { package = "fansipan-sandbox", path = "crates/adapters/sandbox" }
 # Property tests (dev-dependency only). Without default features: no
 # process forking or timeouts, which these pure, fast tests do not need.

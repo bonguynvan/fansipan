@@ -803,6 +803,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fansipan-journal"
+version = "0.0.1"
+dependencies = [
+ "fansipan-execution-engine",
+ "fansipan-model",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fansipan-model"
 version = "0.2.3"
 dependencies = [
