@@ -26,6 +26,7 @@ const STARTUP_TIMEOUT_MS = 60_000;
 const SETTLE_MS = 10_000;
 const SAMPLE_MS = 30_000;
 const SAMPLE_EVERY_MS = 2_000;
+const COLLECTED_SETTLE_MS = 5_000;
 /** Cells the price board draws for its sixteen rows: drawn means started. */
 const BOARD_CELLS = 16 * 5;
 const SCENARIOS = [
@@ -102,9 +103,29 @@ function setAside(aside) {
   };
 }
 
+async function pages() {
+  return (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).filter((p) => p.type === "page");
+}
+
+/** Asks every window's JavaScript to collect its garbage now. */
+async function collectGarbage() {
+  for (const page of await pages()) {
+    const socket = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve);
+      socket.addEventListener("error", reject);
+    });
+    await new Promise((resolve) => {
+      socket.addEventListener("message", resolve);
+      socket.send(JSON.stringify({ id: 1, method: "HeapProfiler.collectGarbage" }));
+    });
+    socket.close();
+  }
+}
+
 async function evaluate(expression) {
-  const pages = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-  const page = pages.find((p) => p.type === "page");
+  const open = await pages();
+  const page = open[0];
   if (!page) return undefined;
   const socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -116,6 +137,8 @@ async function evaluate(expression) {
     socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }));
   });
   socket.close();
+  const thrown = reply.result?.exceptionDetails;
+  if (thrown) throw new Error(thrown.exception?.description ?? thrown.text);
   return reply.result?.result?.value;
 }
 
@@ -174,10 +197,38 @@ async function measure(scenario, profile) {
   try {
     const startUpMs = await startUp(started);
     for (let n = 1; n < scenario.windows; n++) {
-      await evaluate(`window.__TAURI_INTERNALS__.invoke("open_window", { label: "ws-measure${n}" })`);
+      // As the app's own pop-out does, the window's layout is stored before
+      // it opens (an extra window with none closes itself): here, a copy of
+      // the main window's, so every window shows the full default layout.
+      const opened = await evaluate(`(async () => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        let layout = null;
+        for (let i = 0; i < 100 && !layout; i++) {
+          layout = await invoke("settings_get", { key: "workspace.layout.main" });
+          if (!layout) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!layout) return "the main window saved no layout";
+        await invoke("settings_set", { key: "workspace.layout.ws-measure${n}", value: layout });
+        return invoke("open_window", { label: "ws-measure${n}" }).then(() => "ok", (e) => String(e));
+      })()`);
+      if (opened !== "ok") throw new Error(`could not open a window: ${opened}`);
     }
     await sleep(SETTLE_MS);
-    return { startUpMs, ...(await sample(child.pid, SAMPLE_MS)) };
+    const windows = (await pages()).length;
+    if (windows !== scenario.windows) {
+      throw new Error(`${scenario.name}: ${windows} windows open, not ${scenario.windows}`);
+    }
+    const own = tree(processes(), child.pid).filter((p) => p.Name === "msedgewebview2.exe");
+    if (!own.some((p) => (p.CommandLine ?? "").includes(profile))) {
+      throw new Error("WebView2 did not take the run's own profile");
+    }
+    const sampled = await sample(child.pid, SAMPLE_MS);
+    // Chromium collects lazily where memory is plentiful, so what it holds
+    // includes garbage; collected, what is left is what the screens keep.
+    await collectGarbage();
+    await sleep(COLLECTED_SETTLE_MS);
+    const collected = tree(processes(), child.pid).reduce((sum, p) => sum + Number(p.PrivatePageCount), 0);
+    return { startUpMs, windows, ...sampled, collected };
   } finally {
     execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" });
     await sleep(1_000);
@@ -203,18 +254,19 @@ async function main() {
     }
   } finally {
     restore();
-    rmSync(work, { recursive: true, force: true });
+    // WebView2 may still hold its profile for a moment after its process ends.
+    rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
   }
 
   const cpu = cpus();
   console.log(`Machine: ${cpu[0].model.trim()}, ${cpu.length} logical cores, ${mb(totalmem())} MB RAM, Windows ${release()}`);
   console.log(`Install size: ${mb(statSync(EXE).size)} MB (${EXE}, front end embedded)`);
   console.log("");
-  console.log("| Scenario | Start-up | Processes | Working set | Private | CPU (of one core) |");
-  console.log("|---|---:|---:|---:|---:|---:|");
+  console.log("| Scenario | Start-up | Windows | Processes | Working set | Private | Private, garbage collected | CPU (of one core) |");
+  console.log("|---|---:|---:|---:|---:|---:|---:|---:|");
   for (const r of results) {
     console.log(
-      `| ${r.scenario.name} | ${(r.startUpMs / 1000).toFixed(2)} s | ${r.processes} | ${mb(r.working)} MB | ${mb(r.private)} MB | ${r.cpuOfOneCore.toFixed(1)}% |`,
+      `| ${r.scenario.name} | ${(r.startUpMs / 1000).toFixed(2)} s | ${r.windows} | ${r.processes} | ${mb(r.working)} MB | ${mb(r.private)} MB | ${mb(r.collected)} MB | ${r.cpuOfOneCore.toFixed(1)}% |`,
     );
   }
 }
