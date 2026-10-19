@@ -410,11 +410,11 @@
   "conditional.problem": "Sau khi kích hoạt: {reason}",
   "journal.restored": "Nhật ký hôm nay đã khôi phục phiên làm việc: {orders} lệnh, {held} lệnh điều kiện.",
   "journal.restoredUnconfirmed": "Nhật ký hôm nay đã khôi phục phiên làm việc: {orders} lệnh, {held} lệnh điều kiện. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra tại nơi mở tài khoản.",
-  "journal.damaged": "Một số dòng trong nhật ký hôm nay không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục.",
+  "journal.damaged": "Một số dòng trong nhật ký không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục.",
   "journal.failed": "Không mở được nhật ký: {error}. Phiên này sẽ không được khôi phục sau khi khởi động lại.",
   "journal.writeFailed": "Không ghi được nhật ký: {error}. Những thay đổi từ lúc này có thể không được khôi phục sau khi khởi động lại.",
   "status.unconfirmed": "{status}, chưa xác nhận",
   "order.unconfirmedReason": "Được khôi phục sau khi khởi động lại; sàn chưa xác nhận lại lệnh này.",
   "conditional.lifetimeKept": "Terminal giữ lệnh qua các lần khởi động lại; lệnh chỉ hoạt động khi terminal đang chạy.",
-  "journal.damagedUnconfirmed": "Một số dòng trong nhật ký hôm nay không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra tại nơi mở tài khoản."
+  "journal.damagedUnconfirmed": "Một số dòng trong nhật ký không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra tại nơi mở tài khoản."
 }

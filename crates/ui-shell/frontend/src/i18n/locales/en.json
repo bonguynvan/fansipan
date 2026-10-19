@@ -415,11 +415,11 @@
   "conditional.problem": "After it fired: {reason}",
   "journal.restored": "Today's journal brought the session back: {orders} orders, {held} conditional orders.",
   "journal.restoredUnconfirmed": "Today's journal brought the session back: {orders} orders, {held} conditional orders. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them where the account is held.",
-  "journal.damaged": "Some lines of today's journal could not be read and were set aside, in {path}; everything else was restored.",
+  "journal.damaged": "Some lines of the journal could not be read and were set aside, in {path}; everything else was restored.",
   "journal.failed": "The journal could not be opened: {error}. This session will not come back after a restart.",
   "journal.writeFailed": "The journal could not be written: {error}. What changed since may not come back after a restart.",
   "status.unconfirmed": "{status}, unconfirmed",
   "order.unconfirmedReason": "Restored after a restart; the venue has not confirmed it since.",
   "conditional.lifetimeKept": "Kept in this terminal across restarts, so a restart brings them back; they work only while it runs.",
-  "journal.damagedUnconfirmed": "Some lines of today's journal could not be read and were set aside, in {path}; everything else was restored. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them where the account is held."
+  "journal.damagedUnconfirmed": "Some lines of the journal could not be read and were set aside, in {path}; everything else was restored. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them where the account is held."
 }
