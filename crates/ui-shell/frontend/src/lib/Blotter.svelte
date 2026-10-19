@@ -9,7 +9,7 @@
   import AmendForm from "./AmendForm.svelte";
   import { canAmendOrder } from "./amend.js";
   import { blotterError } from "./orders.svelte.js";
-  import { VIEWS, orderNote, ordersIn, viewCounts, viewOf } from "./blotter.js";
+  import { VIEWS, orderNote, ordersIn, statusText, viewCounts, viewOf } from "./blotter.js";
   import { CONFIRM_MS, cancelAllOrders } from "./tradingActions.js";
   import Chips from "./Chips.svelte";
   import { price, quantity } from "./format.js";
@@ -147,7 +147,7 @@
       filled: `${quantity(o.filled_quantity)}/${quantity(o.quantity)}`,
       avg: o.avg_fill_price,
       status: o.status,
-      statusText: o.unconfirmed ? t("status.unconfirmed", { status: t(`status.${o.status}`) }) : t(`status.${o.status}`),
+      statusText: statusText(o, t),
       reason: orderNote(o, t),
       open: o.open,
       amendable: canAmendOrder(o, market.canAmend),

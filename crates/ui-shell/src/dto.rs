@@ -465,6 +465,9 @@ pub struct OrderDto {
     /// Restored after a restart and still open, with no word from the venue
     /// since (ADR 0023). Set by the shell, which asks the engine.
     pub unconfirmed: bool,
+    /// Waited for an answer to a command and been asked about, with no
+    /// answer yet (ADR 0025). Set by the shell, which asks the engine.
+    pub unanswered: bool,
     /// Placed elsewhere (the broker's app, another program) and adopted
     /// (ADR 0024). Set by the shell, which asks the engine.
     pub external: bool,
@@ -489,6 +492,7 @@ impl From<&Order> for OrderDto {
             reason: order.reason.clone(),
             open: order.status.is_open(),
             unconfirmed: false,
+            unanswered: false,
             external: false,
             amendable: is_amendable(order),
         }

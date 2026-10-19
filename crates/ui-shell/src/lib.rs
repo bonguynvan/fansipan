@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
@@ -51,6 +51,10 @@ const EVENT_NAME: &str = "bus-batch";
 /// How often conflated changes go to the front end: fast enough that an
 /// order's fill feels immediate, slow enough that a burst costs one message.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+/// How long an order waits for the venue's answer to a command before the
+/// venue is asked where it stands (ADR 0025), and how often that is looked at.
+const UNANSWERED_AFTER: Duration = Duration::from_secs(15);
+const UNANSWERED_CHECK: Duration = Duration::from_secs(1);
 const DEFAULT_BAR_LIMIT: usize = 500;
 const DEFAULT_PRINT_LIMIT: usize = 200;
 
@@ -255,6 +259,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             exec.orders()
                 .map(|order| OrderDto {
                     unconfirmed: exec.is_unconfirmed(order.id),
+                    unanswered: exec.is_unanswered(order.id),
                     external: exec.is_external(order.id),
                     ..OrderDto::from(order)
                 })
@@ -337,6 +342,7 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
             let exec = lock(&shell.exec)?;
             for order in &mut dto.orders {
                 order.unconfirmed = exec.is_unconfirmed(ClientOrderId(order.id));
+                order.unanswered = exec.is_unanswered(ClientOrderId(order.id));
                 order.external = exec.is_external(ClientOrderId(order.id));
             }
             journal
@@ -1137,6 +1143,40 @@ fn pump(app: AppHandle, events: Receiver<Event>) {
     });
 }
 
+/// Asks the venue about orders whose commands it has not answered, and
+/// shows them marked until it does (ADR 0025).
+fn settle(app: AppHandle) {
+    thread::spawn(move || {
+        let shell = app.state::<Shell>();
+        loop {
+            thread::sleep(UNANSWERED_CHECK);
+            if let Err(e) = ask_unanswered(&shell, Instant::now()) {
+                eprintln!("asking about unanswered orders stopped: {e}");
+                return;
+            }
+        }
+    });
+}
+
+fn ask_unanswered(shell: &Shell, now: Instant) -> Result<(), String> {
+    let mut exec = lock(&shell.exec)?;
+    let asked = exec.ask_unanswered(now, UNANSWERED_AFTER);
+    if let Some(problem) = &asked.problem {
+        eprintln!("the venue could not be asked about unanswered orders: {problem}");
+    }
+    if asked.orders.is_empty() {
+        return Ok(());
+    }
+    // Under the engine's lock, as every order update is, so a report the
+    // pump applies meanwhile is never overwritten by an older view. The
+    // flush marks each from the engine.
+    let mut pending = lock(&shell.pending)?;
+    for order in asked.orders.iter().filter_map(|id| exec.order(*id)) {
+        pending.order(OrderDto::from(order));
+    }
+    Ok(())
+}
+
 /// Sends whatever changed since the last flush, as one message.
 fn flush(app: AppHandle) {
     thread::spawn(move || {
@@ -1222,6 +1262,7 @@ pub fn run(venue: Venue) -> ExitCode {
             workspace::setup(app)?;
             pump(app.handle().clone(), events);
             flush(app.handle().clone());
+            settle(app.handle().clone());
             Ok(())
         })
         .on_window_event(workspace::on_window_event)
@@ -1357,6 +1398,34 @@ mod tests {
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn an_order_the_venue_has_not_answered_is_marked_until_it_does() {
+        let bus = Bus::new();
+        let events = bus.subscribe();
+        let shell = connect(&bus, &profile("us"));
+        let placed = submit(
+            &shell,
+            new_order(VENUE, &ticket("AAPL", "buy", "1", Some("1"))).unwrap(),
+        )
+        .unwrap();
+        let _ = take_pending(&shell);
+        let start = Instant::now();
+
+        // The venue's acknowledgement is held back, as on a slow link.
+        ask_unanswered(&shell, start).unwrap();
+        ask_unanswered(&shell, start + UNANSWERED_AFTER).unwrap();
+        let waiting = take_pending(&shell);
+        let order = waiting.orders.iter().find(|o| o.id == placed.id).unwrap();
+        assert!(order.unanswered, "{order:?}");
+
+        for event in events.try_iter() {
+            route(&shell, &event).unwrap();
+        }
+        let answered = take_pending(&shell);
+        let order = answered.orders.iter().find(|o| o.id == placed.id).unwrap();
+        assert!(!order.unanswered, "{order:?}");
     }
 
     #[test]

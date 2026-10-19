@@ -417,5 +417,7 @@
   "order.unconfirmedReason": "Được khôi phục sau khi khởi động lại; sàn chưa xác nhận lại lệnh này.",
   "conditional.lifetimeKept": "Terminal giữ lệnh qua các lần khởi động lại; lệnh chỉ hoạt động khi terminal đang chạy.",
   "journal.damagedUnconfirmed": "Một số dòng trong nhật ký không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra tại nơi mở tài khoản.",
-  "order.placedElsewhere": "Đặt từ nơi khác: ứng dụng của công ty chứng khoán hoặc phần mềm khác."
+  "order.placedElsewhere": "Đặt từ nơi khác: ứng dụng của công ty chứng khoán hoặc phần mềm khác.",
+  "status.unanswered": "{status}, chưa có phản hồi",
+  "order.unansweredReason": "Sàn chưa phản hồi; phần mềm đã hỏi sàn về trạng thái của lệnh này."
 }

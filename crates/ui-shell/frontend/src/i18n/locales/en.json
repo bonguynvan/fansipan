@@ -422,5 +422,7 @@
   "order.unconfirmedReason": "Restored after a restart; the venue has not confirmed it since.",
   "conditional.lifetimeKept": "Kept in this terminal across restarts, so a restart brings them back; they work only while it runs.",
   "journal.damagedUnconfirmed": "Some lines of the journal could not be read and were set aside, in {path}; everything else was restored. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them where the account is held.",
-  "order.placedElsewhere": "Placed elsewhere: in the broker's app or another program."
+  "order.placedElsewhere": "Placed elsewhere: in the broker's app or another program.",
+  "status.unanswered": "{status}, no answer",
+  "order.unansweredReason": "The venue has not answered; the terminal has asked it where this order stands."
 }

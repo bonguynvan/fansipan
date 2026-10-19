@@ -25,12 +25,22 @@ export function viewCounts(orders) {
 
 /**
  * What an order's note says: the venue's reason, or else why the order is
- * unusual: not yet confirmed since a restart (ADR 0023), or placed
- * elsewhere and adopted (ADR 0024).
+ * unusual: a command the venue has not answered (ADR 0025), not yet
+ * confirmed since a restart (ADR 0023), or placed elsewhere and adopted
+ * (ADR 0024).
  */
 export function orderNote(order, t) {
   if (order.reason) return order.reason;
+  if (order.unanswered) return t("order.unansweredReason");
   if (order.unconfirmed) return t("order.unconfirmedReason");
   if (order.external) return t("order.placedElsewhere");
   return "";
+}
+
+/** An order's status, with what is still unknown about it. */
+export function statusText(order, t) {
+  const status = t(`status.${order.status}`);
+  if (order.unanswered) return t("status.unanswered", { status });
+  if (order.unconfirmed) return t("status.unconfirmed", { status });
+  return status;
 }

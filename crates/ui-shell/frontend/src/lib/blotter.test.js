@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_VIEW, orderNote, ordersIn, viewCounts, viewOf } from "./blotter.js";
+import { DEFAULT_VIEW, orderNote, ordersIn, statusText, viewCounts, viewOf } from "./blotter.js";
+import vietnamese from "../i18n/locales/vi.json";
 import english from "../i18n/locales/en.json";
 
 const orders = [
@@ -36,9 +37,29 @@ describe("an order's note", () => {
 
   it("gives the venue's reason first, then why the order is unusual", () => {
     expect(orderNote({ reason: "no funds", unconfirmed: true, external: true }, t)).toBe("no funds");
+    expect(orderNote({ reason: null, unanswered: true, unconfirmed: true }, t)).toBe("<order.unansweredReason>");
     expect(orderNote({ reason: null, unconfirmed: true, external: true }, t)).toBe("<order.unconfirmedReason>");
     expect(orderNote({ reason: null, external: true }, t)).toBe("<order.placedElsewhere>");
     expect(orderNote({ reason: null }, t)).toBe("");
     expect(english["order.placedElsewhere"]).toBeTruthy();
+  });
+});
+
+describe("an order's status", () => {
+  const t = (id, vars) => (vars ? `<${id}:${vars.status}>` : `<${id}>`);
+
+  it("says what is still unknown about it, an unanswered command first", () => {
+    expect(statusText({ status: "submitted" }, t)).toBe("<status.submitted>");
+    expect(statusText({ status: "submitted", unanswered: true, unconfirmed: true }, t)).toBe(
+      "<status.unanswered:<status.submitted>>",
+    );
+    expect(statusText({ status: "accepted", unconfirmed: true }, t)).toBe("<status.unconfirmed:<status.accepted>>");
+  });
+
+  it("has the words in every language", () => {
+    for (const words of [english, vietnamese]) {
+      expect(words["status.unanswered"]).toContain("{status}");
+      expect(words["order.unansweredReason"]).toBeTruthy();
+    }
   });
 });
