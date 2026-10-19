@@ -59,9 +59,21 @@ pub struct BatchDto {
     pub day: Option<DayDto>,
     /// Conditional orders that changed: placed, moved, fired, or cancelled.
     pub conditionals: Vec<ConditionalDto>,
+    /// Why the journal could not be written, the first time it fails.
+    pub journal_error: Option<String>,
 }
 
 impl Batch {
+    /// The ids of the orders and conditional orders this batch carries, and
+    /// whether the trader's switch moved: what the journal records.
+    pub fn changed(&self) -> (Vec<u64>, Vec<u64>, bool) {
+        (
+            self.orders.keys().copied().collect(),
+            self.conditionals.keys().copied().collect(),
+            self.trading.is_some(),
+        )
+    }
+
     pub fn conditional(&mut self, conditional: ConditionalDto) {
         self.conditionals.insert(conditional.id, conditional);
     }
@@ -143,6 +155,7 @@ impl Batch {
             trading: self.trading,
             day: None,
             conditionals: self.conditionals.into_values().collect(),
+            journal_error: None,
         }
     }
 }

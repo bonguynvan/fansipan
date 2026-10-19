@@ -10,6 +10,7 @@
 
 mod batch;
 mod dto;
+mod journaling;
 #[cfg(test)]
 mod latency_report;
 #[cfg(test)]
@@ -24,7 +25,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
@@ -145,6 +146,10 @@ pub struct Shell {
     pending: Mutex<Batch>,
     /// Number of the last batch taken from `pending`.
     flushed: AtomicU64,
+    /// Today's journal, when the adapter names its account (ADR 0023).
+    journal: Mutex<Option<journaling::Kept>>,
+    /// What the journal kept and brought back, for the screens.
+    journal_report: Mutex<journaling::JournalDto>,
     /// Conditional orders waiting, so a trade takes the execution lock only
     /// when one may fire.
     waiting: AtomicUsize,
@@ -244,7 +249,12 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     let (orders, orders_connection, account, can_amend, trading, conditionals) = {
         let mut exec = lock(&shell.exec)?;
         (
-            exec.orders().map(OrderDto::from).collect(),
+            exec.orders()
+                .map(|order| OrderDto {
+                    unconfirmed: exec.is_unconfirmed(order.id),
+                    ..OrderDto::from(order)
+                })
+                .collect(),
             ConnectionDto::of(Connection::Orders, exec.connection()),
             AccountDto::from(exec.account()),
             exec.can_amend(),
@@ -266,6 +276,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         trading,
         day,
         conditionals,
+        journal: lock(&shell.journal_report)?.clone(),
     })
 }
 
@@ -304,13 +315,52 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
         return Ok(None);
     }
     let seq = shell.flushed.fetch_add(1, Ordering::SeqCst) + 1;
+    let (orders, conditionals, trading) = batch.changed();
     // Every batch moves a price, an order, or the account, any of which
     // moves the day; recounting it is a pass over what is held or traded.
     // A day that cannot be counted must not cost the batch it rides on.
-    Ok(Some(BatchDto {
+    let mut dto = BatchDto {
         day: day_of(shell).ok(),
         ..batch.into_dto(seq)
-    }))
+    };
+    if !orders.is_empty() || !conditionals.is_empty() || trading {
+        let orders: Vec<ClientOrderId> = orders.into_iter().map(ClientOrderId).collect();
+        let mut journal = lock(&shell.journal)?;
+        let exec = lock(&shell.exec)?;
+        if let Some(kept) = journal.as_mut() {
+            dto.journal_error = kept.record(&exec, &orders, &conditionals, trading, now_seconds());
+        }
+        for order in &mut dto.orders {
+            order.unconfirmed = exec.is_unconfirmed(ClientOrderId(order.id));
+        }
+    }
+    Ok(Some(dto))
+}
+
+fn now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Opens the account's journal for today and restores the session from it
+/// (ADR 0023). A journal that cannot be opened is reported to the screens;
+/// the terminal runs on without one.
+fn start_journal(shell: &Shell, base: &std::path::Path) -> Result<(), String> {
+    let (kept, report) = {
+        let mut exec = lock(&shell.exec)?;
+        let opened = journaling::open(&mut exec, base, &shell.venue, now_seconds());
+        shell
+            .waiting
+            .store(exec.waiting_conditionals(), Ordering::Release);
+        opened
+    };
+    if let Some(error) = &report.error {
+        eprintln!("journal: {error}");
+    }
+    *lock(&shell.journal)? = kept;
+    *lock(&shell.journal_report)? = report;
+    Ok(())
 }
 
 fn submit(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
@@ -1030,6 +1080,8 @@ fn connect_engines(bus: &Bus, venue: Venue) -> Result<Shell, AdapterError> {
         pending: Mutex::new(Batch::default()),
         flushed: AtomicU64::new(0),
         waiting: AtomicUsize::new(0),
+        journal: Mutex::new(None),
+        journal_report: Mutex::new(journaling::JournalDto::default()),
     })
 }
 
@@ -1054,6 +1106,10 @@ pub fn run(venue: Venue) -> ExitCode {
                 .build(),
         )
         .setup(move |app| {
+            let journal_base = app.path().app_data_dir()?.join("journal");
+            if let Err(e) = start_journal(&shell, &journal_base) {
+                eprintln!("journal: {e}");
+            }
             app.manage(shell);
             workspace::setup(app)?;
             pump(app.handle().clone(), events);
@@ -1154,6 +1210,7 @@ mod tests {
             trading: None,
             day: None,
             conditionals: vec![],
+            journal_error: None,
         })
     }
 

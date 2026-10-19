@@ -841,6 +841,7 @@ dependencies = [
  "fansipan-bus",
  "fansipan-data-engine",
  "fansipan-execution-engine",
+ "fansipan-journal",
  "fansipan-model",
  "fansipan-sandbox",
  "proptest",

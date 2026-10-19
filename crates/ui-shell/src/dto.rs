@@ -17,6 +17,8 @@ use model::{
 };
 use serde::Serialize;
 
+use crate::journaling::JournalDto;
+
 #[derive(Serialize)]
 pub struct Snapshot {
     /// The last batch number taken before this snapshot read engine state.
@@ -40,6 +42,8 @@ pub struct Snapshot {
     pub day: DayDto,
     /// Every conditional order this session (ADR 0020).
     pub conditionals: Vec<ConditionalDto>,
+    /// What the journal kept and brought back (ADR 0023).
+    pub journal: JournalDto,
 }
 
 /// A conditional order as the front end shows it.
@@ -458,6 +462,9 @@ pub struct OrderDto {
     /// Whether a cancel makes sense, so the front end does not re-derive the
     /// engine's notion of "open".
     pub open: bool,
+    /// Restored after a restart and still open, with no word from the venue
+    /// since (ADR 0023). Set by the shell, which asks the engine.
+    pub unconfirmed: bool,
     /// Whether an amendment could change it, on a venue that amends.
     pub amendable: bool,
 }
@@ -478,6 +485,7 @@ impl From<&Order> for OrderDto {
             status: status_label(order.status),
             reason: order.reason.clone(),
             open: order.status.is_open(),
+            unconfirmed: false,
             amendable: is_amendable(order),
         }
     }

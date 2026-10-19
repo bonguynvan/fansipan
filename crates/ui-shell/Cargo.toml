@@ -13,6 +13,7 @@ model.workspace = true
 bus.workspace = true
 data-engine.workspace = true
 execution-engine.workspace = true
+journal.workspace = true
 adapter-api.workspace = true
 sandbox.workspace = true
 tauri = { version = "2", features = [] }
