@@ -150,7 +150,7 @@ pub use bus;
 pub use model;
 
 use bus::BusHandle;
-use model::{AccountState, AmendOrder, CancelOrder, InstrumentId, SubmitOrder};
+use model::{AccountState, AmendOrder, CancelOrder, InstrumentId, RecoverOrder, SubmitOrder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdapterError {
@@ -230,6 +230,34 @@ pub trait ExecutionClient: Send {
     fn amender(&mut self) -> Option<&mut dyn OrderAmender> {
         None
     }
+
+    /// The account this client trades, stable across restarts, once
+    /// connected. Core keeps a journal per account and restores it at
+    /// start (ADR 0023); it stores only a hash of this. The default names
+    /// none, and core then keeps no journal: right for a venue whose
+    /// account does not outlive the process, such as a simulated one.
+    fn account_id(&self) -> Option<String> {
+        None
+    }
+
+    /// This client's answers about orders the terminal knew before it
+    /// restarted, if its venue can say. The default says it cannot: core
+    /// then shows those orders as not yet confirmed by the venue.
+    fn recovery(&mut self) -> Option<&mut dyn OrderRecovery> {
+        None
+    }
+}
+
+/// Reports the venue's view of orders the terminal held before it
+/// restarted. An adapter implements it on its execution client and returns
+/// itself from [`ExecutionClient::recovery`].
+pub trait OrderRecovery: Send {
+    /// Ask the venue about `orders`. Returning `Ok` means "asked": for each
+    /// order the venue knows, the answer arrives later as an
+    /// `Event::Execution` carrying `OrderEvent::Snapshot`, exactly as after
+    /// a reconnect (ADR 0012). An order the venue does not know is left
+    /// unanswered, and stays unconfirmed.
+    fn recover_orders(&mut self, orders: Vec<RecoverOrder>) -> Result<(), AdapterError>;
 }
 
 /// Changes a working order's quantity or price, for a venue that can. An

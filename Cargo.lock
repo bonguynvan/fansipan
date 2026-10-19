@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "fansipan-adapter-api"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "fansipan-bus",
  "fansipan-model",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "fansipan-bus"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "fansipan-model",
 ]
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "fansipan-model"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "proptest",
  "rust_decimal",

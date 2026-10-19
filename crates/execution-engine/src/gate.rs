@@ -5,7 +5,7 @@
 
 use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
-use model::{AmendOrder, CancelOrder, SubmitOrder};
+use model::{AmendOrder, CancelOrder, RecoverOrder, SubmitOrder};
 
 use crate::risk::Cleared;
 use crate::AmendError;
@@ -90,5 +90,20 @@ impl Gate {
 
     pub(crate) fn can_amend(&mut self) -> bool {
         self.client.amender().is_some()
+    }
+
+    pub(crate) fn account_id(&self) -> Option<String> {
+        self.client.account_id()
+    }
+
+    /// Asking about orders takes nothing on either. `None` when the venue
+    /// cannot say.
+    pub(crate) fn recover(
+        &mut self,
+        orders: Vec<RecoverOrder>,
+    ) -> Option<Result<(), AdapterError>> {
+        self.client
+            .recovery()
+            .map(|recovery| recovery.recover_orders(orders))
     }
 }

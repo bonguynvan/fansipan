@@ -8,6 +8,7 @@ pub mod emulator;
 pub mod gate;
 pub mod lifecycle;
 pub mod pnl;
+pub mod recovery;
 pub mod risk;
 pub mod sizing;
 
@@ -21,7 +22,7 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side,
 };
-use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
+use model::{OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderState};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use emulator::{
@@ -31,6 +32,7 @@ pub use emulator::{
 pub use gate::Gate;
 pub use lifecycle::TransitionError;
 pub use pnl::DayPnl;
+pub use recovery::{OrderRecord, RestoreError, Restored};
 pub use risk::{Cleared, RiskLimits, RiskReject, TradingState};
 pub use sizing::{RiskBudget, SizeRequest, Sizing, SizingError};
 
@@ -157,6 +159,9 @@ struct Tracked {
     applied_fills: HashSet<FillId>,
     /// The total quantity an amendment in flight asks for.
     amending_to: Option<Decimal>,
+    /// Restored from the journal and still open, with no word from the
+    /// venue since the restart (ADR 0023).
+    unconfirmed: bool,
 }
 
 impl Tracked {
@@ -728,6 +733,7 @@ impl ExecutionEngine {
                 order: order.clone(),
                 applied_fills: HashSet::new(),
                 amending_to: None,
+                unconfirmed: false,
             },
         );
         order
@@ -892,6 +898,7 @@ impl ExecutionEngine {
             tracked.amending_to = None;
         }
         tracked.order = next;
+        tracked.unconfirmed = false;
         Ok(tracked.order.clone())
     }
 
@@ -990,6 +997,7 @@ impl ExecutionEngine {
             tracked.amending_to = None;
         }
         tracked.order = next;
+        tracked.unconfirmed = false;
         Ok(tracked.order.clone())
     }
 
@@ -1000,6 +1008,91 @@ impl ExecutionEngine {
     /// Every order this session, oldest first.
     pub fn orders(&self) -> impl Iterator<Item = &Order> {
         self.orders.values().map(|t| &t.order)
+    }
+
+    /// The order `id` as the journal records it (ADR 0023).
+    pub fn order_record(&self, id: ClientOrderId) -> Option<OrderRecord> {
+        self.orders.get(&id).map(|tracked| {
+            // Sorted, so the same order always records the same way.
+            let mut applied_fills: Vec<FillId> = tracked.applied_fills.iter().cloned().collect();
+            applied_fills.sort_by(|a, b| a.0.cmp(&b.0));
+            OrderRecord {
+                order: tracked.order.clone(),
+                applied_fills,
+                amending_to: tracked.amending_to,
+            }
+        })
+    }
+
+    /// Whether `id` was restored open and the venue has not spoken of it
+    /// since.
+    pub fn is_unconfirmed(&self, id: ClientOrderId) -> bool {
+        self.orders
+            .get(&id)
+            .is_some_and(|tracked| tracked.unconfirmed)
+    }
+
+    /// The account the adapter trades, which the journal is kept under.
+    pub fn account_id(&self) -> Option<String> {
+        self.gate.account_id()
+    }
+
+    /// Rebuilds the session from the journal (ADR 0023): its orders, those
+    /// still open marked unconfirmed until the venue speaks of them; its
+    /// conditional orders as they were; and the trader's switch. New ids
+    /// continue past the restored ones. Nothing is sent to the venue.
+    pub fn restore(&mut self, restored: Restored) -> Result<(), RestoreError> {
+        if !self.orders.is_empty() || !self.conditionals.is_empty() {
+            return Err(RestoreError::NotEmpty);
+        }
+        for record in restored.orders {
+            let id = record.order.id;
+            self.next_id = self.next_id.max(id.0.saturating_add(1));
+            self.orders.insert(
+                id,
+                Tracked {
+                    unconfirmed: record.order.status.is_open(),
+                    order: record.order,
+                    applied_fills: record.applied_fills.into_iter().collect(),
+                    amending_to: record.amending_to,
+                },
+            );
+        }
+        for conditional in restored.conditionals {
+            self.next_conditional = self
+                .next_conditional
+                .max(conditional.id.0.saturating_add(1));
+            self.conditionals.insert(conditional.id, conditional);
+        }
+        if let Some(state) = restored.trading {
+            self.trading = state;
+        }
+        Ok(())
+    }
+
+    /// Asks the venue about every restored order still unconfirmed; its
+    /// answers arrive as catch-up reports (ADR 0012). `Ok(false)` when the
+    /// venue cannot say, and the orders stay unconfirmed.
+    pub fn recover_unconfirmed(&mut self) -> Result<bool, AdapterError> {
+        let asked: Vec<RecoverOrder> = self
+            .orders
+            .values()
+            .filter(|tracked| tracked.unconfirmed)
+            .map(|tracked| {
+                RecoverOrder::new(
+                    tracked.order.id,
+                    tracked.order.venue_order_id.clone(),
+                    tracked.order.instrument.clone(),
+                )
+            })
+            .collect();
+        if asked.is_empty() {
+            return Ok(true);
+        }
+        match self.gate.recover(asked) {
+            None => Ok(false),
+            Some(answer) => answer.map(|()| true),
+        }
     }
 
     /// Whether the adapter's venue takes amendments at all. Which orders
@@ -1066,12 +1159,21 @@ mod tests {
         submitted: Vec<SubmitOrder>,
         cancelled: Vec<CancelOrder>,
         amended: Vec<AmendOrder>,
+        recovered: Vec<RecoverOrder>,
     }
 
     struct RecordingClient {
         calls: Arc<Mutex<Calls>>,
         refuse_with: Option<AdapterError>,
         amends: bool,
+        recovers: bool,
+    }
+
+    impl adapter_api::OrderRecovery for RecordingClient {
+        fn recover_orders(&mut self, orders: Vec<RecoverOrder>) -> Result<(), AdapterError> {
+            self.calls.lock().unwrap().recovered.extend(orders);
+            Ok(())
+        }
     }
 
     impl adapter_api::OrderAmender for RecordingClient {
@@ -1112,6 +1214,16 @@ mod tests {
                 None
             }
         }
+        fn account_id(&self) -> Option<String> {
+            Some("ACC-1".into())
+        }
+        fn recovery(&mut self) -> Option<&mut dyn adapter_api::OrderRecovery> {
+            if self.recovers {
+                Some(self)
+            } else {
+                None
+            }
+        }
     }
 
     fn d(raw: &str) -> Decimal {
@@ -1124,6 +1236,7 @@ mod tests {
             calls: calls.clone(),
             refuse_with,
             amends: true,
+            recovers: true,
         };
         let limits = RiskLimits {
             max_order_quantity: d("10"),
@@ -1409,6 +1522,7 @@ mod tests {
             calls,
             refuse_with: Some(AdapterError::recoverable("socket closed")),
             amends: true,
+            recovers: true,
         }));
 
         let result = engine.cancel(id);
@@ -1486,6 +1600,7 @@ mod tests {
             calls,
             refuse_with: Some(AdapterError::recoverable("socket closed")),
             amends: true,
+            recovers: true,
         }));
 
         let outcome = engine.cancel_all(None);
@@ -1695,6 +1810,7 @@ mod tests {
             calls,
             refuse_with: None,
             amends: false,
+            recovers: true,
         };
         let limits = RiskLimits {
             max_order_quantity: d("10"),
@@ -2531,6 +2647,135 @@ mod tests {
         assert!(exits.iter().all(|exit| exit.side == Side::Buy));
         assert_eq!(exits[1].trigger, Trigger::AtOrBelow(d("4")));
         assert_eq!(exits[1].then, Then::Limit(d("4")));
+    }
+
+    /// What the journal would hold for `engine`: every order and
+    /// conditional order as recorded, and the trader's switch.
+    fn recorded(engine: &ExecutionEngine) -> Restored {
+        Restored {
+            orders: engine
+                .orders()
+                .map(|order| engine.order_record(order.id).unwrap())
+                .collect(),
+            conditionals: engine.conditionals().cloned().collect(),
+            trading: Some(engine.trading_state()),
+        }
+    }
+
+    #[test]
+    fn a_session_comes_back_from_its_records_and_asks_the_venue_about_what_is_open() {
+        let (mut before, _) = engine();
+        let open = before.submit(buy("4"));
+        let accepted = OrderEvent::Accepted {
+            venue_order_id: VenueOrderId("V1".into()),
+        };
+        before.apply(&report(open.id, accepted)).unwrap();
+        before.apply(&report(open.id, fill("f1", "1"))).unwrap();
+        let done = before.submit(buy("2"));
+        before
+            .apply(&report(done.id, OrderEvent::Cancelled))
+            .unwrap();
+        let held = before
+            .place_conditional(stop(Trigger::AtOrBelow(d("4")), Then::Marketable), None)
+            .unwrap();
+        before.set_trading_state(TradingState::Reducing);
+        let records = recorded(&before);
+
+        let (mut after, calls) = engine();
+        after.restore(records.clone()).unwrap();
+
+        assert_eq!(recorded(&after), records);
+        assert!(after.is_unconfirmed(open.id), "open, and not yet confirmed");
+        assert!(
+            !after.is_unconfirmed(done.id),
+            "finished orders need no word"
+        );
+        assert_eq!(after.waiting_conditionals(), 1);
+        assert_eq!(after.trading_state(), TradingState::Reducing);
+        assert!(after.submit(buy("1")).id.0 > done.id.0, "ids continue");
+        assert!(
+            after
+                .place_conditional(stop(Trigger::AtOrBelow(d("3")), Then::Marketable), None)
+                .unwrap()
+                .id
+                .0
+                > held.id.0
+        );
+
+        assert_eq!(after.recover_unconfirmed(), Ok(true));
+        let asked = &calls.lock().unwrap().recovered;
+        assert_eq!(asked.len(), 1);
+        assert_eq!(
+            (asked[0].order_id, asked[0].venue_order_id.clone()),
+            (open.id, Some(VenueOrderId("V1".into())))
+        );
+    }
+
+    #[test]
+    fn the_venues_word_on_a_restored_order_confirms_it_and_old_fills_are_not_counted_twice() {
+        let (mut before, _) = engine();
+        let open = before.submit(buy("4"));
+        let accepted = OrderEvent::Accepted {
+            venue_order_id: VenueOrderId("V1".into()),
+        };
+        before.apply(&report(open.id, accepted)).unwrap();
+        before.apply(&report(open.id, fill("f1", "1"))).unwrap();
+        let (mut after, _) = engine();
+        after.restore(recorded(&before)).unwrap();
+
+        assert_eq!(
+            after.apply(&report(open.id, fill("f1", "1"))),
+            Err(ApplyError::DuplicateFill(FillId("f1".into())))
+        );
+        assert!(
+            after.is_unconfirmed(open.id),
+            "a refused report says nothing"
+        );
+
+        // While the terminal was closed the venue filled two more.
+        let venue = VenueOrder::new(VenueOrderState::Working, d("3"), Some(d("5")));
+        let caught_up = after
+            .apply(&report(open.id, OrderEvent::Snapshot(venue)))
+            .unwrap();
+
+        assert_eq!(caught_up.filled_quantity, d("3"));
+        assert!(!after.is_unconfirmed(open.id));
+    }
+
+    #[test]
+    fn a_venue_that_cannot_say_leaves_restored_orders_unconfirmed() {
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let client = RecordingClient {
+            calls: calls.clone(),
+            refuse_with: None,
+            amends: true,
+            recovers: false,
+        };
+        let limits = RiskLimits {
+            max_order_quantity: d("10"),
+            max_order_notional: d("1000"),
+        };
+        let mut silent = ExecutionEngine::new(Box::new(client), limits);
+        let (mut before, _) = engine();
+        let open = before.submit(buy("4"));
+
+        silent.restore(recorded(&before)).unwrap();
+
+        assert_eq!(silent.recover_unconfirmed(), Ok(false));
+        assert!(silent.is_unconfirmed(open.id));
+        assert!(calls.lock().unwrap().recovered.is_empty());
+    }
+
+    #[test]
+    fn a_session_is_restored_only_into_an_empty_engine() {
+        let (mut engine, _) = engine();
+        let _held = engine.submit(buy("1"));
+
+        assert_eq!(
+            engine.restore(Restored::default()),
+            Err(RestoreError::NotEmpty)
+        );
+        assert_eq!(engine.account_id(), Some("ACC-1".into()));
     }
 
     #[test]

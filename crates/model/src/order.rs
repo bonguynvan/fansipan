@@ -139,6 +139,30 @@ impl CancelOrder {
     }
 }
 
+/// An order the terminal knew before it restarted and asks the venue about:
+/// its id, the venue's id if the venue had accepted it, and the instrument.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct RecoverOrder {
+    pub order_id: ClientOrderId,
+    pub venue_order_id: Option<VenueOrderId>,
+    pub instrument: InstrumentId,
+}
+
+impl RecoverOrder {
+    pub fn new(
+        order_id: ClientOrderId,
+        venue_order_id: Option<VenueOrderId>,
+        instrument: InstrumentId,
+    ) -> Self {
+        Self {
+            order_id,
+            venue_order_id,
+            instrument,
+        }
+    }
+}
+
 /// New terms for a working order: its new total quantity (what has filled
 /// stays filled) and its new limit price.
 #[derive(Debug, Clone, PartialEq)]
