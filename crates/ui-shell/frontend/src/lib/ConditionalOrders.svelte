@@ -18,6 +18,9 @@
   const ticks = $derived(tickTable(instrument));
   const decimals = $derived(market.priceDecimals(selected));
   const last = $derived(selected ? (market.boards[selected]?.last ?? null) : null);
+  // Where the market has a daily band, a marketable order is a limit at its
+  // edge; elsewhere it is a market order (ADR 0020).
+  const banded = $derived(Boolean(selected && market.boards[selected]?.floor && market.boards[selected]?.ceiling));
 
   // Sizes and prices start over when the symbol changes, as on the ticket:
   // what was typed for one instrument is wrong for the next.
@@ -166,7 +169,7 @@
     <label>
       <span>
         {t("conditional.sendAs")}
-        {#if sendAs === "marketable"}<em class="hint">{t("conditional.marketableHint")}</em>{/if}
+        {#if sendAs === "marketable"}<em class="hint">{t(banded ? "conditional.marketableHint.band" : "conditional.marketableHint.market")}</em>{/if}
       </span>
       <select bind:value={sendAs}>
         <option value="marketable">{t("conditional.sendAs.marketable")}</option>

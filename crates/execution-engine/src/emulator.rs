@@ -2,8 +2,8 @@
 //! order emulator holds what a venue does not take: a stop, a take-profit,
 //! or a trailing stop waits here, watching the instrument's trades, and
 //! when one fires it becomes an ordinary new order, cleared by risk at that
-//! moment. Vietnam's exchanges take no stop orders; its brokers offer these
-//! as "lệnh điều kiện".
+//! moment. It serves venues that take no stops of their own, where brokers
+//! typically hold such orders on their servers instead.
 //!
 //! They live as long as the terminal runs.
 
@@ -47,8 +47,9 @@ pub enum Offset {
 pub enum Then {
     /// A limit order at this price.
     Limit(Decimal),
-    /// One that trades at once: a limit at today's floor for a sell, or the
-    /// ceiling for a buy, where the market has a daily band (taken in every
+    /// One that trades at once: a limit at the day's lowest allowed price
+    /// for a sell, or the highest for a buy, where the market has a daily
+    /// price band (taken in every
     /// session that takes limit orders, and never outside the band); a
     /// market order where it has none.
     Marketable,
