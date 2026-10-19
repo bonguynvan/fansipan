@@ -29,7 +29,7 @@ use std::time::Duration;
 use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
 use data_engine::DataEngine;
-use execution_engine::ExecutionEngine;
+use execution_engine::{ConditionalId, ConditionalRequest, ExecutionEngine, Offset, Then, Trigger};
 use model::{ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_window_state::StateFlags;
@@ -38,8 +38,9 @@ pub use execution_engine::RiskLimits;
 
 use batch::{Batch, BatchDto};
 use dto::{
-    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConnectionDto,
-    DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto, Snapshot,
+    AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConditionalDto,
+    ConnectionDto, DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto,
+    Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -234,7 +235,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         )
     };
     let day = day_of(shell)?;
-    let (orders, orders_connection, account, can_amend, trading) = {
+    let (orders, orders_connection, account, can_amend, trading, conditionals) = {
         let mut exec = lock(&shell.exec)?;
         (
             exec.orders().map(OrderDto::from).collect(),
@@ -242,6 +243,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             AccountDto::from(exec.account()),
             exec.can_amend(),
             dto::trading_label(exec.trading_state()),
+            exec.conditionals().map(ConditionalDto::from).collect(),
         )
     };
     Ok(Snapshot {
@@ -257,6 +259,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         can_amend,
         trading,
         day,
+        conditionals,
     })
 }
 
@@ -312,6 +315,78 @@ fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
         .map_err(|e| e.to_string())?;
     lock(&shell.pending)?.order(order.clone());
     Ok(order)
+}
+
+/// What a trader asked for, parsed exactly: `trigger` is "at_or_below",
+/// "at_or_above", or "trailing"; a trailing stop takes `offset`, in percent
+/// when `percent`; without `limit_price` it sends a marketable order.
+struct ConditionalTicket<'a> {
+    symbol: &'a str,
+    side: &'a str,
+    quantity: &'a str,
+    trigger: &'a str,
+    price: Option<&'a str>,
+    offset: Option<&'a str>,
+    percent: bool,
+    limit_price: Option<&'a str>,
+}
+
+fn conditional_request(
+    venue: &str,
+    ticket: &ConditionalTicket<'_>,
+) -> Result<ConditionalRequest, String> {
+    let needed = |field: &str, raw: Option<&str>| {
+        raw.ok_or_else(|| format!("{field} is missing"))
+            .and_then(|raw| parse_decimal(field, raw))
+    };
+    let trigger = match ticket.trigger {
+        "at_or_below" => Trigger::AtOrBelow(needed("trigger price", ticket.price)?),
+        "at_or_above" => Trigger::AtOrAbove(needed("trigger price", ticket.price)?),
+        "trailing" if ticket.percent => {
+            Trigger::Trailing(Offset::Percent(needed("trailing percent", ticket.offset)?))
+        }
+        "trailing" => Trigger::Trailing(Offset::Amount(needed("trailing amount", ticket.offset)?)),
+        other => return Err(format!("unknown trigger: {other}")),
+    };
+    let then = match ticket.limit_price {
+        Some(raw) => Then::Limit(parse_decimal("limit price", raw)?),
+        None => Then::Marketable,
+    };
+    Ok(ConditionalRequest {
+        instrument: InstrumentId::new(venue, ticket.symbol),
+        side: parse_side(ticket.side)?,
+        quantity: parse_decimal("quantity", ticket.quantity)?,
+        trigger,
+        then,
+    })
+}
+
+/// Places a conditional order; a trailing stop starts from the last trade.
+fn place_conditional_order(
+    shell: &Shell,
+    ticket: &ConditionalTicket<'_>,
+) -> Result<ConditionalDto, String> {
+    let request = conditional_request(&shell.venue, ticket)?;
+    let mark = lock(&shell.data)?
+        .stats(&request.instrument)
+        .and_then(|stats| stats.last);
+    let mut exec = lock(&shell.exec)?;
+    let placed = exec
+        .place_conditional(request, mark)
+        .map(|c| ConditionalDto::from(&c))
+        .map_err(|e| e.to_string())?;
+    lock(&shell.pending)?.conditional(placed.clone());
+    Ok(placed)
+}
+
+fn cancel_conditional_order(shell: &Shell, id: u64) -> Result<ConditionalDto, String> {
+    let mut exec = lock(&shell.exec)?;
+    let cancelled = exec
+        .cancel_conditional(ConditionalId(id))
+        .map(|c| ConditionalDto::from(&c))
+        .map_err(|e| e.to_string())?;
+    lock(&shell.pending)?.conditional(cancelled.clone());
+    Ok(cancelled)
 }
 
 /// Sets the trader's switch, for every window. Orders already working stay
@@ -480,6 +555,41 @@ fn set_trading_state(shell: State<'_, Shell>, state: String) -> Result<(), Strin
     set_trading(&shell, &state)
 }
 
+/// Holds an order in this terminal until a trade reaches its trigger
+/// (ADR 0020); see `ConditionalTicket` for the fields.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn place_conditional(
+    shell: State<'_, Shell>,
+    symbol: String,
+    side: String,
+    quantity: String,
+    trigger: String,
+    price: Option<String>,
+    offset: Option<String>,
+    percent: Option<bool>,
+    limit_price: Option<String>,
+) -> Result<ConditionalDto, String> {
+    place_conditional_order(
+        &shell,
+        &ConditionalTicket {
+            symbol: &symbol,
+            side: &side,
+            quantity: &quantity,
+            trigger: &trigger,
+            price: price.as_deref(),
+            offset: offset.as_deref(),
+            percent: percent.unwrap_or(false),
+            limit_price: limit_price.as_deref().filter(|raw| !raw.trim().is_empty()),
+        },
+    )
+}
+
+#[tauri::command]
+fn cancel_conditional(shell: State<'_, Shell>, id: u64) -> Result<ConditionalDto, String> {
+    cancel_conditional_order(&shell, id)
+}
+
 /// A resting limit order's new total quantity and price. The new terms pass
 /// risk as a new order would; the venue's answer arrives in a later batch.
 #[tauri::command]
@@ -546,6 +656,18 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                     pending.print(print);
                 }
                 pending.board(board);
+            }
+            // Conditional orders watch the tape (ADR 0020).
+            let mut exec = lock(&shell.exec)?;
+            let (changed, orders) = exec.on_trade(&trade.instrument, trade.price);
+            if !changed.is_empty() || !orders.is_empty() {
+                let mut pending = lock(&shell.pending)?;
+                for conditional in &changed {
+                    pending.conditional(ConditionalDto::from(conditional));
+                }
+                for order in &orders {
+                    pending.order(OrderDto::from(order));
+                }
             }
         }
         // Reference data goes to both engines: the data engine to show it,
@@ -707,6 +829,8 @@ pub fn run(venue: Venue) -> ExitCode {
             cancel_all_orders,
             amend_order,
             set_trading_state,
+            place_conditional,
+            cancel_conditional,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -784,6 +908,7 @@ mod tests {
             prints: vec![],
             trading: None,
             day: None,
+            conditionals: vec![],
         })
     }
 
@@ -870,6 +995,68 @@ mod tests {
             ("6.5", "3", true)
         );
         assert_eq!(dto.instruments[1].pnl, None);
+    }
+
+    fn buy_above(price: &'static str) -> ConditionalTicket<'static> {
+        ConditionalTicket {
+            symbol: "AAPL",
+            side: "buy",
+            quantity: "1",
+            trigger: "at_or_above",
+            price: Some(price),
+            offset: None,
+            percent: false,
+            limit_price: None,
+        }
+    }
+
+    #[test]
+    fn a_conditional_fires_on_the_tape_and_reaches_the_batch_with_its_order() {
+        let shell = shell();
+        announce(&shell, &profile("us"));
+        let placed = place_conditional_order(&shell, &buy_above("100")).unwrap();
+        take_pending(&shell);
+
+        let trade = Event::Trade(model::Trade {
+            instrument: InstrumentId::new(VENUE, "AAPL"),
+            price: Decimal::from(150),
+            quantity: Decimal::ONE,
+            side: None,
+            ts_event: UnixNanos(1),
+        });
+        route(&shell, &trade).unwrap();
+        let batch = take_pending(&shell);
+
+        let fired = batch
+            .conditionals
+            .iter()
+            .find(|c| c.id == placed.id)
+            .unwrap();
+        assert_eq!(fired.status, "fired");
+        let order = fired.order_id.expect("the order it sent");
+        assert!(batch.orders.iter().any(|o| o.id == order));
+        assert_eq!(snapshot_of(&shell).unwrap().conditionals[0].status, "fired");
+    }
+
+    #[test]
+    fn a_conditional_is_parsed_exactly_and_can_be_cancelled() {
+        let shell = shell();
+        let wrong = ConditionalTicket {
+            trigger: "sometime",
+            ..buy_above("100")
+        };
+
+        assert!(place_conditional_order(&shell, &wrong).is_err());
+        let placed = place_conditional_order(&shell, &buy_above("100")).unwrap();
+        assert_eq!(
+            (placed.trigger, placed.price.as_deref(), placed.then),
+            ("at_or_above", Some("100"), "marketable")
+        );
+        assert_eq!(
+            cancel_conditional_order(&shell, placed.id).unwrap().status,
+            "cancelled"
+        );
+        assert!(cancel_conditional_order(&shell, placed.id).is_err());
     }
 
     #[test]

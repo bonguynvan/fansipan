@@ -6,7 +6,10 @@
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
 use data_engine::{Bar, DataEngine, Print};
-use execution_engine::{is_amendable, Bound, DayPnl, OrderCapacity, TradingState};
+use execution_engine::{
+    is_amendable, Bound, Conditional, ConditionalStatus, DayPnl, Offset, OrderCapacity, Then,
+    TradingState, Trigger,
+};
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
     InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
@@ -35,6 +38,70 @@ pub struct Snapshot {
     /// The trader's switch: "active", "reducing", or "halted".
     pub trading: &'static str,
     pub day: DayDto,
+    /// Every conditional order this session (ADR 0020).
+    pub conditionals: Vec<ConditionalDto>,
+}
+
+/// A conditional order as the front end shows it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ConditionalDto {
+    pub id: u64,
+    pub symbol: String,
+    pub side: &'static str,
+    pub quantity: String,
+    /// "at_or_below", "at_or_above", or "trailing".
+    pub trigger: &'static str,
+    /// The price of an at-or-past trigger.
+    pub price: Option<String>,
+    /// A trailing stop's distance, in price or, with `percent`, percent.
+    pub offset: Option<String>,
+    pub percent: bool,
+    /// "limit" or "marketable".
+    pub then: &'static str,
+    pub limit_price: Option<String>,
+    /// "waiting", "fired", or "cancelled".
+    pub status: &'static str,
+    /// The order it sent, once fired.
+    pub order_id: Option<u64>,
+    pub best: Option<String>,
+    /// The price a trade must reach to fire it now.
+    pub level: Option<String>,
+}
+
+impl From<&Conditional> for ConditionalDto {
+    fn from(c: &Conditional) -> Self {
+        let (trigger, price, offset, percent) = match c.trigger {
+            Trigger::AtOrBelow(p) => ("at_or_below", Some(number(p)), None, false),
+            Trigger::AtOrAbove(p) => ("at_or_above", Some(number(p)), None, false),
+            Trigger::Trailing(Offset::Amount(a)) => ("trailing", None, Some(number(a)), false),
+            Trigger::Trailing(Offset::Percent(p)) => ("trailing", None, Some(number(p)), true),
+        };
+        let (then, limit_price) = match c.then {
+            Then::Limit(p) => ("limit", Some(number(p))),
+            Then::Marketable => ("marketable", None),
+        };
+        let (status, order_id) = match c.status {
+            ConditionalStatus::Waiting => ("waiting", None),
+            ConditionalStatus::Fired(id) => ("fired", Some(id.0)),
+            ConditionalStatus::Cancelled => ("cancelled", None),
+        };
+        Self {
+            id: c.id.0,
+            symbol: c.instrument.symbol.clone(),
+            side: side_label(c.side),
+            quantity: number(c.quantity),
+            trigger,
+            price,
+            offset,
+            percent,
+            then,
+            limit_price,
+            status,
+            order_id,
+            best: c.best.map(number),
+            level: c.level.map(number),
+        }
+    }
 }
 
 /// The day's profit and loss (ADR 0019), net of commission and sell tax.

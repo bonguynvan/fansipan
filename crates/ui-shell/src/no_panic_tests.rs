@@ -352,6 +352,16 @@ enum Input {
         quantity: String,
         price: String,
     },
+    Conditional {
+        symbol: String,
+        side: String,
+        quantity: String,
+        trigger: String,
+        level: String,
+        percent: bool,
+        limit_price: Option<String>,
+    },
+    CancelConditional(u64),
 }
 
 fn input() -> BoxedStrategy<Input> {
@@ -372,6 +382,25 @@ fn input() -> BoxedStrategy<Input> {
         1 => (0u64..6).prop_map(Input::Cancel),
         1 => prop::option::of(symbol()).prop_map(Input::CancelAll),
         1 => (0u64..6, typed(), typed()).prop_map(|(id, quantity, price)| Input::Amend { id, quantity, price }),
+        2 => (
+            symbol(),
+            side(),
+            typed(),
+            prop_oneof![Just("at_or_below"), Just("at_or_above"), Just("trailing")],
+            typed(),
+            any::<bool>(),
+            prop::option::of(typed()),
+        )
+            .prop_map(|(symbol, side, quantity, trigger, level, percent, limit_price)| Input::Conditional {
+                symbol,
+                side,
+                quantity,
+                trigger: trigger.to_string(),
+                level,
+                percent,
+                limit_price,
+            }),
+        1 => (0u64..6).prop_map(Input::CancelConditional),
     ].boxed()
 }
 
@@ -435,6 +464,30 @@ fn feed(shell: &Shell, input: &Input) {
             ) {
                 let _ = amend(shell, *id, quantity, price);
             }
+        }
+        Input::Conditional {
+            symbol,
+            side,
+            quantity,
+            trigger,
+            level,
+            percent,
+            limit_price,
+        } => {
+            let ticket = ConditionalTicket {
+                symbol,
+                side,
+                quantity,
+                trigger,
+                price: Some(level),
+                offset: Some(level),
+                percent: *percent,
+                limit_price: limit_price.as_deref(),
+            };
+            let _ = place_conditional_order(shell, &ticket);
+        }
+        Input::CancelConditional(id) => {
+            let _ = cancel_conditional_order(shell, *id);
         }
     }
 }

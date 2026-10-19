@@ -17,8 +17,8 @@ use data_engine::DEFAULT_TAPE_CAPACITY;
 use serde::Serialize;
 
 use crate::dto::{
-    AccountDto, BarDto, BoardDto, ConnectionDto, DayDto, InstrumentDto, OrderDto, PrintDto,
-    QuoteDto, SessionDto,
+    AccountDto, BarDto, BoardDto, ConditionalDto, ConnectionDto, DayDto, InstrumentDto, OrderDto,
+    PrintDto, QuoteDto, SessionDto,
 };
 
 #[derive(Default)]
@@ -33,6 +33,7 @@ pub struct Batch {
     sessions: BTreeMap<String, SessionDto>,
     prints: BTreeMap<String, VecDeque<PrintDto>>,
     trading: Option<&'static str>,
+    conditionals: BTreeMap<u64, ConditionalDto>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -56,9 +57,15 @@ pub struct BatchDto {
     pub trading: Option<&'static str>,
     /// The day's profit and loss as of this batch.
     pub day: Option<DayDto>,
+    /// Conditional orders that changed: placed, moved, fired, or cancelled.
+    pub conditionals: Vec<ConditionalDto>,
 }
 
 impl Batch {
+    pub fn conditional(&mut self, conditional: ConditionalDto) {
+        self.conditionals.insert(conditional.id, conditional);
+    }
+
     pub fn trading(&mut self, state: &'static str) {
         self.trading = Some(state);
     }
@@ -118,6 +125,7 @@ impl Batch {
             && self.sessions.is_empty()
             && self.prints.is_empty()
             && self.trading.is_none()
+            && self.conditionals.is_empty()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -134,6 +142,7 @@ impl Batch {
             prints: self.prints.into_values().flatten().collect(),
             trading: self.trading,
             day: None,
+            conditionals: self.conditionals.into_values().collect(),
         }
     }
 }

@@ -4,6 +4,7 @@
 //! The state machine itself is in [`lifecycle`]; see /docs/order-lifecycle.md.
 
 pub mod capacity;
+pub mod emulator;
 pub mod gate;
 pub mod lifecycle;
 pub mod pnl;
@@ -22,6 +23,10 @@ use model::{
 use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
+pub use emulator::{
+    Conditional, ConditionalError, ConditionalId, ConditionalRequest, ConditionalStatus, Offset,
+    Then, Trigger,
+};
 pub use gate::Gate;
 pub use lifecycle::TransitionError;
 pub use pnl::DayPnl;
@@ -156,6 +161,9 @@ pub struct ExecutionEngine {
     limits: RiskLimits,
     orders: BTreeMap<ClientOrderId, Tracked>,
     next_id: u64,
+    /// Conditional orders held in this terminal (emulator.rs).
+    conditionals: BTreeMap<ConditionalId, Conditional>,
+    next_conditional: u64,
     /// Market rules as the adapter published them, for risk.
     instruments: HashMap<InstrumentId, InstrumentInfo>,
     bands: HashMap<InstrumentId, PriceBand>,
@@ -175,6 +183,8 @@ impl ExecutionEngine {
             limits,
             orders: BTreeMap::new(),
             next_id: 1,
+            conditionals: BTreeMap::new(),
+            next_conditional: 1,
             instruments: HashMap::new(),
             bands: HashMap::new(),
             sessions: HashMap::new(),
@@ -234,6 +244,112 @@ impl ExecutionEngine {
             flows.entry(position.instrument.clone()).or_default();
         }
         flows
+    }
+
+    /// Holds a conditional order until a trade fires it (ADR 0020). `mark`
+    /// is the instrument's last trade, which a trailing stop starts from.
+    pub fn place_conditional(
+        &mut self,
+        request: ConditionalRequest,
+        mark: Option<Decimal>,
+    ) -> Result<Conditional, ConditionalError> {
+        let id = ConditionalId(self.next_conditional);
+        let ticks = self
+            .instruments
+            .get(&request.instrument)
+            .map(|info| &info.ticks);
+        let conditional = Conditional::new(id, request, mark, ticks)?;
+        self.next_conditional += 1;
+        self.conditionals.insert(id, conditional.clone());
+        Ok(conditional)
+    }
+
+    /// Stops a waiting conditional order from firing.
+    pub fn cancel_conditional(
+        &mut self,
+        id: ConditionalId,
+    ) -> Result<Conditional, ConditionalError> {
+        let conditional = self
+            .conditionals
+            .get_mut(&id)
+            .ok_or(ConditionalError::Unknown(id))?;
+        if conditional.status != ConditionalStatus::Waiting {
+            return Err(ConditionalError::NotWaiting(id));
+        }
+        conditional.status = ConditionalStatus::Cancelled;
+        Ok(conditional.clone())
+    }
+
+    /// Every conditional order this session, oldest first.
+    pub fn conditionals(&self) -> impl Iterator<Item = &Conditional> {
+        self.conditionals.values()
+    }
+
+    /// A trade in `instrument` at `price`: moves its trailing stops, and
+    /// fires the conditional orders it reaches, each as a new order cleared
+    /// by risk now. Returns the conditionals that changed and the orders
+    /// they sent.
+    pub fn on_trade(
+        &mut self,
+        instrument: &InstrumentId,
+        price: Decimal,
+    ) -> (Vec<Conditional>, Vec<Order>) {
+        let ticks = self
+            .instruments
+            .get(instrument)
+            .map(|info| info.ticks.clone());
+        let mut changed = Vec::new();
+        let mut fired = Vec::new();
+        for conditional in self.conditionals.values_mut() {
+            if &conditional.instrument != instrument
+                || conditional.status != ConditionalStatus::Waiting
+            {
+                continue;
+            }
+            let before = conditional.clone();
+            if conditional.observe(price, ticks.as_ref()) {
+                fired.push(conditional.id);
+            } else if *conditional != before {
+                changed.push(conditional.clone());
+            }
+        }
+        let mut orders = Vec::new();
+        for id in fired {
+            let Some(conditional) = self.conditionals.get(&id).cloned() else {
+                continue;
+            };
+            let order = self.submit(self.released(&conditional));
+            let status = ConditionalStatus::Fired(order.id);
+            if let Some(held) = self.conditionals.get_mut(&id) {
+                held.status = status;
+                changed.push(held.clone());
+            }
+            orders.push(order);
+        }
+        (changed, orders)
+    }
+
+    /// The order a conditional sends when it fires.
+    fn released(&self, conditional: &Conditional) -> NewOrder {
+        let (instrument, side, quantity) = (
+            conditional.instrument.clone(),
+            conditional.side,
+            conditional.quantity,
+        );
+        let price = match conditional.then {
+            Then::Limit(price) => Some(price),
+            Then::Marketable => {
+                let band = self.bands.get(&conditional.instrument);
+                match side {
+                    Side::Buy => band.and_then(|band| band.ceiling),
+                    Side::Sell => band.and_then(|band| band.floor),
+                }
+            }
+        };
+        match price {
+            Some(price) => NewOrder::limit(instrument, side, quantity, price),
+            None => NewOrder::market(instrument, side, quantity),
+        }
     }
 
     /// Whether this terminal sends new orders now (risk's first check).
@@ -1795,5 +1911,130 @@ mod tests {
         assert!(engine.set_trading_state(TradingState::Active));
         assert_eq!(engine.trading_state(), TradingState::Active);
         assert_eq!(engine.submit(buy("1")).status, OrderStatus::Submitted);
+    }
+
+    fn stop(trigger: Trigger, then: Then) -> ConditionalRequest {
+        ConditionalRequest {
+            instrument: InstrumentId::new("sim", "AAA"),
+            side: Side::Sell,
+            quantity: d("2"),
+            trigger,
+            then,
+        }
+    }
+
+    fn banded(engine: &mut ExecutionEngine) {
+        engine.set_band(PriceBand::new(
+            InstrumentId::new("sim", "AAA"),
+            d("10"),
+            Some(d("10.7")),
+            Some(d("9.3")),
+            UnixNanos(0),
+        ));
+    }
+
+    #[test]
+    fn a_stop_fires_as_a_sell_at_the_floor_through_risk() {
+        let (mut engine, calls) = engine();
+        banded(&mut engine);
+        let aaa = InstrumentId::new("sim", "AAA");
+        let placed = engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("9.8")), Then::Marketable), None)
+            .unwrap();
+
+        let (quiet, none) = engine.on_trade(&aaa, d("9.9"));
+        let (changed, orders) = engine.on_trade(&aaa, d("9.8"));
+
+        assert!(quiet.is_empty() && none.is_empty());
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            (orders[0].side, orders[0].limit_price),
+            (Side::Sell, Some(d("9.3")))
+        );
+        assert_eq!(changed[0].status, ConditionalStatus::Fired(orders[0].id));
+        assert_eq!(changed[0].id, placed.id);
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+        assert!(
+            engine.on_trade(&aaa, d("9")).1.is_empty(),
+            "a fired conditional fires once"
+        );
+    }
+
+    #[test]
+    fn with_no_band_a_marketable_conditional_sends_a_market_order() {
+        let (mut engine, _) = engine();
+        engine
+            .place_conditional(stop(Trigger::AtOrAbove(d("12")), Then::Marketable), None)
+            .unwrap();
+
+        let (_, orders) = engine.on_trade(&InstrumentId::new("sim", "AAA"), d("12"));
+
+        assert_eq!(orders[0].order_type, model::OrderType::MARKET);
+        assert_eq!(orders[0].limit_price, None);
+    }
+
+    #[test]
+    fn a_fired_conditional_meets_risk_when_it_fires() {
+        let (mut engine, calls) = engine();
+        engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5"))), None)
+            .unwrap();
+        engine.set_trading_state(TradingState::Halted);
+
+        let (changed, orders) = engine.on_trade(&InstrumentId::new("sim", "AAA"), d("5"));
+
+        assert_eq!(orders[0].status, OrderStatus::Denied);
+        assert_eq!(changed[0].status, ConditionalStatus::Fired(orders[0].id));
+        assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    #[test]
+    fn a_trailing_stop_reports_its_moves_and_other_instruments_leave_it_be() {
+        let (mut engine, _) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine
+            .place_conditional(
+                stop(Trigger::Trailing(Offset::Amount(d("1"))), Then::Marketable),
+                Some(d("10")),
+            )
+            .unwrap();
+
+        assert!(engine
+            .on_trade(&InstrumentId::new("sim", "BBB"), d("1"))
+            .0
+            .is_empty());
+        let (moved, _) = engine.on_trade(&aaa, d("12"));
+        assert_eq!(moved[0].level, Some(d("11")));
+        assert!(
+            engine.on_trade(&aaa, d("11.5")).0.is_empty(),
+            "nothing moved"
+        );
+        assert_eq!(engine.on_trade(&aaa, d("11")).1.len(), 1);
+    }
+
+    #[test]
+    fn a_waiting_conditional_can_be_cancelled_once() {
+        let (mut engine, _) = engine();
+        let id = engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Marketable), None)
+            .unwrap()
+            .id;
+
+        assert_eq!(
+            engine.cancel_conditional(id).unwrap().status,
+            ConditionalStatus::Cancelled
+        );
+        assert_eq!(
+            engine.cancel_conditional(id),
+            Err(ConditionalError::NotWaiting(id))
+        );
+        assert_eq!(
+            engine.cancel_conditional(ConditionalId(99)),
+            Err(ConditionalError::Unknown(ConditionalId(99)))
+        );
+        assert!(engine
+            .on_trade(&InstrumentId::new("sim", "AAA"), d("1"))
+            .1
+            .is_empty());
     }
 }
