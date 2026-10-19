@@ -255,6 +255,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             exec.orders()
                 .map(|order| OrderDto {
                     unconfirmed: exec.is_unconfirmed(order.id),
+                    external: exec.is_external(order.id),
                     ..OrderDto::from(order)
                 })
                 .collect(),
@@ -336,6 +337,7 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
             let exec = lock(&shell.exec)?;
             for order in &mut dto.orders {
                 order.unconfirmed = exec.is_unconfirmed(ClientOrderId(order.id));
+                order.external = exec.is_external(ClientOrderId(order.id));
             }
             journal
                 .as_mut()
@@ -1086,6 +1088,17 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                 ),
             }
         }
+        // An order placed elsewhere on the account (ADR 0024).
+        Event::ExternalOrder(external) => {
+            let mut exec = lock(&shell.exec)?;
+            match exec.on_external(external) {
+                Ok(order) => lock(&shell.pending)?.order(OrderDto::from(&order)),
+                Err(e) => eprintln!(
+                    "order {} placed elsewhere not taken in: {e}",
+                    external.venue_order_id.0
+                ),
+            }
+        }
         // The execution engine keeps the account: risk checks sells against it.
         Event::AccountUpdate(account) => {
             lock(&shell.exec)?.set_account(account.clone());
@@ -1580,6 +1593,37 @@ mod tests {
             ),
             ("trailing", Some("2"))
         );
+    }
+
+    #[test]
+    fn an_order_placed_elsewhere_reaches_the_screens_marked_so() {
+        let shell = shell();
+        announce(&shell, &profile("us"));
+        let elsewhere = model::ExternalOrder::new(
+            model::VenueOrderId("W-1".into()),
+            InstrumentId::new(VENUE, "AAPL"),
+            Side::Sell,
+            Decimal::from(3),
+            model::OrderType::LIMIT,
+            Some(Decimal::from(200)),
+            model::VenueOrder::new(model::VenueOrderState::Working, Decimal::ZERO, None),
+        );
+
+        route(&shell, &Event::ExternalOrder(elsewhere)).unwrap();
+        let batch = take_pending(&shell);
+
+        let order = batch
+            .orders
+            .iter()
+            .find(|o| o.venue_order_id.as_deref() == Some("W-1"))
+            .unwrap();
+        assert!(order.external && order.open);
+        assert_eq!(order.status, "accepted");
+        assert!(snapshot_of(&shell)
+            .unwrap()
+            .orders
+            .iter()
+            .any(|o| o.external));
     }
 
     #[test]

@@ -79,6 +79,7 @@ fn order_record() -> impl Strategy<Value = OrderRecord> {
         (
             prop::collection::vec("[a-z0-9:-]{1,20}", 0..4),
             prop::option::of(decimal()),
+            any::<bool>(),
         ),
     )
         .prop_map(
@@ -86,7 +87,7 @@ fn order_record() -> impl Strategy<Value = OrderRecord> {
                 (id, venue_id, symbol, buy),
                 (quantity, kind, tif, limit_price),
                 (status, filled, avg, reason),
-                (fills, amending_to),
+                (fills, amending_to, external),
             )| OrderRecord {
                 order: Order {
                     id: ClientOrderId(id),
@@ -103,6 +104,7 @@ fn order_record() -> impl Strategy<Value = OrderRecord> {
                 },
                 applied_fills: fills.into_iter().map(FillId).collect(),
                 amending_to,
+                external,
             },
         )
 }

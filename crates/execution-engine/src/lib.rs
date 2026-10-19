@@ -22,7 +22,7 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side,
 };
-use model::{OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderState};
+use model::{ExternalOrder, OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderState};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use emulator::{
@@ -165,6 +165,8 @@ struct Tracked {
     /// Restored from the journal and still open, with no word from the
     /// venue since the restart (ADR 0023).
     unconfirmed: bool,
+    /// Placed elsewhere and adopted (ADR 0024).
+    external: bool,
 }
 
 impl Tracked {
@@ -751,6 +753,7 @@ impl ExecutionEngine {
                 applied_fills: HashSet::new(),
                 amending_to: None,
                 unconfirmed: false,
+                external: false,
             },
         );
         order
@@ -1043,8 +1046,67 @@ impl ExecutionEngine {
                 order: tracked.order.clone(),
                 applied_fills,
                 amending_to: tracked.amending_to,
+                external: tracked.external,
             }
         })
+    }
+
+    /// Whether `id` was placed elsewhere and adopted.
+    pub fn is_external(&self, id: ClientOrderId) -> bool {
+        self.orders.get(&id).is_some_and(|tracked| tracked.external)
+    }
+
+    /// Takes in an order the venue reports that this terminal did not place
+    /// (ADR 0024). The first report of a venue id makes a new order, created
+    /// as submitted and caught up to the venue's view, so its status changes
+    /// only in the lifecycle; the adapter is then told its id. A later
+    /// report of the same venue id catches that order up.
+    pub fn on_external(&mut self, external: &ExternalOrder) -> Result<Order, ApplyError> {
+        let view = external
+            .view
+            .clone()
+            .with_venue_order_id(external.venue_order_id.clone());
+        let known = self
+            .orders
+            .values()
+            .find(|tracked| tracked.order.venue_order_id.as_ref() == Some(&external.venue_order_id))
+            .map(|tracked| tracked.order.id);
+        if let Some(id) = known {
+            return self.catch_up(id, &view);
+        }
+        let id = ClientOrderId(self.next_id);
+        self.next_id += 1;
+        let order = Order {
+            id,
+            venue_order_id: None,
+            instrument: external.instrument.clone(),
+            side: external.side,
+            quantity: external.quantity,
+            order_type: external.order_type,
+            limit_price: external.limit_price,
+            status: OrderStatus::Submitted,
+            filled_quantity: Decimal::ZERO,
+            avg_fill_price: None,
+            reason: None,
+        };
+        self.orders.insert(
+            id,
+            Tracked {
+                order,
+                applied_fills: HashSet::new(),
+                amending_to: None,
+                unconfirmed: false,
+                external: true,
+            },
+        );
+        let caught_up = self.catch_up(id, &view);
+        if caught_up.is_err() {
+            // A view the lifecycle cannot take leaves nothing behind.
+            self.orders.remove(&id);
+        } else {
+            self.gate.adopt(&external.venue_order_id, id);
+        }
+        caught_up
     }
 
     /// Whether `id` was restored open and the venue has not spoken of it
@@ -1075,6 +1137,7 @@ impl ExecutionEngine {
                 id,
                 Tracked {
                     unconfirmed: record.order.status.is_open(),
+                    external: record.external,
                     order: record.order,
                     applied_fills: record.applied_fills.into_iter().collect(),
                     amending_to: record.amending_to,
@@ -1191,6 +1254,7 @@ mod tests {
         cancelled: Vec<CancelOrder>,
         amended: Vec<AmendOrder>,
         recovered: Vec<RecoverOrder>,
+        adopted: Vec<(VenueOrderId, ClientOrderId)>,
     }
 
     struct RecordingClient {
@@ -1247,6 +1311,13 @@ mod tests {
         }
         fn account_id(&self) -> Option<String> {
             Some("ACC-1".into())
+        }
+        fn adopt_order(&mut self, venue_order_id: &VenueOrderId, order_id: ClientOrderId) {
+            self.calls
+                .lock()
+                .unwrap()
+                .adopted
+                .push((venue_order_id.clone(), order_id));
         }
         fn recovery(&mut self) -> Option<&mut dyn adapter_api::OrderRecovery> {
             if self.recovers {
@@ -2866,6 +2937,106 @@ mod tests {
             .unwrap();
 
         assert!(!after.is_unconfirmed(open.id), "an end is final");
+    }
+
+    /// A sell of 10 at 5 placed in the broker's own app, as the venue holds it.
+    fn placed_elsewhere(state: VenueOrderState, filled: &str) -> ExternalOrder {
+        ExternalOrder::new(
+            VenueOrderId("W-1".into()),
+            InstrumentId::new("sim", "AAA"),
+            Side::Sell,
+            d("10"),
+            model::OrderType::LIMIT,
+            Some(d("5")),
+            VenueOrder::new(
+                state,
+                d(filled),
+                (d(filled) > Decimal::ZERO).then(|| d("5")),
+            ),
+        )
+    }
+
+    #[test]
+    fn an_order_placed_elsewhere_is_adopted_and_its_venue_told_the_id() {
+        let (mut engine, calls) = engine();
+        let ours = engine.submit(buy("1"));
+
+        let adopted = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "0"))
+            .unwrap();
+
+        assert_eq!(
+            adopted.id,
+            ClientOrderId(ours.id.0 + 1),
+            "the engine's next id"
+        );
+        assert_eq!(adopted.status, OrderStatus::Accepted);
+        assert_eq!(adopted.venue_order_id, Some(VenueOrderId("W-1".into())));
+        assert!(engine.is_external(adopted.id));
+        assert!(!engine.is_external(ours.id));
+        assert_eq!(
+            calls.lock().unwrap().adopted,
+            vec![(VenueOrderId("W-1".into()), adopted.id)]
+        );
+        assert_eq!(
+            engine.working(&InstrumentId::new("sim", "AAA"), Side::Sell),
+            d("10"),
+            "risk counts it as a working sell"
+        );
+        assert!(
+            calls.lock().unwrap().submitted.len() == 1,
+            "nothing was sent for it"
+        );
+    }
+
+    #[test]
+    fn a_second_report_of_an_adopted_order_catches_it_up() {
+        let (mut engine, calls) = engine();
+        let adopted = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "0"))
+            .unwrap();
+
+        let again = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "4"))
+            .unwrap();
+
+        assert_eq!(again.id, adopted.id, "the same order, not a second one");
+        assert_eq!(again.status, OrderStatus::PartiallyFilled);
+        assert_eq!(again.filled_quantity, d("4"));
+        assert_eq!(engine.orders().count(), 1);
+        assert_eq!(calls.lock().unwrap().adopted.len(), 1);
+    }
+
+    #[test]
+    fn an_adopted_order_can_be_cancelled_from_the_terminal() {
+        let (mut engine, calls) = engine();
+        let adopted = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "0"))
+            .unwrap();
+
+        let cancelling = engine.cancel(adopted.id).unwrap();
+
+        assert_eq!(cancelling.status, OrderStatus::PendingCancel);
+        assert_eq!(
+            calls.lock().unwrap().cancelled[0].venue_order_id,
+            Some(VenueOrderId("W-1".into()))
+        );
+    }
+
+    #[test]
+    fn an_order_placed_elsewhere_that_has_filled_arrives_filled() {
+        let (mut engine, _) = engine();
+
+        let adopted = engine
+            .on_external(&placed_elsewhere(VenueOrderState::Filled, "10"))
+            .unwrap();
+
+        assert_eq!(adopted.status, OrderStatus::Filled);
+        assert_eq!(adopted.filled_quantity, d("10"));
+        assert!(
+            engine.order_record(adopted.id).unwrap().external,
+            "and is journaled as placed elsewhere"
+        );
     }
 
     #[test]

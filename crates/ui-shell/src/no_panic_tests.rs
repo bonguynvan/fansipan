@@ -15,9 +15,9 @@ use std::sync::mpsc::Receiver;
 
 use model::{
     AccountState, BookLevel, ClientOrderId, Connection, ConnectionState, ConnectionStatus, Decimal,
-    Depth, ExecutionReport, FillId, InstrumentId, InstrumentInfo, NamedOrderType, OrderEvent,
-    OrderType, Position, PriceBand, Quote, SessionPhase, SessionStatus, Side, TickTable, Trade,
-    UnixNanos, VenueOrder, VenueOrderId, VenueOrderState,
+    Depth, ExecutionReport, ExternalOrder, FillId, InstrumentId, InstrumentInfo, NamedOrderType,
+    OrderEvent, OrderType, Position, PriceBand, Quote, SessionPhase, SessionStatus, Side,
+    TickTable, Trade, UnixNanos, VenueOrder, VenueOrderId, VenueOrderState,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -293,6 +293,38 @@ fn adapter_event() -> BoxedStrategy<Event> {
         account().prop_map(Event::AccountUpdate),
         session().prop_map(Event::Session),
         connection().prop_map(Event::Connection),
+        // Orders placed elsewhere: a few venue ids, so some repeat.
+        (
+            0u8..3,
+            instrument(),
+            any::<bool>(),
+            decimal(),
+            optional(decimal()),
+            prop_oneof![
+                Just(VenueOrderState::Working),
+                Just(VenueOrderState::Filled),
+                Just(VenueOrderState::Cancelled),
+            ],
+            decimal(),
+            optional(decimal()),
+        )
+            .prop_map(
+                |(venue, id, buy, quantity, limit, state, filled, average)| {
+                    Event::ExternalOrder(ExternalOrder::new(
+                        VenueOrderId(format!("X-{venue}")),
+                        id,
+                        if buy { Side::Buy } else { Side::Sell },
+                        quantity,
+                        if limit.is_some() {
+                            OrderType::LIMIT
+                        } else {
+                            OrderType::MARKET
+                        },
+                        limit,
+                        VenueOrder::new(state, filled, average),
+                    ))
+                }
+            ),
     ]
     .boxed()
 }

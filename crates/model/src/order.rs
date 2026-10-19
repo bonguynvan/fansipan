@@ -139,6 +139,45 @@ impl CancelOrder {
     }
 }
 
+/// An order on the account that this terminal did not place (from the
+/// broker's own app, another program): the venue's id, its terms, and the
+/// venue's view of it now. Core adopts it (ADR 0024).
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ExternalOrder {
+    pub venue_order_id: VenueOrderId,
+    pub instrument: InstrumentId,
+    pub side: Side,
+    pub quantity: Decimal,
+    pub order_type: OrderType,
+    /// Set for a limit order.
+    pub limit_price: Option<Decimal>,
+    /// Its state and cumulative fills on the venue now.
+    pub view: VenueOrder,
+}
+
+impl ExternalOrder {
+    pub fn new(
+        venue_order_id: VenueOrderId,
+        instrument: InstrumentId,
+        side: Side,
+        quantity: Decimal,
+        order_type: OrderType,
+        limit_price: Option<Decimal>,
+        view: VenueOrder,
+    ) -> Self {
+        Self {
+            venue_order_id,
+            instrument,
+            side,
+            quantity,
+            order_type,
+            limit_price,
+            view,
+        }
+    }
+}
+
 /// An order the terminal knew before it restarted and asks the venue about:
 /// its id, the venue's id if the venue had accepted it, and the instrument.
 #[derive(Debug, Clone, PartialEq)]

@@ -150,7 +150,10 @@ pub use bus;
 pub use model;
 
 use bus::BusHandle;
-use model::{AccountState, AmendOrder, CancelOrder, InstrumentId, RecoverOrder, SubmitOrder};
+use model::{
+    AccountState, AmendOrder, CancelOrder, ClientOrderId, InstrumentId, RecoverOrder, SubmitOrder,
+    VenueOrderId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdapterError {
@@ -239,6 +242,13 @@ pub trait ExecutionClient: Send {
     fn account_id(&self) -> Option<String> {
         None
     }
+
+    /// Core adopted the order the venue knows as `venue_order_id`, which
+    /// this client reported as `Event::ExternalOrder`, as `order_id`: report
+    /// on it under that id from now on (ADR 0024). Return at once. The
+    /// default does nothing, which is right for a client that reports no
+    /// external orders.
+    fn adopt_order(&mut self, _venue_order_id: &VenueOrderId, _order_id: ClientOrderId) {}
 
     /// This client's answers about orders the terminal knew before it
     /// restarted, if its venue can say. The default says it cannot: core

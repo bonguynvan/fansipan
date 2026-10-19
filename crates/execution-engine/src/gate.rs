@@ -92,6 +92,14 @@ impl Gate {
         self.client.amender().is_some()
     }
 
+    pub(crate) fn adopt(
+        &mut self,
+        venue_order_id: &model::VenueOrderId,
+        order_id: model::ClientOrderId,
+    ) {
+        self.client.adopt_order(venue_order_id, order_id);
+    }
+
     pub(crate) fn account_id(&self) -> Option<String> {
         self.client.account_id()
     }

@@ -102,6 +102,9 @@ pub struct OrderLine {
     pub reason: Option<String>,
     pub applied_fills: Vec<String>,
     pub amending_to: Option<String>,
+    /// Placed elsewhere and adopted; absent in records written before.
+    #[serde(default)]
+    pub external: bool,
 }
 
 fn side_label(side: Side) -> &'static str {
@@ -210,6 +213,7 @@ impl OrderLine {
             reason: order.reason.clone(),
             applied_fills: record.applied_fills.iter().map(|f| f.0.clone()).collect(),
             amending_to: record.amending_to.map(|q| q.to_string()),
+            external: record.external,
         })
     }
 
@@ -233,6 +237,7 @@ impl OrderLine {
             },
             applied_fills: self.applied_fills.iter().cloned().map(FillId).collect(),
             amending_to: optional("amendment quantity", &self.amending_to)?,
+            external: self.external,
         })
     }
 }

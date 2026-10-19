@@ -18,6 +18,8 @@ pub struct OrderRecord {
     pub order: Order,
     pub applied_fills: Vec<FillId>,
     pub amending_to: Option<Decimal>,
+    /// Placed elsewhere and adopted (ADR 0024).
+    pub external: bool,
 }
 
 /// The session as recorded: every order and conditional order, the

@@ -4,8 +4,8 @@
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
 use model::{
-    AccountState, ConnectionStatus, Depth, ExecutionReport, InstrumentInfo, PriceBand, Quote,
-    SessionStatus, Trade,
+    AccountState, ConnectionStatus, Depth, ExecutionReport, ExternalOrder, InstrumentInfo,
+    PriceBand, Quote, SessionStatus, Trade,
 };
 
 /// Everything an adapter can tell core. There is deliberately no variant
@@ -32,6 +32,9 @@ pub enum Event {
     /// A market moved to another phase of its trading day, which changes the
     /// order types it takes.
     Session(SessionStatus),
+    /// An order on the account this terminal did not place, as the venue
+    /// holds it now; core adopts it (ADR 0024).
+    ExternalOrder(ExternalOrder),
 }
 
 /// Handle an adapter uses to push events onto the bus.

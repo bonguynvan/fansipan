@@ -41,6 +41,7 @@ fn order(id: u64, status: OrderStatus, filled: &str) -> OrderRecord {
         },
         applied_fills: vec![FillId("f1".into())],
         amending_to: None,
+        external: false,
     }
 }
 
