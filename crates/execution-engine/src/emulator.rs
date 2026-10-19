@@ -93,10 +93,12 @@ pub struct BracketRequest {
 
 impl BracketRequest {
     /// The exits as conditional requests, stop-loss first, each at no
-    /// quantity yet: on the other side of the entry, a stop on the losing
-    /// side of its limit and a take-profit on the winning side.
+    /// quantity yet: on the other side of the entry, a priced stop on the
+    /// losing side of `reference` (the entry's limit, or the last trade for
+    /// an order without one) and a take-profit on the winning side.
     pub(crate) fn exits(
         &self,
+        reference: Option<Decimal>,
     ) -> Result<Vec<(ConditionalRequest, Option<Decimal>)>, ConditionalError> {
         if self.stop_loss.is_none() && self.take_profit.is_none() {
             return Err(ConditionalError::NoExit);
@@ -112,8 +114,8 @@ impl BracketRequest {
             Some(_) => return Err(ConditionalError::ExitOnWrongSide),
         };
         let in_order = [
-            stop_at.zip(entry.limit_price),
-            entry.limit_price.zip(self.take_profit),
+            stop_at.zip(reference),
+            reference.zip(self.take_profit),
             stop_at.zip(self.take_profit),
         ]
         .into_iter()
@@ -173,6 +175,9 @@ pub struct Conditional {
     /// The other exit of the same position: when either fires, the other
     /// is cancelled.
     pub oco: Option<ConditionalId>,
+    /// What went wrong after an exit fired: the rest of its entry could not
+    /// be cancelled, so it may still fill.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +194,8 @@ pub enum ConditionalError {
     /// An exit on the wrong side of the entry: a long's stop-loss must be
     /// below its entry and its take-profit above, a short's the reverse.
     ExitOnWrongSide,
+    /// The entry would close what is held rather than open a position.
+    ClosesAPosition,
     /// The last trade is already past the trigger, so it would fire at
     /// once, at whatever the market gives.
     AlreadyMet {
@@ -211,6 +218,9 @@ impl fmt::Display for ConditionalError {
             Self::NoExit => f.write_str("a bracket needs a stop-loss, a take-profit, or both"),
             Self::ExitOnWrongSide => f.write_str(
                 "the stop-loss must be on the losing side of the entry and the take-profit on the winning side",
+            ),
+            Self::ClosesAPosition => f.write_str(
+                "a bracket opens a position; this order would close what is held, so it takes no exits",
             ),
             Self::AlreadyMet { last } => {
                 write!(f, "the last trade, {last}, is already past the trigger")
@@ -264,6 +274,7 @@ impl Conditional {
             blocked: None,
             after: None,
             oco: None,
+            problem: None,
         };
         if let Some(mark) = mark {
             conditional.trail(mark, ticks);
@@ -294,6 +305,7 @@ impl Conditional {
             blocked: None,
             after: Some(after),
             oco: None,
+            problem: None,
         }
     }
 

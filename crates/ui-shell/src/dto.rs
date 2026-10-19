@@ -73,6 +73,8 @@ pub struct ConditionalDto {
     pub after_order: Option<u64>,
     /// The other exit, cancelled when this one fires.
     pub oco: Option<u64>,
+    /// What went wrong after it fired.
+    pub problem: Option<String>,
 }
 
 /// A bracket as placed: its entry order and the exits waiting on it.
@@ -118,6 +120,7 @@ impl From<&Conditional> for ConditionalDto {
             blocked: c.blocked.clone(),
             after_order: c.after.map(|id| id.0),
             oco: c.oco.map(|id| id.0),
+            problem: c.problem.clone(),
         }
     }
 }

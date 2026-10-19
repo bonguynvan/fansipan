@@ -535,8 +535,13 @@ fn bracket_request(venue: &str, ticket: &BracketTicket<'_>) -> Result<BracketReq
 
 fn place_bracket_order(shell: &Shell, ticket: &BracketTicket<'_>) -> Result<BracketDto, String> {
     let request = bracket_request(&shell.venue, ticket)?;
+    let mark = lock(&shell.data)?
+        .stats(&request.entry.instrument)
+        .and_then(|stats| stats.last);
     let mut exec = lock(&shell.exec)?;
-    let (order, exits) = exec.place_bracket(request).map_err(|e| e.to_string())?;
+    let (order, exits) = exec
+        .place_bracket(request, mark)
+        .map_err(|e| e.to_string())?;
     let placed = BracketDto {
         order: OrderDto::from(&order),
         exits: exits.iter().map(ConditionalDto::from).collect(),
