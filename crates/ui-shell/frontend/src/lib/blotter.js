@@ -22,3 +22,15 @@ export function viewCounts(orders) {
   const working = orders.filter((order) => order.open).length;
   return { working, finished: orders.length - working, all: orders.length };
 }
+
+/**
+ * What an order's note says: the venue's reason, or else why the order is
+ * unusual: not yet confirmed since a restart (ADR 0023), or placed
+ * elsewhere and adopted (ADR 0024).
+ */
+export function orderNote(order, t) {
+  if (order.reason) return order.reason;
+  if (order.unconfirmed) return t("order.unconfirmedReason");
+  if (order.external) return t("order.placedElsewhere");
+  return "";
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_VIEW, ordersIn, viewCounts, viewOf } from "./blotter.js";
+import { DEFAULT_VIEW, orderNote, ordersIn, viewCounts, viewOf } from "./blotter.js";
+import english from "../i18n/locales/en.json";
 
 const orders = [
   { id: 3, status: "accepted", open: true },
@@ -27,5 +28,17 @@ describe("blotter views", () => {
   it("counts each view", () => {
     expect(viewCounts(orders)).toEqual({ working: 2, finished: 2, all: 4 });
     expect(viewCounts([])).toEqual({ working: 0, finished: 0, all: 0 });
+  });
+});
+
+describe("an order's note", () => {
+  const t = (id) => `<${id}>`;
+
+  it("gives the venue's reason first, then why the order is unusual", () => {
+    expect(orderNote({ reason: "no funds", unconfirmed: true, external: true }, t)).toBe("no funds");
+    expect(orderNote({ reason: null, unconfirmed: true, external: true }, t)).toBe("<order.unconfirmedReason>");
+    expect(orderNote({ reason: null, external: true }, t)).toBe("<order.placedElsewhere>");
+    expect(orderNote({ reason: null }, t)).toBe("");
+    expect(english["order.placedElsewhere"]).toBeTruthy();
   });
 });
