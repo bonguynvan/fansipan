@@ -196,6 +196,12 @@
               symbol: selected,
             }),
           };
+      // Exits belong to the order they went out with; the next order
+      // starts without them, so it never goes out as a bracket unasked.
+      if (exits && !REFUSED.has(order.status)) {
+        exitStop = null;
+        takeProfit = null;
+      }
     } catch (err) {
       message = { kind: "err", text: String(err) };
     } finally {

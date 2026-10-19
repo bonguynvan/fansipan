@@ -406,5 +406,6 @@
   "ticket.sentWithExits": "#{id} {side} {quantity} {symbol} đã gửi; lệnh cắt lỗ/chốt lời chờ lệnh này khớp",
   "conditional.status.pending": "Chờ khớp",
   "conditional.exitOf": "thoát vị thế của #{id}",
-  "conditional.pendingNote": "chờ #{id} khớp"
+  "conditional.pendingNote": "chờ #{id} khớp",
+  "conditional.problem": "Sau khi kích hoạt: {reason}"
 }

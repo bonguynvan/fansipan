@@ -233,6 +233,9 @@
             {#if conditional.status === "waiting" && conditional.blocked}
               <p class="blocked">{t("conditional.blocked", { reason: conditional.blocked })}</p>
             {/if}
+            {#if conditional.problem}
+              <p class="blocked">{t("conditional.problem", { reason: conditional.problem })}</p>
+            {/if}
           </li>
         {/each}
       </ol>

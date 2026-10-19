@@ -411,5 +411,6 @@
   "ticket.sentWithExits": "#{id} {side} {quantity} {symbol} sent; its exits wait for its fills",
   "conditional.status.pending": "Pending",
   "conditional.exitOf": "exit of #{id}",
-  "conditional.pendingNote": "waits for #{id} to fill"
+  "conditional.pendingNote": "waits for #{id} to fill",
+  "conditional.problem": "After it fired: {reason}"
 }
