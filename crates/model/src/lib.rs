@@ -26,6 +26,6 @@ pub use order::{
 };
 pub use order_type::{NamedOrderType, OrderKind, OrderType, TimeInForce};
 pub use rules::{
-    BandError, BookLevel, Depth, InstrumentInfo, PriceBand, TickTable, TickTableError,
+    BandError, BookLevel, Depth, InstrumentInfo, PriceBand, TickTable, TickTableError, TradingCosts,
 };
 pub use session::{SessionPhase, SessionStatus};

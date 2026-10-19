@@ -6,7 +6,7 @@
 
 use model::{
     Decimal, InstrumentId, InstrumentInfo, NamedOrderType, OrderKind, OrderType, PriceBand,
-    SessionPhase, TickTable, TimeInForce, UnixNanos,
+    SessionPhase, TickTable, TimeInForce, TradingCosts, UnixNanos,
 };
 
 use crate::{Clock, Listing, MarketDay, Phase, SimVenue, TradingDay};
@@ -90,6 +90,8 @@ struct Board {
     odd_lot_types: &'static [OrderType],
     /// Price levels its feed publishes on each side of the book.
     depth_levels: usize,
+    /// The commission and sell tax a trade here costs.
+    costs: TradingCosts,
 }
 
 fn dec(units: i64, scale: u32) -> Decimal {
@@ -109,7 +111,8 @@ fn listing(
         .with_exchange(board.code)
         .with_currency(currency)
         .with_short_selling(board.short_selling)
-        .with_odd_lot_types(board.odd_lot_types.iter().copied());
+        .with_odd_lot_types(board.odd_lot_types.iter().copied())
+        .with_costs(board.costs);
     let band = match board.band {
         Some(fraction) => {
             PriceBand::from_fraction(id, reference, fraction, &board.ticks, UnixNanos::default())
@@ -218,6 +221,8 @@ fn vietnam_days() -> Vec<MarketDay> {
 pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
     let lot = Decimal::ONE_HUNDRED;
     let flat_100 = TickTable::flat(Decimal::ONE_HUNDRED).map_err(|e| e.to_string())?;
+    // A typical retail broker's fee, and the tax every sale pays.
+    let vietnam_costs = TradingCosts::new(dec(15, 4), dec(1, 3));
     let hose = Board {
         code: "HOSE",
         ticks: TickTable::new(vec![
@@ -231,6 +236,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
         depth_levels: VIETNAM_DEPTH_LEVELS,
+        costs: vietnam_costs,
     };
     let hnx = Board {
         code: "HNX",
@@ -240,6 +246,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
         depth_levels: VIETNAM_DEPTH_LEVELS,
+        costs: vietnam_costs,
     };
     let upcom = Board {
         code: "UPCOM",
@@ -249,6 +256,7 @@ pub fn vietnam(venue: &str) -> Result<MarketProfile, String> {
         short_selling: false,
         odd_lot_types: &[OrderType::LIMIT],
         depth_levels: VIETNAM_DEPTH_LEVELS,
+        costs: vietnam_costs,
     };
     let display = dec(10_000, 0);
     let on = |board: &Board, entries: &[(&str, &str, i64)]| -> Result<Vec<Listing>, String> {
@@ -319,6 +327,8 @@ pub fn united_states(venue: &str) -> Result<MarketProfile, String> {
         short_selling: true,
         odd_lot_types: &[],
         depth_levels: US_DEPTH_LEVELS,
+        // Commission-free, as US retail brokers mostly are.
+        costs: TradingCosts::default(),
     };
     let listings = [
         ("AAPL", "Apple", 19_000),

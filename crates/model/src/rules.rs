@@ -188,8 +188,31 @@ impl TickTable {
     }
 }
 
-/// What a venue says about an instrument: how it trades, not what it costs.
-/// Published once per instrument (and again if it changes).
+/// What trading an instrument costs, as rates of the value traded: the
+/// broker's commission on every fill, and a tax on sells where the market
+/// levies one (0.1% of the sale in Vietnam). Zero for both when the venue
+/// does not say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct TradingCosts {
+    /// On every buy and sell, e.g. 0.0015 for 0.15%.
+    pub commission_rate: Decimal,
+    /// On sells only, e.g. 0.001 for 0.1%.
+    pub sell_tax_rate: Decimal,
+}
+
+impl TradingCosts {
+    pub fn new(commission_rate: Decimal, sell_tax_rate: Decimal) -> Self {
+        Self {
+            commission_rate,
+            sell_tax_rate,
+        }
+    }
+}
+
+/// What a venue says about an instrument: how it trades and what trading it
+/// costs, not its price. Published once per instrument (and again if it
+/// changes).
 ///
 /// New fields may be added in a minor release, so build one with
 /// [`InstrumentInfo::new`] and the `with_*` methods, not a struct literal.
@@ -213,6 +236,9 @@ pub struct InstrumentInfo {
     /// Empty when the market takes no odd lots; Vietnam takes them as limit
     /// orders for the day.
     pub odd_lot_types: Vec<OrderType>,
+    /// The broker's commission and the market's sell tax, which the day's
+    /// profit and loss is counted net of.
+    pub costs: TradingCosts,
 }
 
 impl InstrumentInfo {
@@ -226,7 +252,12 @@ impl InstrumentInfo {
             ticks,
             short_selling: true,
             odd_lot_types: Vec::new(),
+            costs: TradingCosts::default(),
         }
+    }
+
+    pub fn with_costs(self, costs: TradingCosts) -> Self {
+        Self { costs, ..self }
     }
 
     pub fn with_name(self, name: impl Into<String>) -> Self {
