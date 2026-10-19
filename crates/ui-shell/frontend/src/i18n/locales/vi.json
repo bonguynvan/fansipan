@@ -381,5 +381,21 @@
   "conditional.status.cancelled": "Đã hủy",
   "conditional.blocked": "Tạm giữ lại: {reason}. Sẽ thử lại ở giao dịch kế tiếp.",
   "conditional.cancel": "Hủy",
-  "conditional.cancelOne": "Hủy lệnh điều kiện #{id}"
+  "conditional.cancelOne": "Hủy lệnh điều kiện #{id}",
+  "ticket.risk.title": "Khối lượng theo rủi ro",
+  "ticket.risk.stop": "Giá cắt lỗ",
+  "ticket.risk.entry": "giá vào {price}",
+  "ticket.risk.amount": "Mức rủi ro",
+  "ticket.risk.unit": "Đơn vị rủi ro",
+  "ticket.risk.unit.amount": "Số tiền",
+  "ticket.risk.unit.percent": "% tài sản ròng",
+  "ticket.risk.sized": "Khối lượng {quantity} sẽ mất {atRisk} nếu chạm giá cắt lỗ ({loss} mỗi đơn vị, đã gồm phí)",
+  "ticket.risk.capped": "Khối lượng {quantity}, giới hạn bởi {bound}, sẽ mất {atRisk} trên mức {budget}",
+  "ticket.risk.none": "{budget} không đủ cho lệnh nhỏ nhất với giá cắt lỗ này ({loss} mỗi đơn vị)",
+  "ticket.risk.use": "Dùng {quantity}",
+  "ticket.risk.bound.buying_power": "sức mua",
+  "ticket.risk.bound.holding": "vị thế đang nắm giữ",
+  "ticket.risk.bound.order_size": "giới hạn khối lượng lệnh",
+  "ticket.risk.bound.order_value": "giới hạn giá trị lệnh",
+  "ticket.risk.cappedNone": "Không đặt được lệnh nào: {bound} không cho phép"
 }

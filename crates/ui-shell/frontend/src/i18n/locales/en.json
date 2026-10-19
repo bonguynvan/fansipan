@@ -386,5 +386,21 @@
   "conditional.status.cancelled": "Cancelled",
   "conditional.blocked": "Held back: {reason}. It tries again on the next trade.",
   "conditional.cancel": "Cancel",
-  "conditional.cancelOne": "Cancel conditional order #{id}"
+  "conditional.cancelOne": "Cancel conditional order #{id}",
+  "ticket.risk.title": "Size by risk",
+  "ticket.risk.stop": "Stop",
+  "ticket.risk.entry": "entry {price}",
+  "ticket.risk.amount": "Risk",
+  "ticket.risk.unit": "Risk unit",
+  "ticket.risk.unit.amount": "Amount",
+  "ticket.risk.unit.percent": "% of equity",
+  "ticket.risk.sized": "Size {quantity} risks {atRisk} at the stop ({loss} each, costs included)",
+  "ticket.risk.capped": "Size {quantity}, held to {bound}, risks {atRisk} of {budget}",
+  "ticket.risk.none": "{budget} does not cover the smallest order at this stop ({loss} each)",
+  "ticket.risk.use": "Use {quantity}",
+  "ticket.risk.bound.buying_power": "buying power",
+  "ticket.risk.bound.holding": "the holding",
+  "ticket.risk.bound.order_size": "the order size limit",
+  "ticket.risk.bound.order_value": "the order value limit",
+  "ticket.risk.cappedNone": "Nothing fits: {bound} allows no order"
 }

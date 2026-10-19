@@ -12,6 +12,7 @@
   import { orderTypeName, phaseName } from "./orderTypes.js";
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
   import { capacityArgs } from "./capacity.js";
+  import RiskSizer from "./RiskSizer.svelte";
   import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
@@ -304,6 +305,16 @@
         {/if}
       </label>
     {/if}
+
+    <RiskSizer
+      symbol={selected}
+      {side}
+      {orderType}
+      entry={priced && Number(limitPrice) > 0 ? Number(limitPrice) : reference}
+      entryTyped={priced && Number(limitPrice) > 0}
+      {decimals}
+      onuse={(sized) => (typedQuantity = sized)}
+    />
 
     <dl class="summary">
       <div>
