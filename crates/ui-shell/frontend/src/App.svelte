@@ -40,7 +40,7 @@
   // A journal that stops being written is told at once (ADR 0023).
   $effect(() => {
     if (market.journalError && label === MAIN_WINDOW) {
-      workspace.notice = { id: "journal.writeFailed", vars: { error: market.journalError } };
+      workspace.notice = { id: "journal.writeFailed", vars: { error: market.journalError.problem } };
     }
   });
 

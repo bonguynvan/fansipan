@@ -6,11 +6,16 @@
 export function journalNotice(journal) {
   if (!journal) return null;
   if (journal.error) return { id: "journal.failed", vars: { error: journal.error } };
-  if (journal.damaged) return { id: "journal.damaged", vars: { path: journal.damaged } };
+  const unanswered = journal.unconfirmed && !journal.venue_asked;
+  if (journal.damaged) {
+    return unanswered
+      ? { id: "journal.damagedUnconfirmed", vars: { path: journal.damaged, unconfirmed: journal.unconfirmed } }
+      : { id: "journal.damaged", vars: { path: journal.damaged } };
+  }
   const orders = journal.restored_orders ?? 0;
   const held = journal.restored_conditionals ?? 0;
   if (!orders && !held) return null;
-  if (journal.unconfirmed && !journal.venue_asked) {
+  if (unanswered) {
     return { id: "journal.restoredUnconfirmed", vars: { orders, held, unconfirmed: journal.unconfirmed } };
   }
   return { id: "journal.restored", vars: { orders, held } };

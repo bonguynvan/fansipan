@@ -17,6 +17,10 @@ describe("the journal's notice at start", () => {
   it("says the most pressing thing", () => {
     expect(journalNotice(kept({ error: "disk full", damaged: "x.damaged" })).id).toBe("journal.failed");
     expect(journalNotice(kept({ damaged: "x.damaged" }))).toEqual({ id: "journal.damaged", vars: { path: "x.damaged" } });
+    expect(journalNotice(kept({ damaged: "x.damaged", unconfirmed: 2, venue_asked: false }))).toEqual({
+      id: "journal.damagedUnconfirmed",
+      vars: { path: "x.damaged", unconfirmed: 2 },
+    });
     expect(journalNotice(kept({ unconfirmed: 2, venue_asked: false }))).toEqual({
       id: "journal.restoredUnconfirmed",
       vars: { orders: 3, held: 1, unconfirmed: 2 },
@@ -34,6 +38,7 @@ describe("the journal's notice at start", () => {
     for (const id of [
       "journal.failed",
       "journal.damaged",
+      "journal.damagedUnconfirmed",
       "journal.restored",
       "journal.restoredUnconfirmed",
       "journal.writeFailed",

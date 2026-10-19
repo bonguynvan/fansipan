@@ -49,8 +49,8 @@ class Market {
   conditionals = $state.raw({});
   /** What the journal kept and brought back at start (ADR 0023); null until the snapshot is in. */
   journal = $state.raw(null);
-  /** Why the journal could not be written, the last time it failed. */
-  journalError = $state(null);
+  /** `{ problem }` each time the journal could not be written: a new object every time, so a repeat is told too. */
+  journalError = $state.raw(null);
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -78,7 +78,7 @@ class Market {
     if (batch.trading) this.trading = batch.trading;
     if (batch.day) this.day = batch.day;
     this.conditionals = withConditionals(this.conditionals, batch.conditionals ?? []);
-    if (batch.journal_error) this.journalError = batch.journal_error;
+    if (batch.journal_error) this.journalError = { problem: batch.journal_error };
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
