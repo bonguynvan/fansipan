@@ -10,6 +10,12 @@
   import KeysDialog from "./lib/KeysDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
+  import WindowButtons from "./lib/WindowButtons.svelte";
+  import SearchBox from "./lib/SearchBox.svelte";
+  import Sidebar from "./lib/Sidebar.svelte";
+  import { registerAppSections } from "./lib/appSections.js";
+  import { TRADE, getSection, place, revealFor, showSection } from "./lib/sections.svelte.js";
+  import { beforeEachAction } from "./lib/hotkeys.svelte.js";
   import { registerAppMenus } from "./lib/appMenus.js";
   import { mark, money } from "./lib/format.js";
   import { journalNotice } from "./lib/journal.js";
@@ -35,7 +41,10 @@
   registerWorkspaceActions();
   if (label === MAIN_WINDOW) {
     registerAppMenus({ showShortcuts: () => (keysOpen = true), showAbout: () => (aboutOpen = true) });
+    registerAppSections();
+    beforeEachAction(revealFor);
   }
+  const shown = $derived(place.current === TRADE ? null : getSection(place.current));
 
   // A journal that stops being written is told at once (ADR 0023).
   $effect(() => {
@@ -109,18 +118,26 @@
   );
 </script>
 
-<!-- An extra window is the screen alone: no top bar, moved by its tab strip. -->
+<!-- An extra window is the screen alone: no top bar, moved by its tab strip.
+     The main window has no system frame either (ADR 0017): its title bar
+     holds the menus and the window buttons, and moves the window from
+     wherever nothing else answers to the pointer. -->
 <div class="terminal" class:detached={label !== MAIN_WINDOW}>
   {#if label === MAIN_WINDOW}
-  <header>
-    <div class="lead">
-      <div class="brand">
-        <span class="mark" aria-hidden="true">▲</span>
-        <span>Fansipan</span>
-        <span class="venue dim">{market.info?.title ?? ""}</span>
-      </div>
-      <MenuBar onNotice={(notice) => (workspace.notice = notice)} />
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="brand" data-tauri-drag-region>
+      <span class="mark" aria-hidden="true">▲</span>
+      <span data-tauri-drag-region>Fansipan</span>
     </div>
+    <!-- The venue gives way first when the window narrows. -->
+    <span class="venue dim" data-tauri-drag-region>{market.info?.title ?? ""}</span>
+    <MenuBar onNotice={(notice) => (workspace.notice = notice)} />
+    <div class="drag" data-tauri-drag-region></div>
+    <SearchBox onNotice={(notice) => (workspace.notice = notice)} onPick={() => showSection(TRADE)} />
+    <div class="drag" data-tauri-drag-region></div>
+    <WindowButtons />
+  </header>
+  <div class="statusbar">
     <div class="figures">
       <div class="equity">
         <span class="dim">{t("app.equity")}</span>
@@ -143,12 +160,22 @@
         <span class="dot"></span>{status}
       </div>
     </div>
-  </header>
+  </div>
   {/if}
 
-  <main>
-    <Workspace {label} />
-  </main>
+  <div class="body" class:framed={label === MAIN_WINDOW}>
+    {#if label === MAIN_WINDOW}<Sidebar />{/if}
+    <!-- The workspace stays mounted while another section shows, so its
+         panels keep their state. -->
+    <main hidden={shown !== null}>
+      <Workspace {label} />
+    </main>
+    {#if shown}
+      <div class="section">
+        <shown.component showShortcuts={() => (keysOpen = true)} />
+      </div>
+    {/if}
+  </div>
 </div>
 
 <KeysDialog bind:open={keysOpen} />
@@ -157,35 +184,58 @@
 <style>
   .terminal {
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
     height: 100vh;
-  }
-
-  /* No system frame around an extra window: a hairline keeps its edge. */
-  .terminal.detached {
-    grid-template-rows: 1fr;
+    /* No system frame around any window: a hairline keeps its edge. */
     border: 1px solid var(--rule);
   }
 
-  header {
+  .terminal.detached {
+    grid-template-rows: 1fr;
+  }
+
+  /* The title bar: the brand, the menus, room to drag, the window buttons. */
+  .titlebar {
+    display: flex;
+    align-items: stretch;
+    gap: 1rem;
+    min-height: 2.25rem;
+    padding-left: 0.75rem;
+    background: var(--ink);
+    border-bottom: 1px solid var(--rule);
+    user-select: none;
+  }
+
+  .titlebar > :global(.menubar) {
+    align-self: center;
+    flex: none;
+  }
+
+  .titlebar > :global(.buttons) {
+    flex: none;
+  }
+
+  .drag {
+    flex: 1 1 0;
+    min-width: 0.5rem;
+  }
+
+  /* Below it, what the trader watches: equity, the day, the switch, the
+     connection. */
+  .statusbar {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr auto;
     gap: 1rem;
     align-items: center;
-    padding: 0.5rem 1rem;
+    padding: 0.375rem 1rem;
     background: var(--panel);
     border-bottom: 1px solid var(--rule);
   }
 
-  .lead {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    min-width: 0;
-  }
-
   .brand {
+    align-self: center;
     display: flex;
+    flex: none;
     gap: 0.625rem;
     align-items: baseline;
     font-weight: 600;
@@ -197,16 +247,20 @@
   }
 
   .venue {
+    align-self: center;
+    flex: 0 1 auto;
+    margin-left: -0.375rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-weight: 400;
     font-size: var(--text-xs);
     white-space: nowrap;
   }
 
   .figures {
-    justify-self: center;
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     align-items: baseline;
     gap: 0 1.5rem;
     min-width: 0;
@@ -334,7 +388,23 @@
     }
   }
 
-  main {
+  .body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 0;
+  }
+
+  .body.framed {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  main,
+  .section {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  main[hidden] {
+    display: none;
   }
 </style>

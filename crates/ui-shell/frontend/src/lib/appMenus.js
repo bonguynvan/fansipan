@@ -8,6 +8,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { registerAction } from "./hotkeys.svelte.js";
 import { registerMenu, registerMenuItem } from "./menus.js";
+import { openSearch } from "./searchEvent.js";
+import { TRADE, showSection } from "./sections.svelte.js";
 import { THEMES, setTheme, theme } from "./theme.svelte.js";
 import { market } from "./market.svelte.js";
 import { TRADING_STATES, setTradingState } from "./tradingActions.js";
@@ -84,6 +86,7 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
   registerAction({ id: "app.full-screen", title: "hotkey.action.fullScreen", defaultKey: "F11", run: toggleFullScreen });
   registerAction({ id: "app.shortcuts", title: "hotkey.action.shortcuts", run: showShortcuts });
   registerAction({ id: "app.about", title: "hotkey.action.about", run: showAbout });
+  registerAction({ id: "app.search", title: "hotkey.action.search", defaultKey: "Ctrl+K", run: openSearch });
   registerAction({ id: "app.exit", title: "hotkey.action.exit", run: exit });
 
   registerMenu({ id: "file", title: "menu.file", order: 10 });
@@ -103,12 +106,20 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
   registerMenuItem("edit", { title: "menu.copy", hint: "Ctrl+C", run: inField("copy") });
   registerMenuItem("edit", { title: "menu.paste", hint: "Ctrl+V", run: paste });
   registerMenuItem("edit", { group: "select", title: "menu.selectAll", hint: "Ctrl+A", run: inField("selectAll") });
+  registerMenuItem("edit", { group: "find", action: "app.search" });
 
   registerMenuItem("view", {
     group: "panels",
     title: "workspace.addPanel",
     choices: () =>
-      listScreens().map((screen) => ({ id: screen.id, label: t(screen.title), pick: () => addScreen(screen.id) })),
+      listScreens().map((screen) => ({
+        id: screen.id,
+        label: t(screen.title),
+        pick: () => {
+          showSection(TRADE);
+          addScreen(screen.id);
+        },
+      })),
   });
   registerMenuItem("view", {
     group: "look",

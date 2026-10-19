@@ -84,8 +84,20 @@ export function flushHotkeys() {
   return save.flush();
 }
 
+/** Called with an action's id before it runs, and waited for; set by `beforeEachAction`. */
+let before = () => {};
+
+/**
+ * Runs `hook(actionId)` before every action, from a key, a menu, or a
+ * search: the frame uses it to show the workspace an action works on.
+ */
+export function beforeEachAction(hook) {
+  before = hook;
+}
+
 async function run(action) {
   try {
+    await before(action.id);
     const notice = await action.run();
     if (notice) report(notice);
   } catch (err) {

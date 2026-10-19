@@ -16,6 +16,8 @@
   --accent: #f2a93b;
   --up: #3ccf91;
   --down: #f0616d;
+  /* Text on a --down fill, such as the close button under the pointer. */
+  --on-down: #ffffff;
   /* Where a price sits in its day's band: the VN/TH convention of purple
      ceiling, cyan floor, yellow reference, green up, red down. */
   --tone-ceiling: #e879f9;
@@ -56,6 +58,7 @@
   --accent: #9a5c06;
   --up: #0b7a4b;
   --down: #c0303d;
+  --on-down: #ffffff;
   --tone-ceiling: #a21caf;
   --tone-floor: #155e75;
   --tone-ref: #854d0e;
