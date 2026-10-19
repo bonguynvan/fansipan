@@ -47,6 +47,10 @@ class Market {
   );
   /** Conditional orders held in this terminal (ADR 0020), by id. */
   conditionals = $state.raw({});
+  /** What the journal kept and brought back at start (ADR 0023); null until the snapshot is in. */
+  journal = $state.raw(null);
+  /** Why the journal could not be written, the last time it failed. */
+  journalError = $state(null);
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -74,6 +78,7 @@ class Market {
     if (batch.trading) this.trading = batch.trading;
     if (batch.day) this.day = batch.day;
     this.conditionals = withConditionals(this.conditionals, batch.conditionals ?? []);
+    if (batch.journal_error) this.journalError = batch.journal_error;
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
@@ -135,6 +140,7 @@ export function startMarket() {
       market.canAmend = Boolean(snap.can_amend);
       market.trading = snap.trading ?? "active";
       market.day = snap.day ?? null;
+      market.journal = snap.journal ?? null;
       infoIn(market.info);
       await loadTrends(snap.quotes.map((q) => q.symbol));
       market.ready = true;

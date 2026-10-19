@@ -191,7 +191,7 @@
     {#if message}
       <p class="msg {message.kind}" role="status">{message.text}</p>
     {/if}
-    <p class="lifetime">{t("conditional.lifetime")}</p>
+    <p class="lifetime">{t(market.journal?.kept ? "conditional.lifetimeKept" : "conditional.lifetime")}</p>
   </form>
 
   <section aria-labelledby="{id}-held">

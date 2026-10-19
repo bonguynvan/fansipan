@@ -12,6 +12,7 @@
   import MenuBar from "./lib/MenuBar.svelte";
   import { registerAppMenus } from "./lib/appMenus.js";
   import { mark, money } from "./lib/format.js";
+  import { journalNotice } from "./lib/journal.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
   import {
@@ -36,6 +37,13 @@
     registerAppMenus({ showShortcuts: () => (keysOpen = true), showAbout: () => (aboutOpen = true) });
   }
 
+  // A journal that stops being written is told at once (ADR 0023).
+  $effect(() => {
+    if (market.journalError && label === MAIN_WINDOW) {
+      workspace.notice = { id: "journal.writeFailed", vars: { error: market.journalError } };
+    }
+  });
+
   onMount(() => {
     const failed = (err) => (workspace.notice = { id: "app.startFailed", vars: { error: String(err) } });
     startLocale().catch(failed);
@@ -50,7 +58,13 @@
     }).catch(failed);
     startPicks().catch(failed);
     startHotkeys({ onNotice: (notice) => (workspace.notice = notice) }).catch(failed);
-    startMarket().catch(failed);
+    startMarket()
+      .then(() => {
+        // Told once, in the window the trader starts in.
+        const notice = label === MAIN_WINDOW ? journalNotice(market.journal) : null;
+        if (notice) workspace.notice = notice;
+      })
+      .catch(failed);
     // The shell sends this just before quitting and waits briefly, so saves
     // still inside their debounce window are not lost.
     const flushing = listen("workspace-flush", () => {

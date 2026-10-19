@@ -412,5 +412,13 @@
   "conditional.status.pending": "Pending",
   "conditional.exitOf": "exit of #{id}",
   "conditional.pendingNote": "waits for #{id} to fill",
-  "conditional.problem": "After it fired: {reason}"
+  "conditional.problem": "After it fired: {reason}",
+  "journal.restored": "Today's journal brought the session back: {orders} orders, {held} conditional orders.",
+  "journal.restoredUnconfirmed": "Today's journal brought the session back: {orders} orders, {held} conditional orders. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them with the broker.",
+  "journal.damaged": "Part of today's journal was damaged and set aside, in {path}; the rest was restored.",
+  "journal.failed": "The journal could not be opened: {error}. This session will not come back after a restart.",
+  "journal.writeFailed": "The journal could not be written: {error}. What changed since may not come back after a restart.",
+  "status.unconfirmed": "{status}, unconfirmed",
+  "order.unconfirmedReason": "Restored after a restart; the venue has not confirmed it since.",
+  "conditional.lifetimeKept": "Kept in this terminal for the day, so a restart brings them back; they work only while it runs."
 }

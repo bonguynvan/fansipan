@@ -407,5 +407,13 @@
   "conditional.status.pending": "Chờ khớp",
   "conditional.exitOf": "thoát vị thế của #{id}",
   "conditional.pendingNote": "chờ #{id} khớp",
-  "conditional.problem": "Sau khi kích hoạt: {reason}"
+  "conditional.problem": "Sau khi kích hoạt: {reason}",
+  "journal.restored": "Nhật ký hôm nay đã khôi phục phiên làm việc: {orders} lệnh, {held} lệnh điều kiện.",
+  "journal.restoredUnconfirmed": "Nhật ký hôm nay đã khôi phục phiên làm việc: {orders} lệnh, {held} lệnh điều kiện. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra với công ty chứng khoán.",
+  "journal.damaged": "Một phần nhật ký hôm nay bị hỏng và đã được tách riêng ở {path}; phần còn lại đã được khôi phục.",
+  "journal.failed": "Không mở được nhật ký: {error}. Phiên này sẽ không được khôi phục sau khi khởi động lại.",
+  "journal.writeFailed": "Không ghi được nhật ký: {error}. Những thay đổi từ lúc này có thể không được khôi phục sau khi khởi động lại.",
+  "status.unconfirmed": "{status}, chưa xác nhận",
+  "order.unconfirmedReason": "Được khôi phục sau khi khởi động lại; sàn chưa xác nhận lại lệnh này.",
+  "conditional.lifetimeKept": "Terminal giữ lệnh trong ngày, nên khởi động lại vẫn còn; lệnh chỉ hoạt động khi terminal đang chạy."
 }
