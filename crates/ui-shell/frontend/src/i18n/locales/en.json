@@ -351,6 +351,6 @@
 
   "app.day": "Day P&L",
   "app.dayHint": "Net of {costs} in commission and sell tax, from this terminal's trades today and the venue's positions.",
-  "app.dayPartial": "Some holdings have no price yet and are left out.",
+  "app.dayPartial": "Some instrument's price is not known yet, so it is left out.",
   "column.today": "Today"
 }

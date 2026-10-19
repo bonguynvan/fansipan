@@ -59,15 +59,24 @@ pub struct DayLineDto {
 
 impl DayDto {
     pub fn of(days: &[DayPnl]) -> Self {
-        // Saturating: a sum that does not fit only overstates in the
-        // direction it was already going, and the lines stay exact.
-        let add = |sum: Decimal, value: Decimal| sum.checked_add(value).unwrap_or(sum);
-        let total = days.iter().filter_map(|d| d.pnl).fold(Decimal::ZERO, add);
-        let costs = days.iter().map(|d| d.costs).fold(Decimal::ZERO, add);
+        // A part that does not fit the sum is left out, and the total says
+        // it is partial, as it does for a part that is unknown.
+        let mut overflowed = false;
+        let mut add = |sum: Decimal, value: Decimal| {
+            sum.checked_add(value).unwrap_or_else(|| {
+                overflowed = true;
+                sum
+            })
+        };
+        let total = days
+            .iter()
+            .filter_map(|d| d.pnl)
+            .fold(Decimal::ZERO, &mut add);
+        let costs = days.iter().map(|d| d.costs).fold(Decimal::ZERO, &mut add);
         Self {
             total: number(total),
             costs: number(costs),
-            partial: days.iter().any(|d| d.pnl.is_none()),
+            partial: overflowed || days.iter().any(|d| d.pnl.is_none()),
             instruments: days
                 .iter()
                 .map(|d| DayLineDto {

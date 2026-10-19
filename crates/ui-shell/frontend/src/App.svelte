@@ -191,8 +191,10 @@
   .figures {
     justify-self: center;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     align-items: baseline;
-    gap: 1.5rem;
+    gap: 0 1.5rem;
     min-width: 0;
   }
 

@@ -202,6 +202,7 @@ pub struct TradingCosts {
 }
 
 impl TradingCosts {
+    /// Rates as fractions of the value traded: 0.0015 is 0.15%.
     pub fn new(commission_rate: Decimal, sell_tax_rate: Decimal) -> Self {
         Self {
             commission_rate,
@@ -256,6 +257,7 @@ impl InstrumentInfo {
         }
     }
 
+    /// What trading the instrument costs; zero for both until set.
     pub fn with_costs(self, costs: TradingCosts) -> Self {
         Self { costs, ..self }
     }

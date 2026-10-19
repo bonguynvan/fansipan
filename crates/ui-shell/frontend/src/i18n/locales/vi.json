@@ -346,6 +346,6 @@
 
   "app.day": "Lãi/lỗ hôm nay",
   "app.dayHint": "Đã trừ {costs} phí môi giới và thuế bán, tính từ lệnh khớp hôm nay trên phần mềm này và danh mục do công ty chứng khoán báo.",
-  "app.dayPartial": "Một số mã chưa có giá nên chưa được tính.",
+  "app.dayPartial": "Một số mã chưa biết giá nên chưa được tính.",
   "column.today": "Hôm nay"
 }

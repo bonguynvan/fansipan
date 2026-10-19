@@ -260,19 +260,19 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     })
 }
 
-/// The day's profit and loss now: each instrument marked at its last
-/// trade, or the middle of its quote before any trade. Prices are read
-/// first and the data engine let go, so no two engine locks are held.
+/// The day's profit and loss now: each instrument held or traded marked
+/// at its last trade, or the middle of its quote before any trade. One
+/// engine is locked at a time, so the lock order is never in question.
 fn day_of(shell: &Shell) -> Result<DayDto, String> {
+    let wanted = lock(&shell.exec)?.day_instruments();
     let marks: HashMap<InstrumentId, Decimal> = {
         let data = lock(&shell.data)?;
-        data.quotes()
-            .map(|quote| {
-                let last = data.stats(&quote.instrument).and_then(|s| s.last);
-                (
-                    quote.instrument.clone(),
-                    last.unwrap_or_else(|| quote.mid()),
-                )
+        wanted
+            .into_iter()
+            .filter_map(|id| {
+                let last = data.stats(&id).and_then(|s| s.last);
+                let mark = last.or_else(|| data.latest(&id).map(model::Quote::mid))?;
+                Some((id, mark))
             })
             .collect()
     };
@@ -289,9 +289,10 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
     }
     let seq = shell.flushed.fetch_add(1, Ordering::SeqCst) + 1;
     // Every batch moves a price, an order, or the account, any of which
-    // moves the day; recounting it costs a pass over a few positions.
+    // moves the day; recounting it is a pass over what is held or traded.
+    // A day that cannot be counted must not cost the batch it rides on.
     Ok(Some(BatchDto {
-        day: Some(day_of(shell)?),
+        day: day_of(shell).ok(),
         ..batch.into_dto(seq)
     }))
 }

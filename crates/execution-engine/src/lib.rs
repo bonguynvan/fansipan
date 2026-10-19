@@ -187,13 +187,43 @@ impl ExecutionEngine {
     /// or traded this session, by instrument. `mark` gives an instrument's
     /// price now, or `None` when it has none.
     pub fn day_pnl(&self, mark: impl Fn(&InstrumentId) -> Option<Decimal>) -> Vec<DayPnl> {
-        let mut flows: BTreeMap<&InstrumentId, pnl::Flows> = BTreeMap::new();
+        self.day_flows()
+            .into_iter()
+            .map(|(instrument, flows)| {
+                let held = self
+                    .account
+                    .position(&instrument)
+                    .map_or(Decimal::ZERO, |p| p.quantity);
+                let reference = self.bands.get(&instrument).map(|band| band.reference);
+                let costs = self
+                    .instruments
+                    .get(&instrument)
+                    .map(|info| info.costs)
+                    .unwrap_or_default();
+                let (pnl, costs) = pnl::day_pnl(&flows, held, reference, mark(&instrument), costs);
+                DayPnl {
+                    instrument,
+                    pnl,
+                    costs,
+                }
+            })
+            .collect()
+    }
+
+    /// The instruments the day counts: held now or traded this session.
+    /// The shell prices only these.
+    pub fn day_instruments(&self) -> Vec<InstrumentId> {
+        self.day_flows().into_keys().collect()
+    }
+
+    fn day_flows(&self) -> BTreeMap<InstrumentId, pnl::Flows> {
+        let mut flows: BTreeMap<InstrumentId, pnl::Flows> = BTreeMap::new();
         for tracked in self.orders.values() {
             let order = &tracked.order;
             if order.filled_quantity.is_zero() {
                 continue;
             }
-            let entry = flows.entry(&order.instrument).or_default();
+            let entry = flows.entry(order.instrument.clone()).or_default();
             *entry = entry.add(
                 order.side == Side::Buy,
                 order.filled_quantity,
@@ -201,29 +231,9 @@ impl ExecutionEngine {
             );
         }
         for position in &self.account.positions {
-            flows.entry(&position.instrument).or_default();
+            flows.entry(position.instrument.clone()).or_default();
         }
         flows
-            .into_iter()
-            .map(|(instrument, flows)| {
-                let held = self
-                    .account
-                    .position(instrument)
-                    .map_or(Decimal::ZERO, |p| p.quantity);
-                let reference = self.bands.get(instrument).map(|band| band.reference);
-                let costs = self
-                    .instruments
-                    .get(instrument)
-                    .map(|info| info.costs)
-                    .unwrap_or_default();
-                let (pnl, costs) = pnl::day_pnl(&flows, held, reference, mark(instrument), costs);
-                DayPnl {
-                    instrument: instrument.clone(),
-                    pnl,
-                    costs,
-                }
-            })
-            .collect()
     }
 
     /// Whether this terminal sends new orders now (risk's first check).
