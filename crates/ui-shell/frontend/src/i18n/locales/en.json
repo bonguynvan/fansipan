@@ -437,5 +437,11 @@
   "ticket.suspendedQueued": "{symbol} is suspended. The venue holds new orders until it trades again.",
   "ticket.suspendedQueuedWhy": "{symbol} is suspended: {reason}. The venue holds new orders until it trades again.",
   "ticket.shortRestricted": "Short sales in {symbol} are restricted: a sell beyond your holding needs a limit price.",
-  "ticket.statusReason": "{symbol}: {reason}"
+  "ticket.statusReason": "{symbol}: {reason}",
+  "about.reportTitle": "Reporting a problem",
+  "about.report": "Attach the log from this folder: one file a day, the last week kept. It names orders and connections and says what happened, with no account number. Prices and figures appear only where a reason names them.",
+  "about.copy": "Copy",
+  "about.copied": "Copied",
+  "about.noLog": "No log is being written.",
+  "about.copyFailed": "Could not copy. Select the folder above and copy it by hand."
 }

@@ -13,6 +13,7 @@ mod dto;
 mod journaling;
 #[cfg(test)]
 mod latency_report;
+mod logbook;
 #[cfg(test)]
 mod no_panic_tests;
 mod settings;
@@ -353,6 +354,7 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
                 .as_mut()
                 .map(|kept| kept.build(&exec, &orders, &conditionals, trading))
         };
+        log_orders(&dto.orders);
         // Written with the engine free, so a slow disk holds up only the
         // journal's own users.
         if let (Some(kept), Some(built)) = (journal.as_mut(), built) {
@@ -407,6 +409,28 @@ fn now_seconds() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+/// What the journal did at start, for the log: whether one is kept, what it
+/// brought back, and how many orders the venue has not yet confirmed.
+fn journal_words(report: &journaling::JournalDto) -> String {
+    if !report.kept {
+        return "journal: none kept for this venue".to_string();
+    }
+    let mut words = format!(
+        "journal: restored orders {}, conditional orders {}",
+        report.restored_orders, report.restored_conditionals
+    );
+    if report.unconfirmed > 0 {
+        words.push_str(&format!(
+            ", {} not yet confirmed by the venue",
+            report.unconfirmed
+        ));
+    }
+    if report.damaged.is_some() {
+        words.push_str(", damaged lines set aside");
+    }
+    words
+}
+
 /// Opens the account's journal for today and restores the session from it
 /// (ADR 0023). A journal that cannot be opened is reported to the screens;
 /// the terminal runs on without one.
@@ -419,8 +443,9 @@ fn start_journal(shell: &Shell, base: &std::path::Path) -> Result<(), String> {
             .store(exec.waiting_conditionals(), Ordering::Release);
         opened
     };
+    logbook::info(&journal_words(&report));
     if let Some(error) = &report.error {
-        eprintln!("journal: {error}");
+        logbook::error(&format!("journal: {error}"));
     }
     *lock(&shell.journal)? = kept;
     *lock(&shell.journal_report)? = report;
@@ -702,9 +727,12 @@ fn set_trading_now(shell: &Shell, state: &str) -> Result<(), String> {
     let wanted =
         dto::parse_trading(state).ok_or_else(|| format!("unknown trading state: {state}"))?;
     let mut exec = lock(&shell.exec)?;
-    if exec.set_trading_state(wanted) {
-        lock(&shell.pending)?.trading(dto::trading_label(wanted));
+    if !exec.set_trading_state(wanted) {
+        return Ok(());
     }
+    lock(&shell.pending)?.trading(dto::trading_label(wanted));
+    drop(exec);
+    logbook::info(&format!("trading: {}", dto::trading_label(wanted)));
     Ok(())
 }
 
@@ -1092,10 +1120,10 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                         pending.conditional(ConditionalDto::from(exit));
                     }
                 }
-                Err(e) => eprintln!(
+                Err(e) => logbook::warn(&format!(
                     "execution report for order {} ignored: {e}",
                     report.order_id
-                ),
+                )),
             }
         }
         // An order placed elsewhere on the account (ADR 0024).
@@ -1105,10 +1133,7 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
             let mut exec = lock(&shell.exec)?;
             match exec.on_external(external) {
                 Ok(order) => lock(&shell.pending)?.order(OrderDto::from(&order)),
-                Err(e) => eprintln!(
-                    "order {} placed elsewhere not taken in: {e}",
-                    external.venue_order_id.0
-                ),
+                Err(e) => logbook::warn(&e.to_string()),
             }
         }
         // The execution engine keeps the account: risk checks sells against it.
@@ -1128,13 +1153,22 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
         Event::InstrumentStatus(status) => {
             lock(&shell.data)?.on_instrument_status(status);
             lock(&shell.exec)?.set_instrument_status(status.clone());
-            lock(&shell.pending)?.instrument_status(InstrumentStatusDto::from(status));
+            let dto = InstrumentStatusDto::from(status);
+            logbook::info(&status_words(&dto));
+            lock(&shell.pending)?.instrument_status(dto);
         }
         // Each engine keeps the status of its own connection.
         Event::Connection(status) => {
             let kept_by_data = lock(&shell.data)?.on_connection(status);
             if kept_by_data || lock(&shell.exec)?.on_connection(status) {
-                lock(&shell.pending)?.connection(ConnectionDto::from(status));
+                let dto = ConnectionDto::from(status);
+                let words = connection_words(&dto);
+                if dto.state == "up" {
+                    logbook::info(&words);
+                } else {
+                    logbook::warn(&words);
+                }
+                lock(&shell.pending)?.connection(dto);
             }
         }
         _ => {}
@@ -1142,12 +1176,61 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
     Ok(())
 }
 
+fn connection_words(connection: &ConnectionDto) -> String {
+    match &connection.detail {
+        Some(detail) => format!(
+            "{} connection: {} ({detail})",
+            connection.connection, connection.state
+        ),
+        None => format!("{} connection: {}", connection.connection, connection.state),
+    }
+}
+
+fn status_words(status: &InstrumentStatusDto) -> String {
+    let mut words = format!("{}: {}", status.symbol, status.trading);
+    if status.trading != "trading" {
+        words.push_str(if status.takes_orders {
+            ", the venue holds new orders"
+        } else {
+            ", the venue takes no orders"
+        });
+    }
+    if status.short_sale_restricted {
+        words.push_str(", short sales restricted");
+    }
+    if let Some(reason) = &status.reason {
+        words.push_str(&format!(" ({reason})"));
+    }
+    words
+}
+
+/// Logs each order whose status moved: which order, what it is (never its
+/// price or quantity), and why.
+fn log_orders(orders: &[OrderDto]) {
+    for order in orders {
+        let mut what = format!(
+            "{} {} {} {}",
+            order.symbol, order.side, order.kind, order.time_in_force
+        );
+        if order.external {
+            what.push_str(", placed elsewhere");
+        }
+        logbook::order(
+            order.id,
+            &what,
+            order.status,
+            order.reason.as_deref(),
+            order.unanswered,
+        );
+    }
+}
+
 fn pump(app: AppHandle, events: Receiver<Event>) {
     thread::spawn(move || {
         let shell = app.state::<Shell>();
         for event in events {
             if let Err(e) = route(&shell, &event) {
-                eprintln!("event pump stopped: {e}");
+                logbook::error(&format!("event pump stopped: {e}"));
                 return;
             }
         }
@@ -1162,7 +1245,7 @@ fn settle(app: AppHandle) {
         loop {
             thread::sleep(UNANSWERED_CHECK);
             if let Err(e) = ask_unanswered(&shell, Instant::now()) {
-                eprintln!("asking about unanswered orders stopped: {e}");
+                logbook::error(&format!("asking about unanswered orders stopped: {e}"));
                 return;
             }
         }
@@ -1173,11 +1256,18 @@ fn ask_unanswered(shell: &Shell, now: Instant) -> Result<(), String> {
     let mut exec = lock(&shell.exec)?;
     let asked = exec.ask_unanswered(now, UNANSWERED_AFTER);
     if let Some(problem) = &asked.problem {
-        eprintln!("the venue could not be asked about unanswered orders: {problem}");
+        logbook::warn(&format!(
+            "the venue could not be asked about unanswered orders: {problem}"
+        ));
     }
     if asked.orders.is_empty() {
         return Ok(());
     }
+    let ids: Vec<String> = asked.orders.iter().map(|id| id.0.to_string()).collect();
+    logbook::warn(&format!(
+        "no answer from the venue yet; asked it about orders {}",
+        ids.join(", ")
+    ));
     // Under the engine's lock, as every order update is, so a report the
     // pump applies meanwhile is never overwritten by an older view. The
     // flush marks each from the engine.
@@ -1200,7 +1290,7 @@ fn flush(app: AppHandle) {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("front-end updates stopped: {e}");
+                    logbook::error(&format!("front-end updates stopped: {e}"));
                     return;
                 }
             }
@@ -1244,6 +1334,13 @@ fn connect_engines(bus: &Bus, venue: Venue) -> Result<Shell, AdapterError> {
     })
 }
 
+/// Where the log is written, for Help › About (ADR 0027); `None` before it
+/// starts.
+#[tauri::command]
+fn log_folder() -> Option<String> {
+    logbook::folder().map(|folder| folder.display().to_string())
+}
+
 /// Connects `venue` and runs the terminal until its last window closes.
 pub fn run(venue: Venue) -> ExitCode {
     let bus = Bus::new();
@@ -1251,7 +1348,7 @@ pub fn run(venue: Venue) -> ExitCode {
     let shell = match connect_engines(&bus, venue) {
         Ok(shell) => shell,
         Err(e) => {
-            eprintln!("could not connect to the venue: {e}");
+            logbook::error(&format!("could not connect to the venue: {e}"));
             return ExitCode::FAILURE;
         }
     };
@@ -1265,9 +1362,21 @@ pub fn run(venue: Venue) -> ExitCode {
                 .build(),
         )
         .setup(move |app| {
-            let journal_base = app.path().app_data_dir()?.join("journal");
-            if let Err(e) = start_journal(&shell, &journal_base) {
-                eprintln!("journal: {e}");
+            let data_dir = app.path().app_data_dir()?;
+            logbook::start(data_dir.join("logs"));
+            if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+            {
+                logbook::hide(std::path::Path::new(&home), "~");
+            }
+            logbook::info(&format!(
+                "Fansipan {} started on {} {}, venue {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                shell.venue
+            ));
+            if let Err(e) = start_journal(&shell, &data_dir.join("journal")) {
+                logbook::error(&format!("journal: {e}"));
             }
             app.manage(shell);
             workspace::setup(app)?;
@@ -1291,6 +1400,7 @@ pub fn run(venue: Venue) -> ExitCode {
             cancel_conditional,
             size_for_risk,
             place_bracket,
+            log_folder,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -1304,7 +1414,7 @@ pub fn run(venue: Venue) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("Fansipan could not start: {e}");
+            logbook::error(&format!("Fansipan could not start: {e}"));
             ExitCode::FAILURE
         }
     }
@@ -1410,6 +1520,49 @@ mod tests {
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn the_log_says_what_a_status_and_a_connection_are_in_words() {
+        let halted = InstrumentStatusDto {
+            symbol: "AAPL".into(),
+            trading: "halted",
+            takes_orders: true,
+            short_sale_restricted: true,
+            reason: Some("news pending".into()),
+        };
+        let reconnecting = ConnectionDto {
+            connection: "orders",
+            state: "reconnecting",
+            detail: Some("timed out".into()),
+        };
+
+        assert_eq!(
+            status_words(&halted),
+            "AAPL: halted, the venue holds new orders, short sales restricted (news pending)"
+        );
+        assert_eq!(
+            connection_words(&reconnecting),
+            "orders connection: reconnecting (timed out)"
+        );
+    }
+
+    #[test]
+    fn the_log_says_what_the_journal_brought_back() {
+        let none = journaling::JournalDto::default();
+        let restored = journaling::JournalDto {
+            kept: true,
+            restored_orders: 3,
+            restored_conditionals: 1,
+            unconfirmed: 2,
+            ..journaling::JournalDto::default()
+        };
+
+        assert_eq!(journal_words(&none), "journal: none kept for this venue");
+        assert_eq!(
+            journal_words(&restored),
+            "journal: restored orders 3, conditional orders 1, 2 not yet confirmed by the venue"
+        );
     }
 
     #[test]

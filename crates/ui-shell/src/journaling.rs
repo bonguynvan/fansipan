@@ -80,6 +80,8 @@ pub fn open(
         return (None, JournalDto::default());
     };
     let folder = account_folder(base, venue, &account);
+    // Its name is a hash of the account, which the log does not carry.
+    crate::logbook::hide(&folder, "<account journal>");
     let failed = |e: journal::JournalError| JournalDto {
         error: Some(e.to_string()),
         ..JournalDto::default()

@@ -138,7 +138,7 @@ pub async fn open_window(
     record_window(&store, &label, true)?;
     build_window(&app, &label, window_size(width, height)).map_err(|e| {
         if let Err(undo) = record_window(&store, &label, false) {
-            eprintln!("could not un-record window {label}: {undo}");
+            crate::logbook::warn(&format!("could not un-record window {label}: {undo}"));
         }
         e.to_string()
     })
@@ -191,7 +191,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join(SETTINGS_FILE);
     let (settings, warning) = Settings::load(path);
     if let Some(warning) = warning {
-        eprintln!("{warning}");
+        crate::logbook::warn(&warning);
     }
     let reopen = listed_windows(settings.get(WINDOWS_KEY));
     app.manage(Store(Mutex::new(settings)));
@@ -199,7 +199,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     for label in reopen {
         if let Err(e) = build_window(app.handle(), &label, NEW_WINDOW_SIZE) {
-            eprintln!("could not reopen window {label}: {e}");
+            crate::logbook::warn(&format!("could not reopen window {label}: {e}"));
         }
     }
     Ok(())
@@ -218,7 +218,9 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                 return;
             }
             if let Err(e) = app.emit(FLUSH_EVENT, ()) {
-                eprintln!("could not ask windows to save before quitting: {e}");
+                crate::logbook::warn(&format!(
+                    "could not ask windows to save before quitting: {e}"
+                ));
             }
             let app = app.clone();
             thread::spawn(move || {
@@ -230,7 +232,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             if is_extra_window(window.label()) && !lifecycle.exiting.load(Ordering::SeqCst) =>
         {
             if let Err(e) = forget_window(&app.state::<Store>(), window.label()) {
-                eprintln!("could not forget window {}: {e}", window.label());
+                crate::logbook::warn(&format!("could not forget window {}: {e}", window.label()));
             }
         }
         _ => {}

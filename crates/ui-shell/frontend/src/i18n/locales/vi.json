@@ -432,5 +432,11 @@
   "ticket.suspendedQueued": "{symbol} đang bị đình chỉ giao dịch. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
   "ticket.suspendedQueuedWhy": "{symbol} đang bị đình chỉ giao dịch: {reason}. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
   "ticket.shortRestricted": "Bán khống {symbol} đang bị hạn chế: lệnh bán vượt số đang nắm giữ phải có giá giới hạn.",
-  "ticket.statusReason": "{symbol}: {reason}"
+  "ticket.statusReason": "{symbol}: {reason}",
+  "about.reportTitle": "Báo lỗi",
+  "about.report": "Hãy đính kèm nhật ký hoạt động trong thư mục này: mỗi ngày một tệp, giữ lại một tuần gần nhất. Nhật ký ghi số hiệu lệnh, kết nối và sự việc đã xảy ra, không có số tài khoản. Giá và các con số chỉ xuất hiện khi lý do có nêu.",
+  "about.copy": "Sao chép",
+  "about.copied": "Đã sao chép",
+  "about.noLog": "Không có nhật ký hoạt động nào đang được ghi.",
+  "about.copyFailed": "Không sao chép được. Hãy chọn đường dẫn thư mục ở trên và tự sao chép."
 }
