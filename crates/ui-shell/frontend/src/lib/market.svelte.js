@@ -7,6 +7,7 @@ import { onBatch, startBridge } from "./bridge.js";
 import { inOrder, withConditionals } from "./conditionals.js";
 import { withConnections } from "./connection.js";
 import { withSessions, withTypeNames } from "./sessions.js";
+import { withStatuses } from "./statuses.js";
 import { createSync } from "./sync.js";
 import { TAPE_PRINTS, withPrints, withTapeHistory } from "./tape.js";
 import { tickDecimals, tickTable } from "./ticks.js";
@@ -29,6 +30,8 @@ class Market {
   connections = $state.raw({});
   /** Each market's phase of the day and the order types it takes now, keyed by market. */
   sessions = $state.raw({});
+  /** Each instrument's own status where its venue published one (ADR 0026), keyed by symbol. */
+  statuses = $state.raw({});
   /** Every order type name a market's sessions have given, kept after they move on. */
   typeNames = $state.raw({});
   /** Each symbol's recent prints, oldest first, numbered by its tape. */
@@ -74,6 +77,7 @@ class Market {
     this.connections = withConnections(this.connections, batch.connections);
     this.sessions = withSessions(this.sessions, batch.sessions);
     this.typeNames = withTypeNames(this.typeNames, batch.sessions);
+    this.statuses = withStatuses(this.statuses, batch.statuses ?? []);
     this.tapes = withPrints(this.tapes, batch.prints ?? []);
     if (batch.trading) this.trading = batch.trading;
     if (batch.day) this.day = batch.day;

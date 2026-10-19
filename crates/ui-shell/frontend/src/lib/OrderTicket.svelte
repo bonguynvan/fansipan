@@ -9,6 +9,7 @@
   import { money, price, quantity as formatQuantity } from "./format.js";
   import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { isPriced, orderTypesFor, pickOrderType, typeKey } from "./sessions.js";
+  import { statusNotice } from "./statuses.js";
   import { orderTypeName, phaseName } from "./orderTypes.js";
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
   import { capacityArgs } from "./capacity.js";
@@ -34,6 +35,8 @@
   const exchange = $derived(instrument?.exchange ?? "");
   const session = $derived(exchange ? market.sessions[exchange] : undefined);
   const offered = $derived(orderTypesFor(exchange, market.sessions));
+  // The instrument's own status: halted, suspended, short sales restricted.
+  const notice = $derived(selected ? statusNotice(market.statuses[selected], selected) : null);
 
   // What was typed starts over when the symbol changes: a size or a price
   // meant for one instrument is wrong for the next, whose lots and prices
@@ -214,6 +217,7 @@
   <header>
     <span class="sym">{selected ?? "—"}</span>
   </header>
+  {#if notice}<p class="status" role="status">{t(notice.id, notice.vars)}</p>{/if}
 
   <div class="sides" role="group" aria-label={t("ticket.side")}>
     <button
@@ -429,6 +433,16 @@
   select:focus {
     outline: none;
     border-color: var(--accent);
+  }
+
+  .status {
+    margin: 0;
+    padding: 0.375rem 0.625rem;
+    border-left: 2px solid var(--tone-down);
+    background: color-mix(in srgb, var(--tone-down) 10%, transparent);
+    font-size: var(--text-sm);
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .closed {

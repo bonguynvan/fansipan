@@ -15,9 +15,9 @@ use std::sync::mpsc::Receiver;
 
 use model::{
     AccountState, BookLevel, ClientOrderId, Connection, ConnectionState, ConnectionStatus, Decimal,
-    Depth, ExecutionReport, ExternalOrder, FillId, InstrumentId, InstrumentInfo, NamedOrderType,
-    OrderEvent, OrderType, Position, PriceBand, Quote, SessionPhase, SessionStatus, Side,
-    TickTable, Trade, UnixNanos, VenueOrder, VenueOrderId, VenueOrderState,
+    Depth, ExecutionReport, ExternalOrder, FillId, InstrumentId, InstrumentInfo, InstrumentStatus,
+    NamedOrderType, OrderEvent, OrderType, Position, PriceBand, Quote, SessionPhase, SessionStatus,
+    Side, TickTable, Trade, TradingStatus, UnixNanos, VenueOrder, VenueOrderId, VenueOrderState,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -292,6 +292,25 @@ fn adapter_event() -> BoxedStrategy<Event> {
         }),
         account().prop_map(Event::AccountUpdate),
         session().prop_map(Event::Session),
+        (
+            instrument(),
+            prop_oneof![
+                Just(TradingStatus::Trading),
+                Just(TradingStatus::Halted),
+                Just(TradingStatus::Suspended),
+            ],
+            any::<bool>(),
+            any::<bool>(),
+        )
+            .prop_map(|(id, trading, queued, restricted)| {
+                let status = InstrumentStatus::new(id, trading, UnixNanos(1))
+                    .with_short_sale_restricted(restricted);
+                Event::InstrumentStatus(if queued {
+                    status.taking_orders()
+                } else {
+                    status
+                })
+            }),
         connection().prop_map(Event::Connection),
         // Orders placed elsewhere: a few venue ids, so some repeat.
         (

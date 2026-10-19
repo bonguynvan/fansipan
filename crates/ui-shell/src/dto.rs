@@ -12,8 +12,8 @@ use execution_engine::{
 };
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
-    InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
-    SessionStatus, Side, TimeInForce,
+    InstrumentInfo, InstrumentStatus, NamedOrderType, Order, OrderKind, OrderStatus, OrderType,
+    Quote, SessionPhase, SessionStatus, Side, TimeInForce, TradingStatus,
 };
 use serde::Serialize;
 
@@ -34,6 +34,9 @@ pub struct Snapshot {
     pub connections: Vec<ConnectionDto>,
     /// Each market's phase of the day, for markets the adapter reported.
     pub sessions: Vec<SessionDto>,
+    /// Each instrument's own status, where its venue published one
+    /// (ADR 0026).
+    pub statuses: Vec<InstrumentStatusDto>,
     /// Whether the venue takes amendments; when it does not, no order's
     /// `amendable` matters.
     pub can_amend: bool,
@@ -524,6 +527,36 @@ pub struct SessionDto {
     /// The venue's own name for the phase, e.g. "ATO".
     pub name: Option<String>,
     pub order_types: Vec<OrderTypeDto>,
+}
+
+/// One instrument's status where its venue published one (ADR 0026).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct InstrumentStatusDto {
+    pub symbol: String,
+    /// "trading", "halted", "suspended", or "unknown".
+    pub trading: &'static str,
+    /// Whether the venue takes new orders for it now.
+    pub takes_orders: bool,
+    pub short_sale_restricted: bool,
+    /// The venue's words, shown as written.
+    pub reason: Option<String>,
+}
+
+impl From<&InstrumentStatus> for InstrumentStatusDto {
+    fn from(status: &InstrumentStatus) -> Self {
+        Self {
+            symbol: status.instrument.symbol.clone(),
+            trading: match status.trading {
+                TradingStatus::Trading => "trading",
+                TradingStatus::Halted => "halted",
+                TradingStatus::Suspended => "suspended",
+                _ => "unknown",
+            },
+            takes_orders: status.takes_new_orders(),
+            short_sale_restricted: status.short_sale_restricted,
+            reason: status.reason.clone(),
+        }
+    }
 }
 
 /// An order type the market takes now, under the venue's name for it.

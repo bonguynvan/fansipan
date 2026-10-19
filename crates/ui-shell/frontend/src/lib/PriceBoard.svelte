@@ -12,6 +12,7 @@
   import { chooseSymbol, symbolOf } from "./links.svelte.js";
   import { marketPreset } from "./markets.js";
   import { boardRows, exchangesOf } from "./board.js";
+  import { boardMark } from "./statuses.js";
   import { tickDecimals, tickTable } from "./ticks.js";
   import { phaseName } from "./orderTypes.js";
   import { panelSize } from "./panelSize.svelte.js";
@@ -37,6 +38,7 @@
   const rows = $derived(
     boardRows(market.boards, { exchange, scale }).map((row) => ({
       ...row,
+      mark: boardMark(market.statuses[row.symbol]),
       dp: preset.priceDecimals ?? tickDecimals(tickTable(market.instruments[row.symbol]), scale),
     })),
   );
@@ -84,7 +86,17 @@
   }
 
   const columns = $derived([
-    { type: "text", key: "symbol", header: t("column.symbol"), width: px(64), pinned: "left", cellClass: toneOf("last") },
+    {
+      type: "text",
+      key: "symbol",
+      header: t("column.symbol"),
+      width: px(64),
+      // Grows to a status mark's words rather than cut them off.
+      autoWidth: true,
+      pinned: "left",
+      format: (value, row) => (row.mark ? `${value} · ${t(row.mark)}` : value),
+      cellClass: (value, row) => (row.mark ? "pb-stopped" : toneOf("last")(value, row)),
+    },
     price("ref", t("board.ref"), { cellClass: "pb-ref" }),
     price("ceiling", t("board.ceiling"), { cellClass: "pb-ceiling" }),
     price("floor", t("board.floor"), { cellClass: "pb-floor" }),
@@ -233,6 +245,11 @@
     color: var(--tone-floor);
   }
 
+  /* An instrument that does not trade now, or trades restricted (ADR 0026). */
+  .board :global(.bo-grid .c.pb-stopped) {
+    color: var(--text-dim);
+    font-style: italic;
+  }
   .board :global(.bo-grid .c.pb-ref) {
     color: var(--tone-ref);
   }

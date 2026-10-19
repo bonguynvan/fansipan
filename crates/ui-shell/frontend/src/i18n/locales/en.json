@@ -424,5 +424,18 @@
   "journal.damagedUnconfirmed": "Some lines of the journal could not be read and were set aside, in {path}; everything else was restored. {unconfirmed} open orders are not confirmed: this venue cannot report on them, so check them where the account is held.",
   "order.placedElsewhere": "Placed elsewhere: in the broker's app or another program.",
   "status.unanswered": "{status}, no answer",
-  "order.unansweredReason": "The venue has not answered; the terminal has asked it where this order stands."
+  "order.unansweredReason": "The venue has not answered; the terminal has asked it where this order stands.",
+  "status.short.halted": "halted",
+  "status.short.suspended": "suspended",
+  "status.short.restricted": "short limit",
+  "ticket.halted": "{symbol} is halted. The venue takes no orders for it until it resumes.",
+  "ticket.haltedWhy": "{symbol} is halted: {reason}. The venue takes no orders for it until it resumes.",
+  "ticket.haltedQueued": "{symbol} is halted. The venue holds new orders until it resumes.",
+  "ticket.haltedQueuedWhy": "{symbol} is halted: {reason}. The venue holds new orders until it resumes.",
+  "ticket.suspended": "{symbol} is suspended. The venue takes no orders for it.",
+  "ticket.suspendedWhy": "{symbol} is suspended: {reason}. The venue takes no orders for it.",
+  "ticket.suspendedQueued": "{symbol} is suspended. The venue holds new orders until it trades again.",
+  "ticket.suspendedQueuedWhy": "{symbol} is suspended: {reason}. The venue holds new orders until it trades again.",
+  "ticket.shortRestricted": "Short sales in {symbol} are restricted: a sell beyond your holding needs a limit price.",
+  "ticket.statusReason": "{symbol}: {reason}"
 }

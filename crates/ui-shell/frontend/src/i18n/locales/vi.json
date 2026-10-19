@@ -419,5 +419,18 @@
   "journal.damagedUnconfirmed": "Một số dòng trong nhật ký không đọc được và đã được tách riêng ở {path}; phần còn lại đã được khôi phục. {unconfirmed} lệnh đang mở chưa được xác nhận: sàn này không báo lại được, hãy kiểm tra tại nơi mở tài khoản.",
   "order.placedElsewhere": "Đặt từ nơi khác: ứng dụng của công ty chứng khoán hoặc phần mềm khác.",
   "status.unanswered": "{status}, chưa có phản hồi",
-  "order.unansweredReason": "Sàn chưa phản hồi; phần mềm đã hỏi sàn về trạng thái của lệnh này."
+  "order.unansweredReason": "Sàn chưa phản hồi; phần mềm đã hỏi sàn về trạng thái của lệnh này.",
+  "status.short.halted": "tạm ngừng",
+  "status.short.suspended": "đình chỉ",
+  "status.short.restricted": "hạn chế bán",
+  "ticket.halted": "{symbol} đang tạm ngừng giao dịch. Sàn không nhận lệnh cho mã này cho đến khi giao dịch trở lại.",
+  "ticket.haltedWhy": "{symbol} đang tạm ngừng giao dịch: {reason}. Sàn không nhận lệnh cho mã này cho đến khi giao dịch trở lại.",
+  "ticket.haltedQueued": "{symbol} đang tạm ngừng giao dịch. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
+  "ticket.haltedQueuedWhy": "{symbol} đang tạm ngừng giao dịch: {reason}. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
+  "ticket.suspended": "{symbol} đang bị đình chỉ giao dịch. Sàn không nhận lệnh cho mã này.",
+  "ticket.suspendedWhy": "{symbol} đang bị đình chỉ giao dịch: {reason}. Sàn không nhận lệnh cho mã này.",
+  "ticket.suspendedQueued": "{symbol} đang bị đình chỉ giao dịch. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
+  "ticket.suspendedQueuedWhy": "{symbol} đang bị đình chỉ giao dịch: {reason}. Sàn giữ lệnh mới cho đến khi giao dịch trở lại.",
+  "ticket.shortRestricted": "Bán khống {symbol} đang bị hạn chế: lệnh bán vượt số đang nắm giữ phải có giá giới hạn.",
+  "ticket.statusReason": "{symbol}: {reason}"
 }

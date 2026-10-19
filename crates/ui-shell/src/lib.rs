@@ -43,8 +43,8 @@ pub use execution_engine::RiskLimits;
 use batch::{Batch, BatchDto};
 use dto::{
     AccountDto, BarDto, BoardDto, BracketDto, CancelAllDto, CancelFailureDto, CapacityDto,
-    ConditionalDto, ConnectionDto, DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto,
-    SessionDto, SizingDto, Snapshot,
+    ConditionalDto, ConnectionDto, DayDto, InstrumentDto, InstrumentStatusDto, MarketDto, OrderDto,
+    PrintDto, QuoteDto, SessionDto, SizingDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -234,7 +234,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
     // from `pending` before the state below was read, so it holds nothing
     // newer than this snapshot and the front end can drop it.
     let seq = shell.flushed.load(Ordering::SeqCst);
-    let (instruments, boards, quotes, data_connection, sessions) = {
+    let (instruments, boards, quotes, data_connection, sessions, statuses) = {
         let data = lock(&shell.data)?;
         let known: BTreeSet<&InstrumentId> = data
             .instruments()
@@ -250,6 +250,9 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             data.quotes().map(QuoteDto::from).collect(),
             ConnectionDto::of(Connection::MarketData, data.connection()),
             data.sessions().map(SessionDto::from).collect(),
+            data.instrument_statuses()
+                .map(InstrumentStatusDto::from)
+                .collect(),
         )
     };
     let day = day_of(shell)?;
@@ -281,6 +284,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         account,
         connections: vec![data_connection, orders_connection],
         sessions,
+        statuses,
         can_amend,
         trading,
         day,
@@ -1119,6 +1123,13 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
             lock(&shell.exec)?.set_session(session.clone());
             lock(&shell.pending)?.session(SessionDto::from(session));
         }
+        // An instrument's status too: shown by the data engine, checked by
+        // the execution engine's risk (ADR 0026).
+        Event::InstrumentStatus(status) => {
+            lock(&shell.data)?.on_instrument_status(status);
+            lock(&shell.exec)?.set_instrument_status(status.clone());
+            lock(&shell.pending)?.instrument_status(InstrumentStatusDto::from(status));
+        }
         // Each engine keeps the status of its own connection.
         Event::Connection(status) => {
             let kept_by_data = lock(&shell.data)?.on_connection(status);
@@ -1355,6 +1366,7 @@ mod tests {
             boards: vec![],
             connections: vec![],
             sessions: vec![],
+            statuses: vec![],
             prints: vec![],
             trading: None,
             day: None,
@@ -1398,6 +1410,32 @@ mod tests {
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn a_halted_instrument_reaches_the_screens_and_its_orders_are_denied() {
+        let shell = shell();
+        let halt = model::InstrumentStatus::new(
+            InstrumentId::new(VENUE, "AAPL"),
+            model::TradingStatus::Halted,
+            UnixNanos(1),
+        )
+        .with_reason("news pending");
+
+        route(&shell, &Event::InstrumentStatus(halt)).unwrap();
+
+        let batch = take_pending(&shell);
+        assert_eq!(batch.statuses.len(), 1);
+        assert_eq!(batch.statuses[0].symbol, "AAPL");
+        assert_eq!(batch.statuses[0].trading, "halted");
+        assert!(!batch.statuses[0].takes_orders);
+        assert_eq!(snapshot_of(&shell).unwrap().statuses, batch.statuses);
+        let denied = submit(
+            &shell,
+            new_order(VENUE, &ticket("AAPL", "buy", "1", Some("1"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(denied.status, "denied");
     }
 
     #[test]

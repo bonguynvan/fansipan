@@ -17,8 +17,8 @@ use data_engine::DEFAULT_TAPE_CAPACITY;
 use serde::Serialize;
 
 use crate::dto::{
-    AccountDto, BarDto, BoardDto, ConditionalDto, ConnectionDto, DayDto, InstrumentDto, OrderDto,
-    PrintDto, QuoteDto, SessionDto,
+    AccountDto, BarDto, BoardDto, ConditionalDto, ConnectionDto, DayDto, InstrumentDto,
+    InstrumentStatusDto, OrderDto, PrintDto, QuoteDto, SessionDto,
 };
 
 #[derive(Default)]
@@ -31,6 +31,7 @@ pub struct Batch {
     boards: BTreeMap<String, BoardDto>,
     connections: BTreeMap<&'static str, ConnectionDto>,
     sessions: BTreeMap<String, SessionDto>,
+    statuses: BTreeMap<String, InstrumentStatusDto>,
     prints: BTreeMap<String, VecDeque<PrintDto>>,
     trading: Option<&'static str>,
     conditionals: BTreeMap<u64, ConditionalDto>,
@@ -52,6 +53,8 @@ pub struct BatchDto {
     pub boards: Vec<BoardDto>,
     pub connections: Vec<ConnectionDto>,
     pub sessions: Vec<SessionDto>,
+    /// Instruments whose status changed (ADR 0026).
+    pub statuses: Vec<InstrumentStatusDto>,
     /// Every print since the last batch, by symbol, then oldest first.
     pub prints: Vec<PrintDto>,
     /// The trading state, when it changed since the last batch.
@@ -124,6 +127,10 @@ impl Batch {
         self.sessions.insert(session.market.clone(), session);
     }
 
+    pub fn instrument_status(&mut self, status: InstrumentStatusDto) {
+        self.statuses.insert(status.symbol.clone(), status);
+    }
+
     pub fn print(&mut self, print: PrintDto) {
         let tape = self.prints.entry(print.symbol.clone()).or_default();
         if tape.len() == DEFAULT_TAPE_CAPACITY {
@@ -141,6 +148,7 @@ impl Batch {
             && self.boards.is_empty()
             && self.connections.is_empty()
             && self.sessions.is_empty()
+            && self.statuses.is_empty()
             && self.prints.is_empty()
             && self.trading.is_none()
             && self.conditionals.is_empty()
@@ -158,6 +166,7 @@ impl Batch {
             boards: self.boards.into_values().collect(),
             connections: self.connections.into_values().collect(),
             sessions: self.sessions.into_values().collect(),
+            statuses: self.statuses.into_values().collect(),
             prints: self.prints.into_values().flatten().collect(),
             trading: self.trading,
             day: None,
