@@ -22,7 +22,9 @@ use model::{
     ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side,
 };
-use model::{ExternalOrder, OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderState};
+use model::{
+    ExternalOrder, OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderId, VenueOrderState,
+};
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use emulator::{
@@ -97,6 +99,42 @@ impl fmt::Display for AmendError {
 
 impl std::error::Error for AmendError {}
 
+/// Whether an order placed elsewhere has terms that can stand: a quantity
+/// above zero, a limit order's price above zero, fills no more than the
+/// quantity, and fills that carry their price, without which they could
+/// not be counted and the order would look open when the venue says not.
+fn external_terms(external: &ExternalOrder) -> Result<(), ApplyError> {
+    let invalid = |why: &str| {
+        Err(ApplyError::Invalid(format!(
+            "{}: {why}",
+            external.venue_order_id.0
+        )))
+    };
+    if external.quantity <= Decimal::ZERO {
+        return invalid("its quantity is not above zero");
+    }
+    let limit = external.order_type.kind == OrderKind::Limit;
+    match external.limit_price {
+        Some(price) if price <= Decimal::ZERO => {
+            return invalid("its limit price is not above zero")
+        }
+        None if limit => return invalid("a limit order with no price"),
+        _ => {}
+    }
+    let filled = external.view.filled_quantity;
+    if filled < Decimal::ZERO || filled > external.quantity {
+        return invalid("its fills are outside its quantity");
+    }
+    let priced = external
+        .view
+        .avg_fill_price
+        .is_some_and(|price| price > Decimal::ZERO);
+    if filled > Decimal::ZERO && !priced {
+        return invalid("its fills carry no price");
+    }
+    Ok(())
+}
+
 /// Why an exit waits after a restart until its entry is confirmed.
 const ENTRY_UNCONFIRMED: &str = "its entry is not yet confirmed by the venue since the restart";
 
@@ -143,6 +181,8 @@ pub enum ApplyError {
     /// A fill already applied, typically replayed after a reconnect.
     DuplicateFill(FillId),
     Transition(TransitionError),
+    /// An order placed elsewhere whose terms cannot be taken in.
+    Invalid(String),
 }
 
 impl fmt::Display for ApplyError {
@@ -151,6 +191,7 @@ impl fmt::Display for ApplyError {
             Self::UnknownOrder(id) => write!(f, "report for unknown order {id}"),
             Self::DuplicateFill(fill) => write!(f, "fill {} already applied", fill.0),
             Self::Transition(e) => e.fmt(f),
+            Self::Invalid(why) => write!(f, "order placed elsewhere not taken in: {why}"),
         }
     }
 }
@@ -185,6 +226,11 @@ pub struct ExecutionEngine {
     trading: TradingState,
     limits: RiskLimits,
     orders: BTreeMap<ClientOrderId, Tracked>,
+    /// Each order's id by the venue's, once the venue has given one.
+    by_venue: HashMap<VenueOrderId, ClientOrderId>,
+    /// Orders placed elsewhere whose id the adapter has been told this
+    /// session (ADR 0024).
+    introduced: HashSet<ClientOrderId>,
     next_id: u64,
     /// Conditional orders held in this terminal (emulator.rs).
     conditionals: BTreeMap<ConditionalId, Conditional>,
@@ -207,6 +253,8 @@ impl ExecutionEngine {
             trading: TradingState::Active,
             limits,
             orders: BTreeMap::new(),
+            by_venue: HashMap::new(),
+            introduced: HashSet::new(),
             next_id: 1,
             conditionals: BTreeMap::new(),
             next_conditional: 1,
@@ -922,7 +970,9 @@ impl ExecutionEngine {
         if !tracked.order.status.is_open() {
             tracked.unconfirmed = false;
         }
-        Ok(tracked.order.clone())
+        let order = tracked.order.clone();
+        self.index_venue(&order);
+        Ok(order)
     }
 
     /// Catches an order up with the venue's view of it, read back after a
@@ -1024,7 +1074,9 @@ impl ExecutionEngine {
         // restart, is what confirms one restored unconfirmed; a single
         // fill might follow others the journal never recorded.
         tracked.unconfirmed = false;
-        Ok(tracked.order.clone())
+        let order = tracked.order.clone();
+        self.index_venue(&order);
+        Ok(order)
     }
 
     pub fn order(&self, id: ClientOrderId) -> Option<&Order> {
@@ -1059,23 +1111,24 @@ impl ExecutionEngine {
     /// Takes in an order the venue reports that this terminal did not place
     /// (ADR 0024). The first report of a venue id makes a new order, created
     /// as submitted and caught up to the venue's view, so its status changes
-    /// only in the lifecycle; the adapter is then told its id. A later
-    /// report of the same venue id catches that order up.
+    /// only in the lifecycle; the adapter is then told its id, as it is once
+    /// per session for an order adopted before a restart. A later report of
+    /// the same venue id catches that order up. Terms that cannot stand are
+    /// refused, and an order that cannot be taken in uses no id.
     pub fn on_external(&mut self, external: &ExternalOrder) -> Result<Order, ApplyError> {
+        external_terms(external)?;
         let view = external
             .view
             .clone()
             .with_venue_order_id(external.venue_order_id.clone());
-        let known = self
-            .orders
-            .values()
-            .find(|tracked| tracked.order.venue_order_id.as_ref() == Some(&external.venue_order_id))
-            .map(|tracked| tracked.order.id);
-        if let Some(id) = known {
-            return self.catch_up(id, &view);
+        if let Some(id) = self.by_venue.get(&external.venue_order_id).copied() {
+            let order = self.catch_up(id, &view)?;
+            if self.is_external(id) && self.introduced.insert(id) {
+                self.gate.adopt(&external.venue_order_id, id);
+            }
+            return Ok(order);
         }
         let id = ClientOrderId(self.next_id);
-        self.next_id += 1;
         let order = Order {
             id,
             venue_order_id: None,
@@ -1099,14 +1152,28 @@ impl ExecutionEngine {
                 external: true,
             },
         );
-        let caught_up = self.catch_up(id, &view);
-        if caught_up.is_err() {
-            // A view the lifecycle cannot take leaves nothing behind.
-            self.orders.remove(&id);
-        } else {
-            self.gate.adopt(&external.venue_order_id, id);
+        match self.catch_up(id, &view) {
+            Ok(order) => {
+                self.next_id += 1;
+                self.introduced.insert(id);
+                self.gate.adopt(&external.venue_order_id, id);
+                Ok(order)
+            }
+            Err(e) => {
+                // A view the lifecycle cannot take leaves nothing behind,
+                // its id included.
+                self.orders.remove(&id);
+                self.by_venue.remove(&external.venue_order_id);
+                Err(e)
+            }
         }
-        caught_up
+    }
+
+    /// Records the venue's id for `order`, so its reports find it.
+    fn index_venue(&mut self, order: &Order) {
+        if let Some(venue_id) = &order.venue_order_id {
+            self.by_venue.insert(venue_id.clone(), order.id);
+        }
     }
 
     /// Whether `id` was restored open and the venue has not spoken of it
@@ -1133,6 +1200,9 @@ impl ExecutionEngine {
         for record in restored.orders {
             let id = record.order.id;
             self.next_id = self.next_id.max(id.0.saturating_add(1));
+            if let Some(venue_id) = &record.order.venue_order_id {
+                self.by_venue.insert(venue_id.clone(), id);
+            }
             self.orders.insert(
                 id,
                 Tracked {
@@ -3036,6 +3106,85 @@ mod tests {
         assert!(
             engine.order_record(adopted.id).unwrap().external,
             "and is journaled as placed elsewhere"
+        );
+    }
+
+    #[test]
+    fn a_filled_order_placed_elsewhere_with_no_price_is_refused_and_uses_no_id() {
+        let (mut engine, calls) = engine();
+        let before = engine.next_order_id();
+        let unpriced = ExternalOrder::new(
+            VenueOrderId("W-2".into()),
+            InstrumentId::new("sim", "AAA"),
+            Side::Sell,
+            d("10"),
+            model::OrderType::LIMIT,
+            Some(d("5")),
+            VenueOrder::new(VenueOrderState::Filled, d("10"), None),
+        );
+
+        assert!(matches!(
+            engine.on_external(&unpriced),
+            Err(ApplyError::Invalid(_))
+        ));
+        assert_eq!(engine.next_order_id(), before, "no id used");
+        assert_eq!(engine.orders().count(), 0);
+        assert!(calls.lock().unwrap().adopted.is_empty());
+    }
+
+    #[test]
+    fn terms_that_cannot_stand_are_refused() {
+        let (mut engine, _) = engine();
+        let base = placed_elsewhere(VenueOrderState::Working, "0");
+        let nothing = ExternalOrder::new(
+            base.venue_order_id.clone(),
+            base.instrument.clone(),
+            base.side,
+            d("0"),
+            base.order_type,
+            base.limit_price,
+            base.view.clone(),
+        );
+        let unpriced_limit = ExternalOrder::new(
+            base.venue_order_id.clone(),
+            base.instrument.clone(),
+            base.side,
+            d("10"),
+            model::OrderType::LIMIT,
+            None,
+            base.view.clone(),
+        );
+
+        for bad in [nothing, unpriced_limit] {
+            assert!(matches!(
+                engine.on_external(&bad),
+                Err(ApplyError::Invalid(_))
+            ));
+        }
+        assert_eq!(engine.next_order_id(), 1);
+    }
+
+    #[test]
+    fn an_adopted_order_restored_after_a_restart_is_introduced_again_once() {
+        let (mut before, _) = engine();
+        let adopted = before
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "0"))
+            .unwrap();
+        let (mut after, calls) = engine();
+        after.restore(recorded(&before)).unwrap();
+
+        let first = after
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "2"))
+            .unwrap();
+        after
+            .on_external(&placed_elsewhere(VenueOrderState::Working, "3"))
+            .unwrap();
+
+        assert_eq!(first.id, adopted.id, "the restored order, not a new one");
+        assert_eq!(
+            calls.lock().unwrap().adopted,
+            vec![(VenueOrderId("W-1".into()), adopted.id)],
+            "told once this session"
         );
     }
 

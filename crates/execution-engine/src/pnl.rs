@@ -3,9 +3,10 @@
 //! plus what today's sales brought in, less what today's buys paid, less
 //! the broker's commission and the sell tax.
 //!
-//! "Today" is this session's orders. Fills on orders placed elsewhere reach
-//! the venue's position but not this ledger, so they count as if held
-//! since the reference.
+//! "Today" is this session's orders, adopted ones included (ADR 0024), at
+//! each order's average price. Fills on orders placed elsewhere that the
+//! adapter never reports reach the venue's position but not this ledger,
+//! so they count as if held since the reference.
 
 use model::{Decimal, InstrumentId, TradingCosts};
 

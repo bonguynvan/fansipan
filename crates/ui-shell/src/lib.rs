@@ -1090,6 +1090,8 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
         }
         // An order placed elsewhere on the account (ADR 0024).
         Event::ExternalOrder(external) => {
+            // Adopting takes an order id: reserved on disk first (ADR 0023).
+            journal_changes(shell, false)?;
             let mut exec = lock(&shell.exec)?;
             match exec.on_external(external) {
                 Ok(order) => lock(&shell.pending)?.order(OrderDto::from(&order)),
