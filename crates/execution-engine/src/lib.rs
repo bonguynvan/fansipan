@@ -93,9 +93,6 @@ impl fmt::Display for AmendError {
 
 impl std::error::Error for AmendError {}
 
-/// Whether an amendment could change `order`: a limit order resting on the
-/// venue, with no cancel or other amendment in flight. Whether the venue
-/// amends at all is [`ExecutionEngine::can_amend`].
 /// Whether a risk refusal can pass with time alone: the trader resumes
 /// trading, the session moves on, a position changes, shares settle. A
 /// conditional order whose order meets one of these waits rather than fire.
@@ -109,6 +106,9 @@ fn passes_with_time(reason: &RiskReject) -> bool {
     )
 }
 
+/// Whether an amendment could change `order`: a limit order resting on the
+/// venue, with no cancel or other amendment in flight. Whether the venue
+/// amends at all is [`ExecutionEngine::can_amend`].
 pub fn is_amendable(order: &Order) -> bool {
     amend_refusal(order).is_none()
 }
@@ -290,6 +290,7 @@ impl ExecutionEngine {
             return Err(ConditionalError::NotWaiting(id));
         }
         conditional.status = ConditionalStatus::Cancelled;
+        conditional.blocked = None;
         Ok(conditional.clone())
     }
 
@@ -338,7 +339,11 @@ impl ExecutionEngine {
             let before = conditional.clone();
             if conditional.observe(price, ticks.as_ref()) {
                 fired.push(conditional.id);
-            } else if *conditional != before {
+                continue;
+            }
+            // Back from its trigger, it is no longer held back from anything.
+            conditional.blocked = None;
+            if *conditional != before {
                 changed.push(conditional.clone());
             }
         }
@@ -2063,6 +2068,9 @@ mod tests {
             engine.on_trade(&aaa, d("5")).0.is_empty(),
             "the same reason again is no change"
         );
+        let (recovered, _) = engine.on_trade(&aaa, d("6"));
+        assert_eq!(recovered[0].blocked, None, "back from its trigger");
+        engine.on_trade(&aaa, d("5"));
 
         engine.set_trading_state(TradingState::Active);
         let (fired, orders) = engine.on_trade(&aaa, d("4.9"));
@@ -2070,6 +2078,22 @@ mod tests {
         assert_eq!(fired[0].blocked, None);
         assert_eq!(calls.lock().unwrap().submitted.len(), 1);
         assert_eq!(engine.conditionals().next().unwrap().id, id);
+    }
+
+    #[test]
+    fn a_cancelled_stop_no_longer_says_it_is_held_back() {
+        let (mut engine, _) = engine();
+        let id = engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5"))), None)
+            .unwrap()
+            .id;
+        engine.set_trading_state(TradingState::Halted);
+        engine.on_trade(&InstrumentId::new("sim", "AAA"), d("5"));
+
+        let cancelled = engine.cancel_conditional(id).unwrap();
+
+        assert_eq!(cancelled.status, ConditionalStatus::Cancelled);
+        assert_eq!(cancelled.blocked, None);
     }
 
     #[test]
