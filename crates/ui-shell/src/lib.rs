@@ -370,17 +370,21 @@ fn place_conditional_order(
     ticket: &ConditionalTicket<'_>,
 ) -> Result<ConditionalDto, String> {
     let request = conditional_request(&shell.venue, ticket)?;
-    let mark = lock(&shell.data)?
-        .stats(&request.instrument)
-        .and_then(|stats| stats.last);
+    // Counted before the mark is read, so a trade the mark misses waits on
+    // the execution lock for this placement instead of skipping it.
+    shell.waiting.fetch_add(1, Ordering::AcqRel);
+    let mark =
+        lock(&shell.data).map(|data| data.stats(&request.instrument).and_then(|stats| stats.last));
     let mut exec = lock(&shell.exec)?;
-    let placed = exec
-        .place_conditional(request, mark)
-        .map(|c| ConditionalDto::from(&c))
-        .map_err(|e| e.to_string())?;
+    let placed = mark.and_then(|mark| {
+        exec.place_conditional(request, mark)
+            .map(|c| ConditionalDto::from(&c))
+            .map_err(|e| e.to_string())
+    });
     shell
         .waiting
         .store(exec.waiting_conditionals(), Ordering::Release);
+    let placed = placed?;
     lock(&shell.pending)?.conditional(placed.clone());
     Ok(placed)
 }
@@ -1077,6 +1081,15 @@ mod tests {
             shell.waiting.load(Ordering::Acquire),
             0,
             "trades skip the engine again"
+        );
+        assert!(
+            place_conditional_order(&shell, &buy_above("100")).is_err(),
+            "the last trade, 150, is past it"
+        );
+        assert_eq!(
+            shell.waiting.load(Ordering::Acquire),
+            0,
+            "a refusal is not counted"
         );
     }
 
