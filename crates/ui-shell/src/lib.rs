@@ -29,7 +29,10 @@ use std::time::Duration;
 use adapter_api::{AdapterError, DataClient, ExecutionClient};
 use bus::{Bus, Event};
 use data_engine::DataEngine;
-use execution_engine::{ConditionalId, ConditionalRequest, ExecutionEngine, Offset, Then, Trigger};
+use execution_engine::{
+    ConditionalId, ConditionalRequest, ExecutionEngine, Offset, RiskBudget, SizeRequest, Then,
+    Trigger,
+};
 use model::{ClientOrderId, Connection, Decimal, InstrumentId, NewOrder, Side};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_window_state::StateFlags;
@@ -40,7 +43,7 @@ use batch::{Batch, BatchDto};
 use dto::{
     AccountDto, BarDto, BoardDto, CancelAllDto, CancelFailureDto, CapacityDto, ConditionalDto,
     ConnectionDto, DayDto, InstrumentDto, MarketDto, OrderDto, PrintDto, QuoteDto, SessionDto,
-    Snapshot,
+    SizingDto, Snapshot,
 };
 
 const EVENT_NAME: &str = "bus-batch";
@@ -269,19 +272,26 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
 /// The day's profit and loss now: each instrument held or traded marked
 /// at its last trade, or the middle of its quote before any trade. One
 /// engine is locked at a time, so the lock order is never in question.
+/// What each of `wanted` is worth now: its last trade, else its quote's mid.
+/// One with neither is left out.
+fn marks_of(
+    shell: &Shell,
+    wanted: impl IntoIterator<Item = InstrumentId>,
+) -> Result<HashMap<InstrumentId, Decimal>, String> {
+    let data = lock(&shell.data)?;
+    Ok(wanted
+        .into_iter()
+        .filter_map(|id| {
+            let last = data.stats(&id).and_then(|s| s.last);
+            let mark = last.or_else(|| data.latest(&id).map(model::Quote::mid))?;
+            Some((id, mark))
+        })
+        .collect())
+}
+
 fn day_of(shell: &Shell) -> Result<DayDto, String> {
     let wanted = lock(&shell.exec)?.day_instruments();
-    let marks: HashMap<InstrumentId, Decimal> = {
-        let data = lock(&shell.data)?;
-        wanted
-            .into_iter()
-            .filter_map(|id| {
-                let last = data.stats(&id).and_then(|s| s.last);
-                let mark = last.or_else(|| data.latest(&id).map(model::Quote::mid))?;
-                Some((id, mark))
-            })
-            .collect()
-    };
+    let marks = marks_of(shell, wanted)?;
     let exec = lock(&shell.exec)?;
     Ok(DayDto::of(&exec.day_pnl(|id| marks.get(id).copied())))
 }
@@ -425,6 +435,47 @@ fn fire_conditionals(
         pending.order(OrderDto::from(order));
     }
     Ok(())
+}
+
+/// What a trader asked to size, parsed exactly: `risk` is an amount of the
+/// account's currency, or with `percent` a percentage of its equity.
+struct SizingTicket<'a> {
+    symbol: &'a str,
+    side: &'a str,
+    kind: Option<&'a str>,
+    time_in_force: Option<&'a str>,
+    entry: &'a str,
+    stop: &'a str,
+    risk: &'a str,
+    percent: bool,
+}
+
+fn sizing_of(shell: &Shell, ticket: &SizingTicket<'_>) -> Result<SizingDto, String> {
+    let risk = parse_decimal("risk", ticket.risk)?;
+    let request = SizeRequest {
+        instrument: shell.instrument(ticket.symbol),
+        side: parse_side(ticket.side)?,
+        order_type: parse_type(ticket.kind, ticket.time_in_force, true)?,
+        entry: parse_decimal("entry price", ticket.entry)?,
+        stop: parse_decimal("stop price", ticket.stop)?,
+        budget: if ticket.percent {
+            RiskBudget::PercentOfEquity(risk)
+        } else {
+            RiskBudget::Amount(risk)
+        },
+    };
+    // Equity counts every position, so every position needs its price.
+    let held: Vec<InstrumentId> = lock(&shell.exec)?
+        .account()
+        .positions
+        .iter()
+        .map(|position| position.instrument.clone())
+        .collect();
+    let marks = marks_of(shell, held)?;
+    let exec = lock(&shell.exec)?;
+    exec.size_for_risk(&request, |id| marks.get(id).copied())
+        .map(|sizing| SizingDto::from(&sizing))
+        .map_err(|e| e.to_string())
 }
 
 /// Sets the trader's switch, for every window. Orders already working stay
@@ -591,6 +642,36 @@ fn cancel_all_orders(
 #[tauri::command]
 fn set_trading_state(shell: State<'_, Shell>, state: String) -> Result<(), String> {
     set_trading(&shell, &state)
+}
+
+/// How large an order may be for what the trader will lose if its stop is
+/// hit (ADR 0021); see `SizingTicket` for the fields.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn size_for_risk(
+    shell: State<'_, Shell>,
+    symbol: String,
+    side: String,
+    kind: Option<String>,
+    time_in_force: Option<String>,
+    entry: String,
+    stop: String,
+    risk: String,
+    percent: Option<bool>,
+) -> Result<SizingDto, String> {
+    sizing_of(
+        &shell,
+        &SizingTicket {
+            symbol: &symbol,
+            side: &side,
+            kind: kind.as_deref(),
+            time_in_force: time_in_force.as_deref(),
+            entry: &entry,
+            stop: &stop,
+            risk: &risk,
+            percent: percent.unwrap_or(false),
+        },
+    )
 }
 
 /// Holds an order in this terminal until a trade reaches its trigger
@@ -862,6 +943,7 @@ pub fn run(venue: Venue) -> ExitCode {
             set_trading_state,
             place_conditional,
             cancel_conditional,
+            size_for_risk,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -1091,6 +1173,38 @@ mod tests {
             0,
             "a refusal is not counted"
         );
+    }
+
+    fn size_aapl(stop: &'static str) -> SizingTicket<'static> {
+        SizingTicket {
+            symbol: "AAPL",
+            side: "buy",
+            kind: Some("limit"),
+            time_in_force: Some("day"),
+            entry: "150",
+            stop,
+            risk: "500",
+            percent: false,
+        }
+    }
+
+    #[test]
+    fn a_size_from_risk_is_parsed_exactly_and_says_what_is_wrong() {
+        let shell = shell();
+        announce(&shell, &profile("us"));
+
+        let sizing = sizing_of(&shell, &size_aapl("145")).unwrap();
+        assert_eq!(
+            (sizing.budget.as_str(), sizing.loss_per_unit.as_str()),
+            ("500", "5")
+        );
+        assert!(sizing.at_risk.parse::<Decimal>().unwrap() <= Decimal::from(500));
+
+        assert_eq!(
+            sizing_of(&shell, &size_aapl("155")).unwrap_err(),
+            "a buy's stop must be below its entry"
+        );
+        assert!(sizing_of(&shell, &size_aapl("abc")).is_err());
     }
 
     #[test]

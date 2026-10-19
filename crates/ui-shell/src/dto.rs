@@ -7,8 +7,8 @@
 
 use data_engine::{Bar, DataEngine, Print};
 use execution_engine::{
-    is_amendable, Bound, Conditional, ConditionalStatus, DayPnl, Offset, OrderCapacity, Then,
-    TradingState, Trigger,
+    is_amendable, Bound, Conditional, ConditionalStatus, DayPnl, Offset, OrderCapacity, Sizing,
+    Then, TradingState, Trigger,
 };
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
@@ -673,6 +673,41 @@ impl From<&AccountState> for AccountDto {
     }
 }
 
+fn bound_label(bound: Bound) -> &'static str {
+    match bound {
+        Bound::BuyingPower => "buying_power",
+        Bound::Holding => "holding",
+        Bound::OrderSize => "order_size",
+        Bound::OrderValue => "order_value",
+    }
+}
+
+/// How large an order may be for what the trader will lose (ADR 0021).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct SizingDto {
+    pub quantity: String,
+    /// What one unit loses if the stop is hit, costs included.
+    pub loss_per_unit: String,
+    /// The money the budget allows to lose.
+    pub budget: String,
+    /// What `quantity` loses if the stop is hit.
+    pub at_risk: String,
+    /// What allows less than the budget, as `CapacityDto::bound` names it.
+    pub capped_by: Option<&'static str>,
+}
+
+impl From<&Sizing> for SizingDto {
+    fn from(sizing: &Sizing) -> Self {
+        Self {
+            quantity: number(sizing.quantity),
+            loss_per_unit: number(sizing.loss_per_unit),
+            budget: number(sizing.budget),
+            at_risk: number(sizing.at_risk),
+            capped_by: sizing.capped_by.map(bound_label),
+        }
+    }
+}
+
 /// How large one order could be now (ADR 0016), for the ticket.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct CapacityDto {
@@ -695,12 +730,7 @@ impl From<&OrderCapacity> for CapacityDto {
     fn from(capacity: &OrderCapacity) -> Self {
         Self {
             max_quantity: capacity.max_quantity.map(|q| q.to_string()),
-            bound: capacity.bound.map(|bound| match bound {
-                Bound::BuyingPower => "buying_power",
-                Bound::Holding => "holding",
-                Bound::OrderSize => "order_size",
-                Bound::OrderValue => "order_value",
-            }),
+            bound: capacity.bound.map(bound_label),
             buying_power: capacity.buying_power.amount.to_string(),
             buying_power_estimated: capacity.buying_power.estimated,
             sellable: capacity.sellable.map(|s| s.to_string()),

@@ -9,6 +9,7 @@ pub mod gate;
 pub mod lifecycle;
 pub mod pnl;
 pub mod risk;
+pub mod sizing;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -31,6 +32,7 @@ pub use gate::Gate;
 pub use lifecycle::TransitionError;
 pub use pnl::DayPnl;
 pub use risk::{Cleared, RiskLimits, RiskReject, TradingState};
+pub use sizing::{RiskBudget, SizeRequest, Sizing, SizingError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CancelError {
@@ -457,6 +459,36 @@ impl ExecutionEngine {
             working_buys: self.working_buys_value(),
             working_sells: self.working_sells(instrument),
             limits: &self.limits,
+        })
+    }
+
+    /// How large an order may be for what the trader will lose if its stop
+    /// is hit (ADR 0021), within what [`capacity`](Self::capacity) allows
+    /// for it at its entry. `mark` prices the positions when the budget is
+    /// a percentage of equity.
+    pub fn size_for_risk(
+        &self,
+        request: &SizeRequest,
+        mark: impl Fn(&InstrumentId) -> Option<Decimal>,
+    ) -> Result<Sizing, SizingError> {
+        let limit_price = (request.order_type.kind == OrderKind::Limit).then_some(request.entry);
+        let capacity = self.capacity(
+            &request.instrument,
+            request.side,
+            request.order_type,
+            limit_price,
+        );
+        let equity = matches!(request.budget, RiskBudget::PercentOfEquity(_))
+            .then(|| sizing::equity(&self.account, mark));
+        sizing::size(&sizing::Inputs {
+            side: request.side,
+            order_type: request.order_type,
+            entry: request.entry,
+            stop: request.stop,
+            budget: request.budget,
+            equity,
+            info: self.instruments.get(&request.instrument),
+            capacity: &capacity,
         })
     }
 
@@ -2078,6 +2110,47 @@ mod tests {
         assert_eq!(fired[0].blocked, None);
         assert_eq!(calls.lock().unwrap().submitted.len(), 1);
         assert_eq!(engine.conditionals().next().unwrap().id, id);
+    }
+
+    #[test]
+    fn a_size_from_risk_stays_within_this_terminals_limits_and_prices_equity_at_the_marks() {
+        let (mut engine, _) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine.set_account(
+            AccountState::new(
+                d("900"),
+                vec![model::Position::new(aaa.clone(), d("20"), d("4"))],
+            )
+            .with_buying_power(d("900")),
+        );
+        let request = SizeRequest {
+            instrument: aaa.clone(),
+            side: Side::Buy,
+            order_type: model::OrderType::LIMIT,
+            entry: d("5"),
+            stop: d("4"),
+            budget: RiskBudget::Amount(d("100")),
+        };
+
+        let capped = engine.size_for_risk(&request, |_| None).unwrap();
+        assert_eq!(
+            (capped.quantity, capped.capped_by),
+            (d("10"), Some(Bound::OrderSize)),
+            "a hundred fit the budget; one order takes ten"
+        );
+
+        // Equity is 900 cash and 20 at 5: 1% of 1,000 is 10, so ten at a
+        // loss of 1 each.
+        let percent = SizeRequest {
+            budget: RiskBudget::PercentOfEquity(d("1")),
+            ..request
+        };
+        let sized = engine.size_for_risk(&percent, |_| Some(d("5"))).unwrap();
+        assert_eq!((sized.budget, sized.quantity), (d("10"), d("10")));
+        assert_eq!(
+            engine.size_for_risk(&percent, |_| None),
+            Err(SizingError::EquityUnknown(aaa))
+        );
     }
 
     #[test]

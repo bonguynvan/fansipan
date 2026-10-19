@@ -137,7 +137,11 @@ fn forbids_short(info: Option<&InstrumentInfo>) -> bool {
 /// The largest quantity at most `raw` that the market takes in one order of
 /// `order_type`: whole lots; or, when not one lot fits, an odd lot if the
 /// market takes this type as one. Whole units where no lot is set.
-fn to_market(raw: Decimal, info: Option<&InstrumentInfo>, order_type: OrderType) -> Decimal {
+pub(crate) fn to_market(
+    raw: Decimal,
+    info: Option<&InstrumentInfo>,
+    order_type: OrderType,
+) -> Decimal {
     let raw = raw.max(Decimal::ZERO);
     let units = raw.floor();
     let Some(info) = info.filter(|info| info.lot_size > Decimal::ZERO) else {
