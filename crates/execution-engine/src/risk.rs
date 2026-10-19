@@ -1,6 +1,8 @@
 //! Pre-trade checks. Runs before any order reaches an ExecutionClient.
 //!
-//! Two families: this terminal's own limits ([`check`]), and the market's
+//! First the trader's own switch ([`check_trading_state`]: halted, or
+//! taking only orders that reduce a position). Then two families: this
+//! terminal's own limits ([`check`]), and the market's
 //! rules as the adapter published them: for the instrument
 //! ([`check_market_rules`]: lot size, tick size, daily price band), for the
 //! moment ([`check_session`]: the order types its market takes in the
@@ -56,10 +58,29 @@ impl Cleared<NewOrder> {
     }
 }
 
-/// What the checks read besides the order: this terminal's limits, and
-/// the market's rules, session, and holding as the adapter and the venue
-/// last reported them.
+/// Whether this terminal sends new orders: the trader's kill switch, as
+/// NautilusTrader's risk engine has it. Cancels are never stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TradingState {
+    /// Orders go out as the other checks allow.
+    #[default]
+    Active,
+    /// Only orders that shrink a position: a sell no larger than the long
+    /// position, a buy no larger than the short one, less what working
+    /// orders on that side already take.
+    Reducing,
+    /// No new order and no amendment.
+    Halted,
+}
+
+/// What the checks read besides the order: this terminal's switch and
+/// limits, and the market's rules, session, and holding as the adapter and
+/// the venue last reported them.
 pub(crate) struct Context<'a> {
+    pub trading: TradingState,
+    /// False for an amendment that does not raise the order's quantity,
+    /// which reducing lets through: it can only shrink what is working.
+    pub adds: bool,
     pub limits: &'a RiskLimits,
     pub info: Option<&'a InstrumentInfo>,
     pub band: Option<&'a PriceBand>,
@@ -68,13 +89,15 @@ pub(crate) struct Context<'a> {
     /// Shares the working sell orders take, other than the order being
     /// amended.
     pub working_sells: Decimal,
+    /// The same for working buy orders.
+    pub working_buys: Decimal,
     /// What has filled of the order being amended, which its new terms do
     /// not sell again; zero for a new order.
     pub filled: Decimal,
 }
 
-/// Every check, in order: this terminal's limits, then the market's rules,
-/// session, and the holding a sell may take.
+/// Every check, in order: the trading state, this terminal's limits, then
+/// the market's rules, session, and the holding a sell may take.
 pub(crate) fn clear(
     terms: NewOrder,
     context: &Context<'_>,
@@ -86,6 +109,14 @@ pub(crate) fn clear(
         terms.order_type,
         terms.limit_price,
     );
+    let working = match terms.side {
+        Side::Buy => context.working_buys,
+        Side::Sell => context.working_sells,
+    };
+    let held = context.position.map_or(Decimal::ZERO, |p| p.quantity);
+    if context.adds || context.trading == TradingState::Halted {
+        check_trading_state(&selling, context.trading, held, working)?;
+    }
     check(&terms, context.limits)?;
     check_market_rules(&terms, context.info, context.band)?;
     check_session(&terms, context.session)?;
@@ -148,6 +179,13 @@ pub enum RiskReject {
         phase: String,
         accepted: Vec<String>,
     },
+    /// The trader halted trading in this terminal.
+    TradingHalted,
+    /// The terminal takes only orders that reduce a position, and this one
+    /// would not, or would trade more than `closable`.
+    ReducingOnly {
+        closable: Decimal,
+    },
     /// A sell beyond what may be sold now, where short selling is
     /// forbidden: the settled shares less those already in working sells.
     NotEnoughToSell {
@@ -206,6 +244,14 @@ impl fmt::Display for RiskReject {
                 "{market} is in {phase} and takes only {} now",
                 accepted.join(", ")
             ),
+            Self::TradingHalted => f.write_str("trading is halted in this terminal"),
+            Self::ReducingOnly { closable } if closable.is_zero() => f.write_str(
+                "only orders that reduce a position are taken now, and this one would not",
+            ),
+            Self::ReducingOnly { closable } => write!(
+                f,
+                "only orders that reduce a position are taken now: at most {closable}"
+            ),
             Self::NotEnoughToSell {
                 sellable,
                 held,
@@ -216,6 +262,38 @@ impl fmt::Display for RiskReject {
                 "only {sellable} can be sold now: {held} held, {unsettled} not settled yet, \
                  {working} in working sell orders"
             ),
+        }
+    }
+}
+
+/// The trader's switch against an order. `held` is the position in its
+/// instrument, negative when short; `working` is what working orders on the
+/// order's side already take.
+pub fn check_trading_state(
+    order: &NewOrder,
+    state: TradingState,
+    held: Decimal,
+    working: Decimal,
+) -> Result<(), RiskReject> {
+    match state {
+        TradingState::Active => Ok(()),
+        TradingState::Halted => Err(RiskReject::TradingHalted),
+        TradingState::Reducing => {
+            let open = match order.side {
+                Side::Sell => held,
+                Side::Buy => -held,
+            };
+            // Saturating: sizes from outside cannot be trusted to subtract,
+            // and nothing closable is the safe answer.
+            let closable = open
+                .checked_sub(working)
+                .unwrap_or(Decimal::ZERO)
+                .max(Decimal::ZERO);
+            if order.quantity <= closable {
+                Ok(())
+            } else {
+                Err(RiskReject::ReducingOnly { closable })
+            }
         }
     }
 }

@@ -331,5 +331,16 @@
   "about.version": "Phiên bản {version}",
   "about.tagline": "Phần mềm giao dịch mã nguồn mở: một lõi chung cho mọi công ty chứng khoán, mỗi công ty kết nối qua một bộ chuyển đổi (adapter) riêng.",
   "about.license": "Phát hành theo giấy phép LGPL-3.0 trở lên.",
-  "about.close": "Đóng"
+  "about.close": "Đóng",
+
+  "menu.trading": "Trạng thái giao dịch",
+  "hotkey.action.halt": "Tạm dừng giao dịch",
+  "trading.state.active": "Đang giao dịch",
+  "trading.state.reducing": "Chỉ giảm vị thế",
+  "trading.state.halted": "Tạm dừng",
+  "trading.banner.reducing": "Chỉ giảm vị thế",
+  "trading.banner.halted": "Đã tạm dừng giao dịch",
+  "trading.notice.active": "Đã giao dịch lại: lệnh được gửi đi nếu qua kiểm tra rủi ro.",
+  "trading.notice.reducing": "Chỉ giảm vị thế: chỉ lệnh đóng bớt vị thế được gửi đi. Lệnh đang chờ vẫn giữ nguyên.",
+  "trading.notice.halted": "Đã tạm dừng giao dịch: lệnh mới và lệnh sửa bị từ chối. Lệnh đang chờ vẫn giữ nguyên; dùng Giao dịch › Hủy mọi lệnh đang chờ để hủy chúng."
 }

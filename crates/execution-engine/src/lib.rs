@@ -23,7 +23,7 @@ use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use gate::Gate;
 pub use lifecycle::TransitionError;
-pub use risk::{Cleared, RiskLimits, RiskReject};
+pub use risk::{Cleared, RiskLimits, RiskReject, TradingState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CancelError {
@@ -150,6 +150,7 @@ impl Tracked {
 
 pub struct ExecutionEngine {
     gate: Gate,
+    trading: TradingState,
     limits: RiskLimits,
     orders: BTreeMap<ClientOrderId, Tracked>,
     next_id: u64,
@@ -168,6 +169,7 @@ impl ExecutionEngine {
     pub fn new(client: Box<dyn ExecutionClient>, limits: RiskLimits) -> Self {
         Self {
             gate: Gate::new(client),
+            trading: TradingState::Active,
             limits,
             orders: BTreeMap::new(),
             next_id: 1,
@@ -177,6 +179,20 @@ impl ExecutionEngine {
             account: AccountState::default(),
             connection: None,
         }
+    }
+
+    /// Whether this terminal sends new orders now (risk's first check).
+    pub fn trading_state(&self) -> TradingState {
+        self.trading
+    }
+
+    /// Halts trading, limits it to orders that reduce a position, or lets
+    /// it run again. Returns whether the state changed. Orders already
+    /// working stay working: halting cancels nothing by itself.
+    pub fn set_trading_state(&mut self, state: TradingState) -> bool {
+        let changed = self.trading != state;
+        self.trading = state;
+        changed
     }
 
     /// Records an instrument's lot and tick rules for risk to apply.
@@ -246,11 +262,16 @@ impl ExecutionEngine {
     /// What this session's working sell orders in `instrument` have yet to
     /// sell.
     fn working_sells(&self, instrument: &InstrumentId) -> Decimal {
+        self.working(instrument, Side::Sell)
+    }
+
+    /// What the open orders on `side` in `instrument` may still trade.
+    fn working(&self, instrument: &InstrumentId, side: Side) -> Decimal {
         self.orders
             .values()
             .filter(|t| {
                 let o = &t.order;
-                &o.instrument == instrument && o.side == Side::Sell && o.status.is_open()
+                &o.instrument == instrument && o.side == side && o.status.is_open()
             })
             .map(Tracked::exposure)
             // Saturating, not overflowing: sizes from outside cannot be
@@ -338,18 +359,27 @@ impl ExecutionEngine {
         amending: Option<&Order>,
     ) -> Result<Cleared<NewOrder>, RiskReject> {
         let info = self.instruments.get(&terms.instrument);
-        let working = self.working_sells(&terms.instrument);
-        let (filled, working_sells) = match amending {
-            Some(order) => (order.filled_quantity, working - order.remaining()),
-            None => (Decimal::ZERO, working),
+        // Working orders other than the one being amended, which its new
+        // terms replace.
+        let others = |side: Side| {
+            let all = self.working(&terms.instrument, side);
+            amending
+                .filter(|order| order.side == side)
+                .map_or(all, |order| {
+                    all.checked_sub(order.remaining()).unwrap_or(Decimal::ZERO)
+                })
         };
+        let filled = amending.map_or(Decimal::ZERO, |order| order.filled_quantity);
         let context = risk::Context {
+            trading: self.trading,
+            adds: amending.is_none_or(|order| terms.quantity > order.quantity),
             limits: &self.limits,
             info,
             band: self.bands.get(&terms.instrument),
             session: info.and_then(|info| self.sessions.get(&info.exchange)),
             position: self.account.position(&terms.instrument),
-            working_sells,
+            working_sells: others(Side::Sell),
+            working_buys: others(Side::Buy),
             filled,
         };
         risk::clear(terms, &context)
@@ -1573,5 +1603,123 @@ mod tests {
 
         assert_eq!(order.status, OrderStatus::Filled);
         assert_eq!((order.quantity, order.filled_quantity), (d("4"), d("4")));
+    }
+
+    fn sell(quantity: &str) -> NewOrder {
+        NewOrder::limit(
+            InstrumentId::new("sim", "AAA"),
+            Side::Sell,
+            d(quantity),
+            d("5"),
+        )
+    }
+
+    /// An engine holding `held` shares of AAA (negative: short).
+    fn holding(held: &str) -> (ExecutionEngine, Arc<Mutex<Calls>>) {
+        let (mut engine, calls) = engine();
+        let position = model::Position::new(InstrumentId::new("sim", "AAA"), d(held), d("5"));
+        engine.set_account(AccountState::new(d("1000"), vec![position]));
+        (engine, calls)
+    }
+
+    #[test]
+    fn a_halted_terminal_denies_new_orders_and_still_cancels() {
+        let (mut engine, calls) = engine();
+        let working = engine.submit(buy("1")).id;
+
+        assert!(engine.set_trading_state(TradingState::Halted));
+        let denied = engine.submit(buy("1"));
+
+        assert_eq!(denied.status, OrderStatus::Denied);
+        assert_eq!(
+            denied.reason.as_deref(),
+            Some(RiskReject::TradingHalted.to_string().as_str())
+        );
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+        assert!(engine.cancel(working).is_ok());
+    }
+
+    #[test]
+    fn a_halted_terminal_denies_amendments() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("1")).id;
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+        engine.set_trading_state(TradingState::Halted);
+
+        assert_eq!(
+            engine.amend(id, d("2"), d("5")),
+            Err(AmendError::Denied(RiskReject::TradingHalted))
+        );
+        assert!(calls.lock().unwrap().amended.is_empty());
+    }
+
+    #[test]
+    fn reducing_takes_only_what_closes_a_position() {
+        let (mut engine, _) = holding("6");
+        engine.set_trading_state(TradingState::Reducing);
+
+        assert_eq!(engine.submit(buy("1")).status, OrderStatus::Denied);
+        assert_eq!(engine.submit(sell("7")).status, OrderStatus::Denied);
+        assert_eq!(engine.submit(sell("4")).status, OrderStatus::Submitted);
+        // Four of the six are already in a working sell.
+        assert_eq!(
+            engine.submit(sell("3")).reason,
+            Some(RiskReject::ReducingOnly { closable: d("2") }.to_string())
+        );
+        assert_eq!(engine.submit(sell("2")).status, OrderStatus::Submitted);
+    }
+
+    #[test]
+    fn reducing_lets_a_buy_cover_a_short_and_no_more() {
+        let (mut engine, _) = holding("-3");
+        engine.set_trading_state(TradingState::Reducing);
+
+        assert_eq!(engine.submit(sell("1")).status, OrderStatus::Denied);
+        assert_eq!(engine.submit(buy("4")).status, OrderStatus::Denied);
+        assert_eq!(engine.submit(buy("3")).status, OrderStatus::Submitted);
+    }
+
+    #[test]
+    fn reducing_still_lets_a_working_order_shrink_but_not_grow() {
+        let (mut engine, _) = engine();
+        let accepted = |engine: &mut ExecutionEngine, venue: &str| {
+            let id = engine.submit(buy("4")).id;
+            engine
+                .apply(&report(
+                    id,
+                    OrderEvent::Accepted {
+                        venue_order_id: VenueOrderId(venue.into()),
+                    },
+                ))
+                .unwrap();
+            id
+        };
+        let shrinking = accepted(&mut engine, "V1");
+        let growing = accepted(&mut engine, "V2");
+        engine.set_trading_state(TradingState::Reducing);
+
+        assert!(engine.amend(shrinking, d("2"), d("5")).is_ok());
+        assert!(matches!(
+            engine.amend(growing, d("5"), d("5")),
+            Err(AmendError::Denied(RiskReject::ReducingOnly { .. }))
+        ));
+    }
+
+    #[test]
+    fn active_again_takes_orders_as_before() {
+        let (mut engine, _) = engine();
+        engine.set_trading_state(TradingState::Halted);
+
+        assert!(!engine.set_trading_state(TradingState::Halted));
+        assert!(engine.set_trading_state(TradingState::Active));
+        assert_eq!(engine.trading_state(), TradingState::Active);
+        assert_eq!(engine.submit(buy("1")).status, OrderStatus::Submitted);
     }
 }

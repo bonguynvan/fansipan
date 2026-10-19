@@ -32,6 +32,7 @@ pub struct Batch {
     connections: BTreeMap<&'static str, ConnectionDto>,
     sessions: BTreeMap<String, SessionDto>,
     prints: BTreeMap<String, VecDeque<PrintDto>>,
+    trading: Option<&'static str>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -51,9 +52,15 @@ pub struct BatchDto {
     pub sessions: Vec<SessionDto>,
     /// Every print since the last batch, by symbol, then oldest first.
     pub prints: Vec<PrintDto>,
+    /// The trading state, when it changed since the last batch.
+    pub trading: Option<&'static str>,
 }
 
 impl Batch {
+    pub fn trading(&mut self, state: &'static str) {
+        self.trading = Some(state);
+    }
+
     pub fn quote(&mut self, quote: QuoteDto) {
         self.quotes.insert(quote.symbol.clone(), quote);
     }
@@ -108,6 +115,7 @@ impl Batch {
             && self.connections.is_empty()
             && self.sessions.is_empty()
             && self.prints.is_empty()
+            && self.trading.is_none()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -122,6 +130,7 @@ impl Batch {
             connections: self.connections.into_values().collect(),
             sessions: self.sessions.into_values().collect(),
             prints: self.prints.into_values().flatten().collect(),
+            trading: self.trading,
         }
     }
 }

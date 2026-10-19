@@ -9,6 +9,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { registerAction } from "./hotkeys.svelte.js";
 import { registerMenu, registerMenuItem } from "./menus.js";
 import { THEMES, setTheme, theme } from "./theme.svelte.js";
+import { market } from "./market.svelte.js";
+import { TRADING_STATES, setTradingState } from "./tradingActions.js";
 import { SCALES, setScale, ui } from "./ui.svelte.js";
 import { availableLocales, i18n, setLocale, t } from "../i18n/i18n.svelte.js";
 import { activePage } from "../workspace/pages.js";
@@ -149,6 +151,18 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
   for (const action of ["orders.cancel-symbol", "orders.cancel-all"]) {
     registerMenuItem("trade", { group: "cancel", action });
   }
+  registerMenuItem("trade", { group: "switch", action: "trading.halt" });
+  registerMenuItem("trade", {
+    group: "switch",
+    title: "menu.trading",
+    choices: () =>
+      TRADING_STATES.map((state) => ({
+        id: state,
+        label: t(`trading.state.${state}`),
+        checked: market.trading === state,
+        pick: () => setTradingState(state),
+      })),
+  });
 
   for (const action of [
     "workspace.next-panel",

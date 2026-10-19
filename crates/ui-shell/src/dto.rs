@@ -6,7 +6,7 @@
 //! display. Timestamps cross as milliseconds, which a JS number holds exactly.
 
 use data_engine::{Bar, DataEngine, Print};
-use execution_engine::{is_amendable, Bound, OrderCapacity};
+use execution_engine::{is_amendable, Bound, OrderCapacity, TradingState};
 use model::{
     AccountState, BookLevel, Connection, ConnectionState, ConnectionStatus, Decimal, InstrumentId,
     InstrumentInfo, NamedOrderType, Order, OrderKind, OrderStatus, OrderType, Quote, SessionPhase,
@@ -32,6 +32,28 @@ pub struct Snapshot {
     /// Whether the venue takes amendments; when it does not, no order's
     /// `amendable` matters.
     pub can_amend: bool,
+    /// The trader's switch: "active", "reducing", or "halted".
+    pub trading: &'static str,
+}
+
+/// The trading state as the front end names it.
+pub fn trading_label(state: TradingState) -> &'static str {
+    match state {
+        TradingState::Active => "active",
+        TradingState::Reducing => "reducing",
+        TradingState::Halted => "halted",
+    }
+}
+
+/// The trading state the front end asked for, or None for a name it does
+/// not have.
+pub fn parse_trading(raw: &str) -> Option<TradingState> {
+    match raw {
+        "active" => Some(TradingState::Active),
+        "reducing" => Some(TradingState::Reducing),
+        "halted" => Some(TradingState::Halted),
+        _ => None,
+    }
 }
 
 /// Which market the terminal is wired to, so the front end can pick

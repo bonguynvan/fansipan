@@ -233,13 +233,14 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
             data.sessions().map(SessionDto::from).collect(),
         )
     };
-    let (orders, orders_connection, account, can_amend) = {
+    let (orders, orders_connection, account, can_amend, trading) = {
         let mut exec = lock(&shell.exec)?;
         (
             exec.orders().map(OrderDto::from).collect(),
             ConnectionDto::of(Connection::Orders, exec.connection()),
             AccountDto::from(exec.account()),
             exec.can_amend(),
+            dto::trading_label(exec.trading_state()),
         )
     };
     Ok(Snapshot {
@@ -253,6 +254,7 @@ fn snapshot_of(shell: &Shell) -> Result<Snapshot, String> {
         connections: vec![data_connection, orders_connection],
         sessions,
         can_amend,
+        trading,
     })
 }
 
@@ -282,6 +284,18 @@ fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
         .map_err(|e| e.to_string())?;
     lock(&shell.pending)?.order(order.clone());
     Ok(order)
+}
+
+/// Sets the trader's switch, for every window. Orders already working stay
+/// working: halting cancels nothing by itself.
+fn set_trading(shell: &Shell, state: &str) -> Result<(), String> {
+    let wanted =
+        dto::parse_trading(state).ok_or_else(|| format!("unknown trading state: {state}"))?;
+    let mut exec = lock(&shell.exec)?;
+    if exec.set_trading_state(wanted) {
+        lock(&shell.pending)?.trading(dto::trading_label(wanted));
+    }
+    Ok(())
 }
 
 /// Cancels every open order, or every open order in `symbol`.
@@ -428,6 +442,14 @@ fn cancel_all_orders(
     symbol: Option<String>,
 ) -> Result<CancelAllDto, String> {
     cancel_all(&shell, symbol.as_deref())
+}
+
+/// Halts trading, takes only orders that reduce a position, or lets it run
+/// again: `active`, `reducing`, or `halted`. Orders already working are
+/// not touched.
+#[tauri::command]
+fn set_trading_state(shell: State<'_, Shell>, state: String) -> Result<(), String> {
+    set_trading(&shell, &state)
 }
 
 /// A resting limit order's new total quantity and price. The new terms pass
@@ -656,6 +678,7 @@ pub fn run(venue: Venue) -> ExitCode {
             cancel_order,
             cancel_all_orders,
             amend_order,
+            set_trading_state,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
@@ -731,6 +754,7 @@ mod tests {
             connections: vec![],
             sessions: vec![],
             prints: vec![],
+            trading: None,
         })
     }
 
@@ -769,6 +793,27 @@ mod tests {
         let batch = take_pending(&shell);
         let order = batch.orders.iter().find(|o| o.id == placed.id).unwrap();
         assert_eq!(order.status, "filled");
+    }
+
+    #[test]
+    fn halting_reaches_every_window_and_stops_new_orders() {
+        let shell = shell();
+        let order = || new_order(VENUE, &ticket("AAPL", "buy", "1", Some("1.00"))).unwrap();
+        let working = submit(&shell, order()).unwrap();
+        take_pending(&shell);
+
+        set_trading(&shell, "halted").unwrap();
+        let batch = take_pending(&shell);
+        let denied = submit(&shell, order()).unwrap();
+
+        assert_eq!(batch.trading, Some("halted"));
+        assert_eq!(snapshot_of(&shell).unwrap().trading, "halted");
+        assert_eq!(denied.status, "denied");
+        assert!(
+            cancel(&shell, working.id).is_ok(),
+            "cancels are never stopped"
+        );
+        assert!(set_trading(&shell, "paused").is_err());
     }
 
     #[test]

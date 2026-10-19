@@ -20,6 +20,19 @@ function onTicket(side) {
   };
 }
 
+/** The trader's switch, as the shell names its states. */
+export const TRADING_STATES = ["active", "reducing", "halted"];
+
+/**
+ * Sets the switch for every window: halted refuses new orders and
+ * amendments, reducing takes only orders that close a position. Working
+ * orders stay working; cancels are never stopped.
+ */
+export async function setTradingState(state) {
+  await invoke("set_trading_state", { state });
+  return { id: `trading.notice.${state}` };
+}
+
 /** How long a first press of cancel-all waits for the second. */
 export const CONFIRM_MS = 2000;
 
@@ -77,6 +90,13 @@ export function registerTradingActions() {
       const symbol = activeTicket()?.symbol();
       return symbol ? cancelAllOrders(symbol) : NO_TICKET;
     },
+  });
+  // A halt cancels nothing, so it needs no second press.
+  registerAction({
+    id: "trading.halt",
+    title: "hotkey.action.halt",
+    defaultKey: "Ctrl+Shift+H",
+    run: () => setTradingState("halted"),
   });
   registerAction({
     id: "orders.cancel-all",

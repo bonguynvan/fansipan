@@ -36,6 +36,8 @@ class Market {
   info = $state.raw(null);
   /** Whether the venue takes amendments; fixed for the session. */
   canAmend = $state(false);
+  /** The trader's switch, for every window: "active", "reducing", or "halted". */
+  trading = $state("active");
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
@@ -58,6 +60,7 @@ class Market {
     this.sessions = withSessions(this.sessions, batch.sessions);
     this.typeNames = withTypeNames(this.typeNames, batch.sessions);
     this.tapes = withPrints(this.tapes, batch.prints ?? []);
+    if (batch.trading) this.trading = batch.trading;
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */
@@ -117,6 +120,7 @@ export function startMarket() {
       sync.snapshot(snap);
       market.info = snap.market ?? null;
       market.canAmend = Boolean(snap.can_amend);
+      market.trading = snap.trading ?? "active";
       infoIn(market.info);
       await loadTrends(snap.quotes.map((q) => q.symbol));
       market.ready = true;

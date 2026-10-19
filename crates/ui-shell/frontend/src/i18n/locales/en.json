@@ -336,5 +336,16 @@
   "about.version": "Version {version}",
   "about.tagline": "An open-source trading terminal: one core for every broker, each connected through an adapter of its own.",
   "about.license": "Licensed under LGPL-3.0-or-later.",
-  "about.close": "Close"
+  "about.close": "Close",
+
+  "menu.trading": "Trading state",
+  "hotkey.action.halt": "Halt trading",
+  "trading.state.active": "Active",
+  "trading.state.reducing": "Reduce only",
+  "trading.state.halted": "Halted",
+  "trading.banner.reducing": "Reduce only",
+  "trading.banner.halted": "Trading halted",
+  "trading.notice.active": "Trading resumed: orders go out as risk allows.",
+  "trading.notice.reducing": "Reduce only: only orders that close a position go out. Working orders stay.",
+  "trading.notice.halted": "Trading halted: new orders and amendments are refused. Working orders stay; Trade › Cancel every working order cancels them."
 }

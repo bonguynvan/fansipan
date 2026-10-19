@@ -1,5 +1,33 @@
-import { describe, expect, it } from "vitest";
-import { CONFIRM_MS, cancelNotice, twoPress } from "./tradingActions.js";
+import { describe, expect, it, vi } from "vitest";
+import english from "../i18n/locales/en.json";
+import { CONFIRM_MS, TRADING_STATES, cancelNotice, setTradingState, twoPress } from "./tradingActions.js";
+
+const invoked = [];
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: async (command, args) => {
+    invoked.push({ command, args });
+    return null;
+  },
+}));
+
+describe("the trading switch", () => {
+  it("asks the shell for the state and says what it means", async () => {
+    invoked.length = 0;
+
+    const notice = await setTradingState("halted");
+
+    expect(invoked).toEqual([{ command: "set_trading_state", args: { state: "halted" } }]);
+    expect(notice).toEqual({ id: "trading.notice.halted" });
+  });
+
+  it("has words for every state, and a banner for each one that refuses orders", () => {
+    for (const state of TRADING_STATES) {
+      expect(english[`trading.state.${state}`]).toBeTruthy();
+      expect(english[`trading.notice.${state}`]).toBeTruthy();
+      if (state !== "active") expect(english[`trading.banner.${state}`]).toBeTruthy();
+    }
+  });
+});
 
 const order = (id) => ({ id, status: "cancelling" });
 

@@ -103,8 +103,13 @@
       <span class="dim">{t("app.equity")}</span>
       <span class="num">{money(equity, market.info?.currency)}</span>
     </div>
-    <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
-      <span class="dot"></span>{status}
+    <div class="right">
+      {#if market.trading !== "active"}
+        <span class="trading {market.trading}" role="status">{t(`trading.banner.${market.trading}`)}</span>
+      {/if}
+      <div class="status {market.ready ? connection.state : 'connecting'}" title={statusDetail} role="status">
+        <span class="dot"></span>{status}
+      </div>
     </div>
   </header>
   {/if}
@@ -187,8 +192,37 @@
     }
   }
 
-  .status {
+  .right {
     justify-self: end;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  /* The trader's switch, when it is not "active": the one thing on the bar
+     that says orders will be refused. */
+  .trading {
+    padding: 0.1875rem 0.625rem;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    border: 1px solid currentColor;
+    border-radius: 999rem;
+  }
+
+  .trading.halted {
+    color: var(--down);
+    background: color-mix(in srgb, var(--down) 14%, transparent);
+  }
+
+  .trading.reducing {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .status {
     display: flex;
     gap: 0.5rem;
     align-items: center;
