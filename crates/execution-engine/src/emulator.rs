@@ -88,6 +88,10 @@ pub struct Conditional {
     /// The price a trade must reach to fire it now; `None` for a trailing
     /// stop that has seen no price yet.
     pub level: Option<Decimal>,
+    /// Why it reached its trigger and still waits: its order could not go
+    /// out then (trading halted, a session that takes no such order, a
+    /// holding not yet settled), and it tries again on the next trade.
+    pub blocked: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +103,11 @@ pub enum ConditionalError {
     Unknown(ConditionalId),
     /// Already fired or cancelled.
     NotWaiting(ConditionalId),
+    /// The last trade is already past the trigger, so it would fire at
+    /// once, at whatever the market gives.
+    AlreadyMet {
+        last: Decimal,
+    },
 }
 
 impl fmt::Display for ConditionalError {
@@ -112,6 +121,9 @@ impl fmt::Display for ConditionalError {
             Self::Unknown(id) => write!(f, "no conditional order {id}"),
             Self::NotWaiting(id) => {
                 write!(f, "conditional order {id} already fired or was cancelled")
+            }
+            Self::AlreadyMet { last } => {
+                write!(f, "the last trade, {last}, is already past the trigger")
             }
         }
     }
@@ -155,6 +167,14 @@ impl Conditional {
         if let Then::Limit(price) = request.then {
             positive(price)?;
         }
+        let met = match (request.trigger, mark) {
+            (Trigger::AtOrBelow(at), Some(last)) => last <= at,
+            (Trigger::AtOrAbove(at), Some(last)) => last >= at,
+            _ => false,
+        };
+        if let (true, Some(last)) = (met, mark) {
+            return Err(ConditionalError::AlreadyMet { last });
+        }
         let mut conditional = Self {
             id,
             instrument: request.instrument,
@@ -165,6 +185,7 @@ impl Conditional {
             status: ConditionalStatus::Waiting,
             best: None,
             level,
+            blocked: None,
         };
         if let Some(mark) = mark {
             conditional.trail(mark, ticks);
@@ -183,6 +204,8 @@ impl Conditional {
             (None, _) => price,
         };
         self.best = Some(best);
+        // A level that cannot be worked out keeps the last one: a stop that
+        // still fires protects more than one that stops watching.
         self.level = trailing_level(best, offset, self.side, ticks).or(self.level);
     }
 

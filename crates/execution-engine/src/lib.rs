@@ -96,6 +96,19 @@ impl std::error::Error for AmendError {}
 /// Whether an amendment could change `order`: a limit order resting on the
 /// venue, with no cancel or other amendment in flight. Whether the venue
 /// amends at all is [`ExecutionEngine::can_amend`].
+/// Whether a risk refusal can pass with time alone: the trader resumes
+/// trading, the session moves on, a position changes, shares settle. A
+/// conditional order whose order meets one of these waits rather than fire.
+fn passes_with_time(reason: &RiskReject) -> bool {
+    matches!(
+        reason,
+        RiskReject::TradingHalted
+            | RiskReject::ReducingOnly { .. }
+            | RiskReject::TypeNotTaken { .. }
+            | RiskReject::NotEnoughToSell { .. }
+    )
+}
+
 pub fn is_amendable(order: &Order) -> bool {
     amend_refusal(order).is_none()
 }
@@ -280,6 +293,15 @@ impl ExecutionEngine {
         Ok(conditional.clone())
     }
 
+    /// How many conditional orders are waiting, in every instrument; while
+    /// none are, trades need not reach the engine.
+    pub fn waiting_conditionals(&self) -> usize {
+        self.conditionals
+            .values()
+            .filter(|c| c.status == ConditionalStatus::Waiting)
+            .count()
+    }
+
     /// Every conditional order this session, oldest first.
     pub fn conditionals(&self) -> impl Iterator<Item = &Conditional> {
         self.conditionals.values()
@@ -294,6 +316,13 @@ impl ExecutionEngine {
         instrument: &InstrumentId,
         price: Decimal,
     ) -> (Vec<Conditional>, Vec<Order>) {
+        let watched = self
+            .conditionals
+            .values()
+            .any(|c| &c.instrument == instrument && c.status == ConditionalStatus::Waiting);
+        if !watched {
+            return (Vec::new(), Vec::new());
+        }
         let ticks = self
             .instruments
             .get(instrument)
@@ -318,10 +347,26 @@ impl ExecutionEngine {
             let Some(conditional) = self.conditionals.get(&id).cloned() else {
                 continue;
             };
-            let order = self.submit(self.released(&conditional));
-            let status = ConditionalStatus::Fired(order.id);
+            let order = self.released(&conditional);
+            // A reason that passes with time keeps it waiting, so a stop is
+            // not spent where its order could not go out yet.
+            let blocked = match self.clear(order.clone(), None) {
+                Err(reason) if passes_with_time(&reason) => Some(reason.to_string()),
+                _ => None,
+            };
+            if let Some(reason) = blocked {
+                if let Some(held) = self.conditionals.get_mut(&id) {
+                    if held.blocked.as_deref() != Some(reason.as_str()) {
+                        held.blocked = Some(reason);
+                        changed.push(held.clone());
+                    }
+                }
+                continue;
+            }
+            let order = self.submit(order);
             if let Some(held) = self.conditionals.get_mut(&id) {
-                held.status = status;
+                held.status = ConditionalStatus::Fired(order.id);
+                held.blocked = None;
                 changed.push(held.clone());
             }
             orders.push(order);
@@ -1974,21 +2019,6 @@ mod tests {
     }
 
     #[test]
-    fn a_fired_conditional_meets_risk_when_it_fires() {
-        let (mut engine, calls) = engine();
-        engine
-            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5"))), None)
-            .unwrap();
-        engine.set_trading_state(TradingState::Halted);
-
-        let (changed, orders) = engine.on_trade(&InstrumentId::new("sim", "AAA"), d("5"));
-
-        assert_eq!(orders[0].status, OrderStatus::Denied);
-        assert_eq!(changed[0].status, ConditionalStatus::Fired(orders[0].id));
-        assert!(calls.lock().unwrap().submitted.is_empty());
-    }
-
-    #[test]
     fn a_trailing_stop_reports_its_moves_and_other_instruments_leave_it_be() {
         let (mut engine, _) = engine();
         let aaa = InstrumentId::new("sim", "AAA");
@@ -2010,6 +2040,72 @@ mod tests {
             "nothing moved"
         );
         assert_eq!(engine.on_trade(&aaa, d("11")).1.len(), 1);
+    }
+
+    #[test]
+    fn a_stop_that_cannot_go_out_yet_waits_and_says_why() {
+        let (mut engine, calls) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        let id = engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5"))), None)
+            .unwrap()
+            .id;
+        engine.set_trading_state(TradingState::Halted);
+
+        let (held, orders) = engine.on_trade(&aaa, d("5"));
+        assert!(orders.is_empty(), "no order is sent, so none is denied");
+        assert_eq!(held[0].status, ConditionalStatus::Waiting);
+        assert_eq!(
+            held[0].blocked.as_deref(),
+            Some(RiskReject::TradingHalted.to_string().as_str())
+        );
+        assert!(
+            engine.on_trade(&aaa, d("5")).0.is_empty(),
+            "the same reason again is no change"
+        );
+
+        engine.set_trading_state(TradingState::Active);
+        let (fired, orders) = engine.on_trade(&aaa, d("4.9"));
+        assert_eq!(fired[0].status, ConditionalStatus::Fired(orders[0].id));
+        assert_eq!(fired[0].blocked, None);
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+        assert_eq!(engine.conditionals().next().unwrap().id, id);
+    }
+
+    #[test]
+    fn a_stop_whose_order_can_never_go_out_fires_and_is_denied() {
+        let (mut engine, _) = engine();
+        // Twenty is above this engine's per-order limit of ten.
+        let request = ConditionalRequest {
+            quantity: d("20"),
+            ..stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5")))
+        };
+        engine.place_conditional(request, None).unwrap();
+
+        let (fired, orders) = engine.on_trade(&InstrumentId::new("sim", "AAA"), d("5"));
+
+        assert_eq!(orders[0].status, OrderStatus::Denied);
+        assert_eq!(fired[0].status, ConditionalStatus::Fired(orders[0].id));
+    }
+
+    #[test]
+    fn a_trigger_the_market_has_already_passed_is_refused() {
+        let (mut engine, _) = engine();
+
+        assert!(matches!(
+            engine.place_conditional(
+                stop(Trigger::AtOrBelow(d("10")), Then::Marketable),
+                Some(d("9"))
+            ),
+            Err(ConditionalError::AlreadyMet { .. })
+        ));
+        assert!(engine
+            .place_conditional(
+                stop(Trigger::AtOrBelow(d("10")), Then::Marketable),
+                Some(d("11"))
+            )
+            .is_ok());
+        assert_eq!(engine.waiting_conditionals(), 1);
     }
 
     #[test]

@@ -66,6 +66,8 @@ pub struct ConditionalDto {
     pub best: Option<String>,
     /// The price a trade must reach to fire it now.
     pub level: Option<String>,
+    /// Why it reached its trigger and waits still.
+    pub blocked: Option<String>,
 }
 
 impl From<&Conditional> for ConditionalDto {
@@ -100,6 +102,7 @@ impl From<&Conditional> for ConditionalDto {
             order_id,
             best: c.best.map(number),
             level: c.level.map(number),
+            blocked: c.blocked.clone(),
         }
     }
 }

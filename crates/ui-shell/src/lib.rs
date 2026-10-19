@@ -20,7 +20,7 @@ mod workspace;
 use std::collections::{BTreeSet, HashMap};
 use std::mem;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -142,6 +142,9 @@ pub struct Shell {
     pending: Mutex<Batch>,
     /// Number of the last batch taken from `pending`.
     flushed: AtomicU64,
+    /// Conditional orders waiting, so a trade takes the execution lock only
+    /// when one may fire.
+    waiting: AtomicUsize,
 }
 
 /// Engines only become poisoned if a bug panicked mid-update; the shell
@@ -375,6 +378,9 @@ fn place_conditional_order(
         .place_conditional(request, mark)
         .map(|c| ConditionalDto::from(&c))
         .map_err(|e| e.to_string())?;
+    shell
+        .waiting
+        .store(exec.waiting_conditionals(), Ordering::Release);
     lock(&shell.pending)?.conditional(placed.clone());
     Ok(placed)
 }
@@ -385,8 +391,36 @@ fn cancel_conditional_order(shell: &Shell, id: u64) -> Result<ConditionalDto, St
         .cancel_conditional(ConditionalId(id))
         .map(|c| ConditionalDto::from(&c))
         .map_err(|e| e.to_string())?;
+    shell
+        .waiting
+        .store(exec.waiting_conditionals(), Ordering::Release);
     lock(&shell.pending)?.conditional(cancelled.clone());
     Ok(cancelled)
+}
+
+/// Moves trailing stops and fires what a trade in `instrument` at `price`
+/// reaches.
+fn fire_conditionals(
+    shell: &Shell,
+    instrument: &InstrumentId,
+    price: Decimal,
+) -> Result<(), String> {
+    let mut exec = lock(&shell.exec)?;
+    let (changed, orders) = exec.on_trade(instrument, price);
+    shell
+        .waiting
+        .store(exec.waiting_conditionals(), Ordering::Release);
+    if changed.is_empty() && orders.is_empty() {
+        return Ok(());
+    }
+    let mut pending = lock(&shell.pending)?;
+    for conditional in &changed {
+        pending.conditional(ConditionalDto::from(conditional));
+    }
+    for order in &orders {
+        pending.order(OrderDto::from(order));
+    }
+    Ok(())
 }
 
 /// Sets the trader's switch, for every window. Orders already working stay
@@ -658,16 +692,8 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                 pending.board(board);
             }
             // Conditional orders watch the tape (ADR 0020).
-            let mut exec = lock(&shell.exec)?;
-            let (changed, orders) = exec.on_trade(&trade.instrument, trade.price);
-            if !changed.is_empty() || !orders.is_empty() {
-                let mut pending = lock(&shell.pending)?;
-                for conditional in &changed {
-                    pending.conditional(ConditionalDto::from(conditional));
-                }
-                for order in &orders {
-                    pending.order(OrderDto::from(order));
-                }
+            if shell.waiting.load(Ordering::Acquire) > 0 {
+                fire_conditionals(shell, &trade.instrument, trade.price)?;
             }
         }
         // Reference data goes to both engines: the data engine to show it,
@@ -788,6 +814,7 @@ fn connect_engines(bus: &Bus, venue: Venue) -> Result<Shell, AdapterError> {
         exec: Mutex::new(exec),
         pending: Mutex::new(Batch::default()),
         flushed: AtomicU64::new(0),
+        waiting: AtomicUsize::new(0),
     })
 }
 
@@ -1046,6 +1073,11 @@ mod tests {
         let order = fired.order_id.expect("the order it sent");
         assert!(batch.orders.iter().any(|o| o.id == order));
         assert_eq!(snapshot_of(&shell).unwrap().conditionals[0].status, "fired");
+        assert_eq!(
+            shell.waiting.load(Ordering::Acquire),
+            0,
+            "trades skip the engine again"
+        );
     }
 
     #[test]
@@ -1062,10 +1094,12 @@ mod tests {
             (placed.trigger, placed.price.as_deref(), placed.then),
             ("at_or_above", Some("100"), "marketable")
         );
+        assert_eq!(shell.waiting.load(Ordering::Acquire), 1);
         assert_eq!(
             cancel_conditional_order(&shell, placed.id).unwrap().status,
             "cancelled"
         );
+        assert_eq!(shell.waiting.load(Ordering::Acquire), 0);
         assert!(cancel_conditional_order(&shell, placed.id).is_err());
     }
 
