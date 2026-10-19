@@ -10,16 +10,18 @@ pub mod lifecycle;
 pub mod pnl;
 pub mod recovery;
 pub mod risk;
+pub mod settling;
 pub mod sizing;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use adapter_api::{AdapterError, ExecutionClient};
 use bus::BusHandle;
 use model::{
-    AccountState, CancelOrder, ClientOrderId, Connection, ConnectionStatus, Decimal,
-    ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
+    AccountState, CancelOrder, ClientOrderId, Connection, ConnectionState, ConnectionStatus,
+    Decimal, ExecutionReport, FillId, InstrumentId, InstrumentInfo, NewOrder, Order, OrderEvent,
     OrderStatus, PriceBand, SessionStatus, Side,
 };
 use model::{
@@ -210,9 +212,20 @@ struct Tracked {
     unconfirmed: bool,
     /// Placed elsewhere and adopted (ADR 0024).
     external: bool,
+    /// Waiting on the venue's answer to a command (ADR 0025).
+    waiting: Option<settling::Waiting>,
 }
 
 impl Tracked {
+    /// Moves the order to `next`. A new status ends any wait for an answer,
+    /// so a later command waits afresh.
+    fn set(&mut self, next: Order) {
+        if next.status != self.order.status {
+            self.waiting = None;
+        }
+        self.order = next;
+    }
+
     /// What the order may still sell or buy: its remaining quantity, or more
     /// while an amendment for more is in flight, since the venue may take it.
     fn exposure(&self) -> Decimal {
@@ -804,6 +817,7 @@ impl ExecutionEngine {
                 amending_to: None,
                 unconfirmed: false,
                 external: false,
+                waiting: None,
             },
         );
         order
@@ -888,7 +902,7 @@ impl ExecutionEngine {
             ..current
         };
         if let Some(tracked) = self.orders.get_mut(&id) {
-            tracked.order = pending.clone();
+            tracked.set(pending.clone());
             tracked.amending_to = Some(quantity);
         }
         Ok(pending)
@@ -917,10 +931,10 @@ impl ExecutionEngine {
             ))
             .map_err(CancelError::Adapter)?;
 
-        tracked.order = Order {
+        tracked.set(Order {
             status: OrderStatus::PendingCancel,
             ..tracked.order.clone()
-        };
+        });
         Ok(tracked.order.clone())
     }
 
@@ -967,7 +981,7 @@ impl ExecutionEngine {
         if next.status != OrderStatus::PendingAmend {
             tracked.amending_to = None;
         }
-        tracked.order = next;
+        tracked.set(next);
         // An end the venue reports is final, whatever the journal missed.
         if !tracked.order.status.is_open() {
             tracked.unconfirmed = false;
@@ -989,6 +1003,10 @@ impl ExecutionEngine {
     /// says so.
     fn catch_up(&mut self, id: ClientOrderId, venue: &VenueOrder) -> Result<Order, ApplyError> {
         let tracked = self.orders.get(&id).ok_or(ApplyError::UnknownOrder(id))?;
+        let cancel_waited_out = tracked
+            .waiting
+            .is_some_and(|waiting| waiting.cancel_waited_out())
+            && tracked.order.status == OrderStatus::PendingCancel;
         let step = |order: &Order, event: OrderEvent| {
             lifecycle::apply(order, &event).map_err(ApplyError::Transition)
         };
@@ -1055,6 +1073,11 @@ impl ExecutionEngine {
                     limit_price: next.limit_price,
                 })
             }
+            // Asked about a cancel it never answered, more than once, the
+            // venue still holds the order: the cancel did not take.
+            VenueOrderState::Working if cancel_waited_out => Some(OrderEvent::CancelRejected {
+                reason: "the venue never answered the cancel and still holds the order".into(),
+            }),
             _ => None,
         };
         if let Some(end) = end.filter(|_| next.status.is_open()) {
@@ -1071,7 +1094,7 @@ impl ExecutionEngine {
         if next.status != OrderStatus::PendingAmend {
             tracked.amending_to = None;
         }
-        tracked.order = next;
+        tracked.set(next);
         // The venue's whole view of the order, after a reconnect or a
         // restart, is what confirms one restored unconfirmed; a single
         // fill might follow others the journal never recorded.
@@ -1157,6 +1180,7 @@ impl ExecutionEngine {
                 amending_to: None,
                 unconfirmed: false,
                 external: true,
+                waiting: None,
             },
         );
         match self.catch_up(id, &view) {
@@ -1215,6 +1239,7 @@ impl ExecutionEngine {
                 Tracked {
                     unconfirmed: record.order.status.is_open(),
                     external: record.external,
+                    waiting: None,
                     order: record.order,
                     applied_fills: record.applied_fills.into_iter().collect(),
                     amending_to: record.amending_to,
@@ -1266,6 +1291,63 @@ impl ExecutionEngine {
         }
     }
 
+    /// Asks the venue where each order stands that has waited `after` or
+    /// more for an answer to a command: sent and not acknowledged, or a
+    /// cancel or an amendment asked for and not answered (ADR 0025). The
+    /// answers arrive as catch-up reports and settle the orders in the
+    /// lifecycle. Each wait is asked about up to [`settling::ASKS`] times,
+    /// `after` apart; an order asked about is marked unanswered until its
+    /// status moves. Nothing is asked while the orders connection is down,
+    /// and every wait starts again when it is back, since a reconnect
+    /// catches every order up anyway. An order restored and not yet
+    /// confirmed is left to the restart's own asking.
+    pub fn ask_unanswered(&mut self, now: Instant, after: Duration) -> settling::Asked {
+        let down = self.connection.as_ref().is_some_and(is_down);
+        let mut asking = Vec::new();
+        for tracked in self.orders.values_mut() {
+            let status = tracked.order.status;
+            // A restored order is asked about at start and stays marked
+            // unconfirmed until the venue speaks of it (ADR 0023).
+            if !settling::awaits_answer(status) || tracked.unconfirmed {
+                tracked.waiting = None;
+                continue;
+            }
+            let waiting = match tracked.waiting {
+                Some(waiting) if waiting.status == status => waiting,
+                _ => {
+                    tracked.waiting = Some(settling::Waiting::new(status, now));
+                    continue;
+                }
+            };
+            if !down && waiting.due(now, after) {
+                tracked.waiting = Some(waiting.asked_at(now));
+                asking.push(RecoverOrder::new(
+                    tracked.order.id,
+                    tracked.order.venue_order_id.clone(),
+                    tracked.order.instrument.clone(),
+                ));
+            }
+        }
+        if asking.is_empty() {
+            return settling::Asked::default();
+        }
+        let orders = asking.iter().map(|order| order.order_id).collect();
+        // A venue that cannot say leaves the orders marked unanswered,
+        // which is what the trader needs to see.
+        let problem = self.gate.recover(asking).and_then(Result::err);
+        settling::Asked { orders, problem }
+    }
+
+    /// Whether `id` has waited for an answer to a command and been asked
+    /// about since, with no answer yet (ADR 0025).
+    pub fn is_unanswered(&self, id: ClientOrderId) -> bool {
+        self.orders.get(&id).is_some_and(|tracked| {
+            tracked
+                .waiting
+                .is_some_and(|waiting| waiting.unanswered(tracked.order.status))
+        })
+    }
+
     /// Whether the adapter's venue takes amendments at all. Which orders
     /// one could change is [`is_amendable`].
     pub fn can_amend(&mut self) -> bool {
@@ -1278,7 +1360,13 @@ impl ExecutionEngine {
         if status.connection != Connection::Orders {
             return false;
         }
+        let was_down = self.connection.as_ref().is_some_and(is_down);
         self.connection = Some(status.clone());
+        if was_down && !is_down(status) {
+            for tracked in self.orders.values_mut() {
+                tracked.waiting = None;
+            }
+        }
         true
     }
 
@@ -1287,6 +1375,14 @@ impl ExecutionEngine {
     pub fn connection(&self) -> Option<&ConnectionStatus> {
         self.connection.as_ref()
     }
+}
+
+/// Whether the orders connection is lost, so the venue cannot be asked.
+fn is_down(status: &ConnectionStatus) -> bool {
+    matches!(
+        status.state,
+        ConnectionState::Reconnecting | ConnectionState::Down
+    )
 }
 
 /// The price of the fills a stream missed: the one that makes the order's
@@ -3250,6 +3346,271 @@ mod tests {
             vec![(VenueOrderId("W-1".into()), adopted.id)],
             "told once this session"
         );
+    }
+
+    const WAIT: Duration = Duration::from_secs(15);
+
+    fn answer(id: ClientOrderId, state: VenueOrderState) -> ExecutionReport {
+        report(
+            id,
+            OrderEvent::Snapshot(
+                VenueOrder::new(state, d("0"), None).with_venue_order_id(VenueOrderId("V1".into())),
+            ),
+        )
+    }
+
+    #[test]
+    fn a_sent_order_with_no_answer_is_asked_about_and_settled_by_the_answer() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+
+        assert!(
+            engine.ask_unanswered(start, WAIT).orders.is_empty(),
+            "the wait starts"
+        );
+        assert!(engine
+            .ask_unanswered(start + WAIT / 2, WAIT)
+            .orders
+            .is_empty());
+        let asked = engine.ask_unanswered(start + WAIT, WAIT);
+
+        assert_eq!(asked.orders, vec![id]);
+        assert!(asked.problem.is_none());
+        assert_eq!(calls.lock().unwrap().recovered[0].order_id, id);
+        assert!(engine.is_unanswered(id));
+
+        let order = engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+
+        assert_eq!(order.status, OrderStatus::Accepted);
+        assert!(!engine.is_unanswered(id), "answered");
+    }
+
+    #[test]
+    fn a_late_acknowledgement_also_ends_the_wait() {
+        let (mut engine, _) = engine();
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+        engine.ask_unanswered(start + WAIT, WAIT);
+
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+
+        assert!(!engine.is_unanswered(id));
+        assert!(
+            engine
+                .ask_unanswered(start + WAIT * 3, WAIT)
+                .orders
+                .is_empty(),
+            "a working order waits on nothing"
+        );
+    }
+
+    /// A working order with a cancel the venue has not answered, asked
+    /// about `asks` times.
+    fn cancel_asked(asks: u32) -> (ExecutionEngine, ClientOrderId, Instant) {
+        let (mut engine, _) = engine();
+        let id = engine.submit(buy("4")).id;
+        engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+        engine.cancel(id).unwrap();
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+        for ask in 1..=asks {
+            engine.ask_unanswered(start + WAIT * ask, WAIT);
+        }
+        (engine, id, start)
+    }
+
+    #[test]
+    fn a_cancel_the_venue_never_answered_is_refused_once_it_has_waited_out() {
+        let (mut engine, id, _) = cancel_asked(settling::CANCEL_ASKS);
+
+        let order = engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+
+        assert_eq!(order.status, OrderStatus::Accepted, "working again");
+        assert!(order
+            .reason
+            .is_some_and(|why| why.contains("never answered")));
+        assert!(!engine.is_unanswered(id));
+    }
+
+    #[test]
+    fn a_first_answer_that_still_shows_the_order_working_leaves_the_cancel_waiting() {
+        let (mut engine, id, _) = cancel_asked(1);
+
+        let order = engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+
+        assert_eq!(order.status, OrderStatus::PendingCancel, "it may be queued");
+        assert!(engine.is_unanswered(id));
+        let cancelled = engine
+            .apply(&answer(id, VenueOrderState::Cancelled))
+            .unwrap();
+        assert_eq!(cancelled.status, OrderStatus::Cancelled);
+        assert!(!engine.is_unanswered(id));
+    }
+
+    #[test]
+    fn a_new_cancel_after_one_refused_waits_afresh() {
+        let (mut engine, id, start) = cancel_asked(settling::CANCEL_ASKS);
+        engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+
+        engine.cancel(id).unwrap();
+
+        assert!(!engine.is_unanswered(id), "not the old wait");
+        let order = engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+        assert_eq!(order.status, OrderStatus::PendingCancel);
+        let later = start + WAIT * 10;
+        engine.ask_unanswered(later, WAIT);
+        assert!(
+            engine.ask_unanswered(later, WAIT).orders.is_empty(),
+            "the wait starts"
+        );
+    }
+
+    #[test]
+    fn a_sent_order_the_venue_never_received_ends_rejected() {
+        let (mut engine, _) = engine();
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+        engine.ask_unanswered(start + WAIT, WAIT);
+
+        let order = engine
+            .apply(&answer(
+                id,
+                VenueOrderState::Rejected {
+                    reason: "no such order".into(),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert!(!engine.is_unanswered(id));
+    }
+
+    #[test]
+    fn an_amendment_never_answered_is_settled_by_the_venues_terms() {
+        let (mut engine, _) = engine();
+        let id = engine.submit(buy("4")).id;
+        engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+        engine.amend(id, d("6"), d("5")).unwrap();
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+        engine.ask_unanswered(start + WAIT, WAIT);
+        assert!(engine.is_unanswered(id));
+
+        let view = VenueOrder::new(VenueOrderState::Working, d("0"), None)
+            .with_venue_order_id(VenueOrderId("V1".into()))
+            .with_terms(d("6"), Some(d("5")));
+        let order = engine
+            .apply(&report(id, OrderEvent::Snapshot(view)))
+            .unwrap();
+
+        assert_eq!(order.status, OrderStatus::Accepted);
+        assert_eq!(order.quantity, d("6"));
+        assert!(!engine.is_unanswered(id));
+    }
+
+    #[test]
+    fn waits_start_again_when_the_orders_connection_is_back() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+        let orders = |state| ConnectionStatus::new(Connection::Orders, state, UnixNanos(1));
+        engine.on_connection(&orders(ConnectionState::Reconnecting));
+
+        assert!(engine.ask_unanswered(start + WAIT, WAIT).orders.is_empty());
+        assert!(
+            calls.lock().unwrap().recovered.is_empty(),
+            "nothing asked while down"
+        );
+
+        let back = start + WAIT * 4;
+        engine.on_connection(&orders(ConnectionState::Up));
+        assert!(
+            engine.ask_unanswered(back, WAIT).orders.is_empty(),
+            "the reconnect's catch-up comes first"
+        );
+        assert_eq!(engine.ask_unanswered(back + WAIT, WAIT).orders, vec![id]);
+    }
+
+    #[test]
+    fn an_order_is_asked_about_a_few_times_then_left_marked() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+
+        for round in 1..=10 {
+            engine.ask_unanswered(start + WAIT * round, WAIT);
+        }
+
+        assert_eq!(
+            calls.lock().unwrap().recovered.len(),
+            settling::ASKS as usize
+        );
+        assert!(engine.is_unanswered(id), "still marked for the trader");
+    }
+
+    #[test]
+    fn a_restored_order_is_left_to_the_restarts_own_asking() {
+        let (mut before, _) = engine();
+        let _ = before.submit(buy("4"));
+        let (mut after, calls) = engine();
+        after.restore(recorded(&before)).unwrap();
+        let start = Instant::now();
+
+        after.ask_unanswered(start, WAIT);
+        let asked = after.ask_unanswered(start + WAIT, WAIT);
+
+        assert!(asked.orders.is_empty());
+        assert!(calls.lock().unwrap().recovered.is_empty());
+    }
+
+    #[test]
+    fn a_catch_up_while_a_cancel_is_in_flight_leaves_it_waiting() {
+        let (mut engine, _) = engine();
+        let id = engine.submit(buy("4")).id;
+        engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+        engine.cancel(id).unwrap();
+
+        // A reconnect's catch-up, before any wait has run out.
+        let order = engine.apply(&answer(id, VenueOrderState::Working)).unwrap();
+
+        assert_eq!(order.status, OrderStatus::PendingCancel);
+    }
+
+    #[test]
+    fn a_venue_that_cannot_say_leaves_the_order_marked_unanswered() {
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let client = RecordingClient {
+            calls: calls.clone(),
+            refuse_with: None,
+            amends: false,
+            recovers: false,
+        };
+        let limits = RiskLimits {
+            max_order_quantity: d("10"),
+            max_order_notional: d("1000"),
+        };
+        let mut engine = ExecutionEngine::new(Box::new(client), limits);
+        let id = engine.submit(buy("4")).id;
+        let start = Instant::now();
+        engine.ask_unanswered(start, WAIT);
+
+        let asked = engine.ask_unanswered(start + WAIT, WAIT);
+
+        assert_eq!(asked.orders, vec![id]);
+        assert!(engine.is_unanswered(id));
+        assert!(calls.lock().unwrap().recovered.is_empty());
     }
 
     #[test]

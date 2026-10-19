@@ -251,16 +251,19 @@ pub trait ExecutionClient: Send {
     fn adopt_order(&mut self, _venue_order_id: &VenueOrderId, _order_id: ClientOrderId) {}
 
     /// This client's answers about orders the terminal knew before it
-    /// restarted, if its venue can say. The default says it cannot: core
-    /// then shows those orders as not yet confirmed by the venue.
+    /// restarted, and about orders whose commands the venue has not
+    /// answered (ADR 0025), if its venue can say. The default says it
+    /// cannot: core then shows those orders as not yet confirmed by the
+    /// venue.
     fn recovery(&mut self) -> Option<&mut dyn OrderRecovery> {
         None
     }
 }
 
 /// Reports the venue's view of orders the terminal held before it
-/// restarted. An adapter implements it on its execution client and returns
-/// itself from [`ExecutionClient::recovery`].
+/// restarted, or that have waited too long for the venue's answer to a
+/// command (ADR 0025). An adapter implements it on its execution client and
+/// returns itself from [`ExecutionClient::recovery`].
 pub trait OrderRecovery: Send {
     /// Ask the venue about `orders`. Returning `Ok` means "asked": for each
     /// order the venue knows, the answer arrives later as an
