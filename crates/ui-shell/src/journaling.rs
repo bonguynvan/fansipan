@@ -1,15 +1,24 @@
-//! The shell's side of the journal (ADR 0023). At start it opens the
-//! account's journal for today, restores the engine from it, and asks the
-//! venue about restored orders still open. At every flush it records what
-//! the batch names, read whole from the engine. On a new UTC date it starts
-//! that day's file with everything the engine holds, so each day's file
-//! stands alone.
+//! The shell's side of the journal (ADR 0023). At start it takes the
+//! account's lock, opens the journal for today, restores the engine from
+//! it, and asks the venue about restored orders still open. What the trader
+//! does is recorded before the command returns, and order ids are reserved
+//! before an order may use them; what the venue reports is recorded at the
+//! next flush. Records are built under the engine's lock and written after
+//! it is released, so a slow disk never holds up the engine. A write that
+//! fails is reported once, and the next one records everything again.
 
 use std::path::{Path, PathBuf};
 
-use execution_engine::ExecutionEngine;
-use journal::{account_folder, utc_date, Journal, Record};
+use execution_engine::{ConditionalStatus, ExecutionEngine};
+use journal::{account_folder, utc_date, AccountLock, Journal, Record};
+use model::ClientOrderId;
 use serde::Serialize;
+
+/// Ids reserved past the next one, beyond one for each conditional order
+/// that could still fire, whenever a reservation is renewed.
+const RESERVE_BLOCK: u64 = 1_000;
+/// Renewed once fewer than this many reserved ids would be left.
+const RESERVE_MARGIN: u64 = 100;
 
 /// What the screens are told about the journal.
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -22,23 +31,45 @@ pub struct JournalDto {
     pub unconfirmed: usize,
     /// Whether the venue was asked about them and can answer.
     pub venue_asked: bool,
-    /// Where a damaged tail was set aside.
+    /// Where lines that could not be read were set aside.
     pub damaged: Option<String>,
     /// Why the journal could not be opened or written, if it could not.
     pub error: Option<String>,
 }
 
-/// An open day's journal.
+/// An account's journal, open for today, and the lock that makes it ours.
 pub struct Kept {
+    _lock: AccountLock,
     journal: Journal,
     folder: PathBuf,
     date: String,
-    /// Whether the last write failed, so a failure is reported once.
-    failing: bool,
+    /// The first order id not yet reserved.
+    reserved: u64,
+    /// Whether the last write failed, so the next records everything.
+    resync: bool,
+    /// The last problem told to the screens, so each is told once.
+    told: Option<String>,
+}
+
+/// Records built under the engine's lock, to write after it is released,
+/// and what could not be recorded.
+pub struct Built {
+    records: Vec<Record>,
+    problems: Vec<String>,
+}
+
+impl Built {
+    fn push(&mut self, record: Result<Record, journal::RecordError>) {
+        match record {
+            Ok(record) => self.records.push(record),
+            Err(e) => self.problems.push(e.to_string()),
+        }
+    }
 }
 
 /// Opens the account's journal for the day `now_seconds` falls on and
-/// rebuilds the engine from it. `None` when the adapter names no account.
+/// rebuilds the engine from it. `None` when the adapter names no account,
+/// or another terminal keeps this account's journal.
 pub fn open(
     exec: &mut ExecutionEngine,
     base: &Path,
@@ -49,26 +80,27 @@ pub fn open(
         return (None, JournalDto::default());
     };
     let folder = account_folder(base, venue, &account);
+    let failed = |e: journal::JournalError| JournalDto {
+        error: Some(e.to_string()),
+        ..JournalDto::default()
+    };
+    let lock = match AccountLock::acquire(&folder) {
+        Ok(lock) => lock,
+        Err(e) => return (None, failed(e)),
+    };
     let date = utc_date(now_seconds);
     let opened = match Journal::open(&folder, &date) {
         Ok(opened) => opened,
-        Err(e) => {
-            let report = JournalDto {
-                error: Some(e.to_string()),
-                ..JournalDto::default()
-            };
-            return (None, report);
-        }
+        Err(e) => return (None, failed(e)),
     };
-    let restored_orders = opened.restored.orders.len();
-    let restored_conditionals = opened.restored.conditionals.len();
     let mut report = JournalDto {
         kept: true,
-        restored_orders,
-        restored_conditionals,
+        restored_orders: opened.restored.orders.len(),
+        restored_conditionals: opened.restored.conditionals.len(),
         damaged: opened.damaged.map(|path| path.display().to_string()),
         ..JournalDto::default()
     };
+    let reserved = opened.restored.next_order_id.unwrap_or(1);
     if let Err(e) = exec.restore(opened.restored) {
         report.error = Some(e.to_string());
     }
@@ -77,94 +109,129 @@ pub fn open(
         Err(e) => {
             report.error = Some(format!(
                 "the venue could not be asked about restored orders: {e}"
-            ))
+            ));
         }
     }
     report.unconfirmed = exec
         .orders()
         .filter(|order| exec.is_unconfirmed(order.id))
         .count();
-    let kept = Kept {
+    let mut kept = Kept {
+        _lock: lock,
         journal: opened.journal,
         folder,
         date,
-        failing: false,
+        reserved,
+        resync: false,
+        told: None,
     };
+    // Reserve before anything can be sent.
+    let built = kept.build(exec, &[], &[], false);
+    if let Some(e) = kept.write(built, now_seconds) {
+        report.error = Some(e);
+    }
     (Some(kept), report)
 }
 
-/// Every record the engine would need to rebuild what it holds now.
-fn everything(exec: &ExecutionEngine) -> Result<Vec<Record>, String> {
-    let orders = exec.orders().map(|order| order.id).collect::<Vec<_>>();
-    let conditionals = exec.conditionals().map(|c| c.id.0).collect::<Vec<_>>();
-    records(exec, &orders, &conditionals, true)
-}
-
-/// The records for `orders`, `conditionals`, and the switch if `trading`.
-/// A state this version cannot record is an error, never skipped.
-fn records(
-    exec: &ExecutionEngine,
-    orders: &[model::ClientOrderId],
-    conditionals: &[u64],
-    trading: bool,
-) -> Result<Vec<Record>, String> {
-    let mut out = Vec::new();
-    for record in orders.iter().filter_map(|id| exec.order_record(*id)) {
-        out.push(Record::order(&record).map_err(|e| e.to_string())?);
-    }
-    for conditional in exec
-        .conditionals()
-        .filter(|c| conditionals.contains(&c.id.0))
-    {
-        out.push(Record::conditional(conditional).map_err(|e| e.to_string())?);
-    }
-    if trading {
-        out.push(Record::trading(exec.trading_state()));
-    }
-    Ok(out)
-}
-
 impl Kept {
-    /// Records the orders and conditional orders a flush named, and the
-    /// trader's switch if it moved. Returns a message the first time
-    /// writing fails, and none while it keeps failing or once it works.
-    pub fn record(
+    /// Whether the last write failed, and the next must record everything.
+    pub fn resyncing(&self) -> bool {
+        self.resync
+    }
+
+    /// The records for the orders and conditional orders named, the
+    /// trader's switch if `trading`, and a reservation of order ids if one
+    /// is due: enough that every conditional order still live could fire
+    /// and the next orders sent stay within it. After a failed write, the
+    /// records for everything the engine holds.
+    pub fn build(
         &mut self,
         exec: &ExecutionEngine,
-        orders: &[model::ClientOrderId],
+        orders: &[ClientOrderId],
         conditionals: &[u64],
         trading: bool,
-        now_seconds: u64,
-    ) -> Option<String> {
-        let date = utc_date(now_seconds);
-        let written = if date != self.date {
-            self.next_day(exec, &date)
-        } else {
-            records(exec, orders, conditionals, trading)
-                .and_then(|records| self.journal.append(&records).map_err(|e| e.to_string()))
+    ) -> Built {
+        let mut built = Built {
+            records: Vec::new(),
+            problems: Vec::new(),
         };
-        match written {
-            Ok(()) => {
-                self.failing = false;
-                None
-            }
-            Err(e) if !self.failing => {
-                self.failing = true;
-                Some(e)
-            }
-            Err(_) => None,
+        let everything = self.resync;
+        let live = exec
+            .conditionals()
+            .filter(|c| {
+                matches!(
+                    c.status,
+                    ConditionalStatus::Pending | ConditionalStatus::Waiting
+                )
+            })
+            .count() as u64;
+        let next = exec.next_order_id();
+        if everything || next.saturating_add(live).saturating_add(RESERVE_MARGIN) > self.reserved {
+            self.reserved = next.saturating_add(live).saturating_add(RESERVE_BLOCK);
+            built.records.push(Record::reserved(self.reserved));
         }
+        for order in exec.orders() {
+            if everything || orders.contains(&order.id) {
+                if let Some(record) = exec.order_record(order.id) {
+                    built.push(Record::order(&record));
+                }
+            }
+        }
+        for conditional in exec.conditionals() {
+            if everything || conditionals.contains(&conditional.id.0) {
+                built.push(Record::conditional(conditional));
+            }
+        }
+        if everything || trading {
+            built.records.push(Record::trading(exec.trading_state()));
+        }
+        built
     }
 
-    fn next_day(&mut self, exec: &ExecutionEngine, date: &str) -> Result<(), String> {
-        let mut opened = Journal::open(&self.folder, date).map_err(|e| e.to_string())?;
-        opened
-            .journal
-            .append(&everything(exec)?)
-            .map_err(|e| e.to_string())?;
-        self.journal = opened.journal;
-        self.date = date.to_string();
-        Ok(())
+    /// Writes `built`, into the next day's file once the UTC date has
+    /// turned (which opens with what was live in today's). Returns a
+    /// problem the first time it happens: a write that failed, or a state
+    /// this version cannot record; none while it goes on, or once all is
+    /// well again.
+    pub fn write(&mut self, built: Built, now_seconds: u64) -> Option<String> {
+        let date = utc_date(now_seconds);
+        let mut outcome = Ok(());
+        if date != self.date {
+            match Journal::open(&self.folder, &date) {
+                Ok(opened) => {
+                    self.journal = opened.journal;
+                    self.date = date;
+                }
+                Err(e) => outcome = Err(e.to_string()),
+            }
+        }
+        if outcome.is_ok() {
+            outcome = self
+                .journal
+                .append(&built.records)
+                .map_err(|e| e.to_string());
+        }
+        let problem = match outcome {
+            Ok(()) => {
+                self.resync = false;
+                built.problems.into_iter().next()
+            }
+            Err(e) => {
+                self.resync = true;
+                Some(e)
+            }
+        };
+        match problem {
+            None => {
+                self.told = None;
+                None
+            }
+            Some(problem) if self.told.as_deref() != Some(problem.as_str()) => {
+                self.told = Some(problem.clone());
+                Some(problem)
+            }
+            Some(_) => None,
+        }
     }
 }
 
@@ -267,10 +334,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(
-            kept.record(&before, &[order.id], &[held.id.0], true, MONDAY),
-            None
-        );
+        let built = kept.build(&before, &[order.id], &[held.id.0], true);
+        assert_eq!(kept.write(built, MONDAY), None);
+        drop(kept);
 
         let mut after = engine(Some("A-1"));
         let (_, report) = open(&mut after, &base, "sim", MONDAY + 60);
@@ -295,6 +361,45 @@ mod tests {
     }
 
     #[test]
+    fn a_second_terminal_on_the_same_account_keeps_no_journal_and_is_told_why() {
+        let base = scratch();
+        let (first, _) = open(&mut engine(Some("A-1")), &base, "sim", MONDAY);
+        assert!(first.is_some());
+
+        let (second, report) = open(&mut engine(Some("A-1")), &base, "sim", MONDAY);
+
+        assert!(second.is_none());
+        assert!(!report.kept);
+        assert!(report.error.unwrap().contains("another terminal"));
+        drop(first);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ids_reserved_at_start_are_never_used_again_after_a_crash() {
+        let base = scratch();
+        let mut before = engine(Some("A-1"));
+        let kept = open(&mut before, &base, "sim", MONDAY).0.unwrap();
+        // An order goes out and the terminal dies before any flush.
+        let sent = before.submit(NewOrder::limit(
+            InstrumentId::new("sim", "AAA"),
+            Side::Buy,
+            Decimal::from(5),
+            Decimal::from(10),
+        ));
+        drop(kept);
+
+        let mut after = engine(Some("A-1"));
+        let _ = open(&mut after, &base, "sim", MONDAY + 60);
+
+        assert!(
+            after.next_order_id() > sent.id.0,
+            "the lost order's id is not reused"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn a_new_day_starts_a_file_that_holds_everything() {
         let base = scratch();
         let mut before = engine(Some("A-1"));
@@ -306,10 +411,9 @@ mod tests {
             Decimal::from(5),
             Decimal::from(10),
         ));
-        assert_eq!(kept.record(&before, &[order.id], &[], false, MONDAY), None);
-
-        // Past midnight, a flush that names nothing new still opens the day.
-        assert_eq!(kept.record(&before, &[], &[], false, MONDAY + 86_400), None);
+        let built = kept.build(&before, &[order.id], &[], false);
+        assert_eq!(kept.write(built, MONDAY), None);
+        drop(kept);
 
         let (_, tuesday) = open(&mut engine(Some("A-1")), &base, "sim", MONDAY + 86_400);
         assert_eq!(tuesday.restored_orders, 1);

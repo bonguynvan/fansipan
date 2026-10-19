@@ -133,10 +133,13 @@ impl Venue {
     }
 }
 
-/// Lock order: `exec` before `pending`. Every change to an order is queued
-/// in `pending` while `exec` is still held, so the batch receives order
-/// states in the order the engine produced them, whichever thread made the
-/// change. Nothing takes `pending` and then another lock.
+/// Lock order: `journal` before `exec`, and `exec` before `pending`. Every
+/// change to an order is queued in `pending` while `exec` is still held, so
+/// the batch receives order states in the order the engine produced them,
+/// whichever thread made the change. The journal's records are built while
+/// `journal` and `exec` are held, and written once `exec` is released, so
+/// the file's order is the engine's. Nothing takes `pending` and then
+/// another lock.
 pub struct Shell {
     venue: String,
     market: MarketDto,
@@ -323,18 +326,65 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
         day: day_of(shell).ok(),
         ..batch.into_dto(seq)
     };
-    if !orders.is_empty() || !conditionals.is_empty() || trading {
+    let mut journal = lock(&shell.journal)?;
+    let resyncing = journal.as_ref().is_some_and(journaling::Kept::resyncing);
+    if !orders.is_empty() || !conditionals.is_empty() || trading || resyncing {
         let orders: Vec<ClientOrderId> = orders.into_iter().map(ClientOrderId).collect();
-        let mut journal = lock(&shell.journal)?;
-        let exec = lock(&shell.exec)?;
-        if let Some(kept) = journal.as_mut() {
-            dto.journal_error = kept.record(&exec, &orders, &conditionals, trading, now_seconds());
-        }
-        for order in &mut dto.orders {
-            order.unconfirmed = exec.is_unconfirmed(ClientOrderId(order.id));
+        let built = {
+            let exec = lock(&shell.exec)?;
+            for order in &mut dto.orders {
+                order.unconfirmed = exec.is_unconfirmed(ClientOrderId(order.id));
+            }
+            journal
+                .as_mut()
+                .map(|kept| kept.build(&exec, &orders, &conditionals, trading))
+        };
+        // Written with the engine free, so a slow disk holds up only the
+        // journal's own users.
+        if let (Some(kept), Some(built)) = (journal.as_mut(), built) {
+            if let Some(problem) = kept.write(built, now_seconds()) {
+                dto.journal_error = Some(problem);
+            }
         }
     }
     Ok(Some(dto))
+}
+
+/// Runs a command the trader gave, journaled (ADR 0023): for one that may
+/// send an order, ids are reserved on disk before it runs, so a crash
+/// cannot bring an id round again; whatever it changed is recorded before
+/// it returns, so a restart does not undo what the trader did.
+fn journaled<T>(
+    shell: &Shell,
+    may_send: bool,
+    command: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    if may_send {
+        journal_changes(shell, false)?;
+    }
+    let result = command();
+    journal_changes(shell, true)?;
+    result
+}
+
+/// Records the reservation of order ids if one is due and, with `pending`,
+/// what the pending batch names; a problem goes to the screens with it.
+fn journal_changes(shell: &Shell, pending: bool) -> Result<(), String> {
+    let (orders, conditionals, trading) = if pending {
+        lock(&shell.pending)?.changed()
+    } else {
+        (Vec::new(), Vec::new(), false)
+    };
+    let mut journal = lock(&shell.journal)?;
+    let Some(kept) = journal.as_mut() else {
+        return Ok(());
+    };
+    let orders: Vec<ClientOrderId> = orders.into_iter().map(ClientOrderId).collect();
+    let built = kept.build(&*lock(&shell.exec)?, &orders, &conditionals, trading);
+    if let Some(problem) = kept.write(built, now_seconds()) {
+        lock(&shell.pending)?.journal_error(problem);
+    }
+    Ok(())
 }
 
 fn now_seconds() -> u64 {
@@ -364,6 +414,10 @@ fn start_journal(shell: &Shell, base: &std::path::Path) -> Result<(), String> {
 }
 
 fn submit(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
+    journaled(shell, true, || submit_now(shell, request))
+}
+
+fn submit_now(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
     let mut exec = lock(&shell.exec)?;
     let order = OrderDto::from(&exec.submit(request));
     lock(&shell.pending)?.order(order.clone());
@@ -371,6 +425,10 @@ fn submit(shell: &Shell, request: NewOrder) -> Result<OrderDto, String> {
 }
 
 fn cancel(shell: &Shell, id: u64) -> Result<OrderDto, String> {
+    journaled(shell, false, || cancel_now(shell, id))
+}
+
+fn cancel_now(shell: &Shell, id: u64) -> Result<OrderDto, String> {
     let mut exec = lock(&shell.exec)?;
     let order = exec
         .cancel(ClientOrderId(id))
@@ -429,6 +487,14 @@ fn place_conditional_order(
     shell: &Shell,
     ticket: &ConditionalTicket<'_>,
 ) -> Result<ConditionalDto, String> {
+    // It sends an order when it fires: its id is reserved now.
+    journaled(shell, true, || place_conditional_now(shell, ticket))
+}
+
+fn place_conditional_now(
+    shell: &Shell,
+    ticket: &ConditionalTicket<'_>,
+) -> Result<ConditionalDto, String> {
     let request = conditional_request(&shell.venue, ticket)?;
     // Counted before the mark is read, so a trade the mark misses waits on
     // the execution lock for this placement instead of skipping it.
@@ -450,6 +516,10 @@ fn place_conditional_order(
 }
 
 fn cancel_conditional_order(shell: &Shell, id: u64) -> Result<ConditionalDto, String> {
+    journaled(shell, false, || cancel_conditional_now(shell, id))
+}
+
+fn cancel_conditional_now(shell: &Shell, id: u64) -> Result<ConditionalDto, String> {
     let mut exec = lock(&shell.exec)?;
     let cancelled = exec
         .cancel_conditional(ConditionalId(id))
@@ -584,6 +654,10 @@ fn bracket_request(venue: &str, ticket: &BracketTicket<'_>) -> Result<BracketReq
 }
 
 fn place_bracket_order(shell: &Shell, ticket: &BracketTicket<'_>) -> Result<BracketDto, String> {
+    journaled(shell, true, || place_bracket_now(shell, ticket))
+}
+
+fn place_bracket_now(shell: &Shell, ticket: &BracketTicket<'_>) -> Result<BracketDto, String> {
     let request = bracket_request(&shell.venue, ticket)?;
     let mark = lock(&shell.data)?
         .stats(&request.entry.instrument)
@@ -607,6 +681,10 @@ fn place_bracket_order(shell: &Shell, ticket: &BracketTicket<'_>) -> Result<Brac
 /// Sets the trader's switch, for every window. Orders already working stay
 /// working: halting cancels nothing by itself.
 fn set_trading(shell: &Shell, state: &str) -> Result<(), String> {
+    journaled(shell, false, || set_trading_now(shell, state))
+}
+
+fn set_trading_now(shell: &Shell, state: &str) -> Result<(), String> {
     let wanted =
         dto::parse_trading(state).ok_or_else(|| format!("unknown trading state: {state}"))?;
     let mut exec = lock(&shell.exec)?;
@@ -618,6 +696,10 @@ fn set_trading(shell: &Shell, state: &str) -> Result<(), String> {
 
 /// Cancels every open order, or every open order in `symbol`.
 fn cancel_all(shell: &Shell, symbol: Option<&str>) -> Result<CancelAllDto, String> {
+    journaled(shell, false, || cancel_all_now(shell, symbol))
+}
+
+fn cancel_all_now(shell: &Shell, symbol: Option<&str>) -> Result<CancelAllDto, String> {
     let instrument = symbol.map(|symbol| shell.instrument(symbol));
     let mut exec = lock(&shell.exec)?;
     let mut sent = Vec::new();
@@ -639,6 +721,15 @@ fn cancel_all(shell: &Shell, symbol: Option<&str>) -> Result<CancelAllDto, Strin
 }
 
 fn amend(
+    shell: &Shell,
+    id: u64,
+    quantity: Decimal,
+    limit_price: Decimal,
+) -> Result<OrderDto, String> {
+    journaled(shell, false, || amend_now(shell, id, quantity, limit_price))
+}
+
+fn amend_now(
     shell: &Shell,
     id: u64,
     quantity: Decimal,

@@ -34,6 +34,7 @@ pub struct Batch {
     prints: BTreeMap<String, VecDeque<PrintDto>>,
     trading: Option<&'static str>,
     conditionals: BTreeMap<u64, ConditionalDto>,
+    journal_error: Option<String>,
 }
 
 /// What one flush delivers. Bars are ordered by symbol, then time, so a
@@ -76,6 +77,11 @@ impl Batch {
 
     pub fn conditional(&mut self, conditional: ConditionalDto) {
         self.conditionals.insert(conditional.id, conditional);
+    }
+
+    /// A journal problem a command met, for the screens.
+    pub fn journal_error(&mut self, problem: String) {
+        self.journal_error = Some(problem);
     }
 
     pub fn trading(&mut self, state: &'static str) {
@@ -138,6 +144,7 @@ impl Batch {
             && self.prints.is_empty()
             && self.trading.is_none()
             && self.conditionals.is_empty()
+            && self.journal_error.is_none()
     }
 
     pub fn into_dto(self, seq: u64) -> BatchDto {
@@ -155,7 +162,7 @@ impl Batch {
             trading: self.trading,
             day: None,
             conditionals: self.conditionals.into_values().collect(),
-            journal_error: None,
+            journal_error: self.journal_error,
         }
     }
 }
