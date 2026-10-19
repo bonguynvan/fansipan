@@ -13,6 +13,7 @@ mod order;
 mod order_type;
 mod rules;
 mod session;
+mod status;
 
 pub use rust_decimal::Decimal;
 
@@ -29,3 +30,4 @@ pub use rules::{
     BandError, BookLevel, Depth, InstrumentInfo, PriceBand, TickTable, TickTableError, TradingCosts,
 };
 pub use session::{SessionPhase, SessionStatus};
+pub use status::{InstrumentStatus, TradingStatus};

@@ -16,7 +16,8 @@
 //!
 //! The engine also holds the market-data connection's status as the adapter
 //! last reported it, so a screen can tell a quiet market from a dead feed,
-//! and each market's session: the phase of its day and what it takes.
+//! each market's session: the phase of its day and what it takes, and each
+//! instrument's own status where its venue published one (ADR 0026).
 
 mod bars;
 mod session;
@@ -28,8 +29,8 @@ use std::time::Duration;
 use adapter_api::{AdapterError, DataClient};
 use bus::BusHandle;
 use model::{
-    BookLevel, Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, PriceBand, Quote,
-    SessionStatus, Trade,
+    BookLevel, Connection, ConnectionStatus, Depth, InstrumentId, InstrumentInfo, InstrumentStatus,
+    PriceBand, Quote, SessionStatus, Trade,
 };
 
 pub use bars::{Bar, BarSeries};
@@ -62,6 +63,7 @@ pub struct DataEngine {
     tape_capacity: usize,
     depth_levels: usize,
     sessions: BTreeMap<String, SessionStatus>,
+    statuses: BTreeMap<InstrumentId, InstrumentStatus>,
     connection: Option<ConnectionStatus>,
 }
 
@@ -106,6 +108,7 @@ impl DataEngine {
             tape_capacity: DEFAULT_TAPE_CAPACITY,
             depth_levels: DEFAULT_DEPTH_LEVELS,
             sessions: BTreeMap::new(),
+            statuses: BTreeMap::new(),
             connection: None,
         }
     }
@@ -139,12 +142,13 @@ impl DataEngine {
 
     /// A connect that succeeds means up (the contract), so a report from
     /// before it, such as the `Down` of an earlier disconnect, no longer
-    /// holds; nor do the sessions of the last connection, which the adapter
-    /// publishes again.
+    /// holds; nor do the sessions and instrument statuses of the last
+    /// connection, which the adapter publishes again.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
         self.client.connect(bus)?;
         self.connection = None;
         self.sessions.clear();
+        self.statuses.clear();
         Ok(())
     }
 
@@ -327,6 +331,17 @@ impl DataEngine {
     /// Every market's current session, ordered by market.
     pub fn sessions(&self) -> impl Iterator<Item = &SessionStatus> {
         self.sessions.values()
+    }
+
+    /// Records an instrument's status, replacing its last one.
+    pub fn on_instrument_status(&mut self, status: &InstrumentStatus) {
+        self.statuses
+            .insert(status.instrument.clone(), status.clone());
+    }
+
+    /// Every instrument's status its venue published, ordered by instrument.
+    pub fn instrument_statuses(&self) -> impl Iterator<Item = &InstrumentStatus> {
+        self.statuses.values()
     }
 
     /// Records a report on the market-data connection; returns whether kept.

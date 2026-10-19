@@ -5,7 +5,7 @@ use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
 use model::{
     AccountState, ConnectionStatus, Depth, ExecutionReport, ExternalOrder, InstrumentInfo,
-    PriceBand, Quote, SessionStatus, Trade,
+    InstrumentStatus, PriceBand, Quote, SessionStatus, Trade,
 };
 
 /// Everything an adapter can tell core. There is deliberately no variant
@@ -35,6 +35,9 @@ pub enum Event {
     /// An order on the account this terminal did not place, as the venue
     /// holds it now; core adopts it (ADR 0024).
     ExternalOrder(ExternalOrder),
+    /// One instrument halted, suspended, resumed, or had a short-sale
+    /// restriction set or lifted (ADR 0026).
+    InstrumentStatus(InstrumentStatus),
 }
 
 /// Handle an adapter uses to push events onto the bus.

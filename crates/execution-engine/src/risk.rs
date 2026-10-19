@@ -3,7 +3,9 @@
 //! First the trader's own switch ([`check_trading_state`]: halted, or
 //! taking only orders that reduce a position). Then two families: this
 //! terminal's own limits ([`check`]), and the market's
-//! rules as the adapter published them: for the instrument
+//! rules as the adapter published them: the instrument's status
+//! ([`check_instrument_status`]: halted, suspended, short sales
+//! restricted), its rules
 //! ([`check_market_rules`]: lot size, tick size, daily price band), for the
 //! moment ([`check_session`]: the order types its market takes in the
 //! current phase of the day), and for the holding ([`check_sellable`]: no
@@ -18,9 +20,14 @@
 use std::fmt;
 
 use model::{
-    AmendOrder, ClientOrderId, Decimal, InstrumentInfo, NewOrder, OrderKind, OrderType, Position,
-    PriceBand, SessionPhase, SessionStatus, Side, SubmitOrder, TimeInForce, VenueOrderId,
+    AmendOrder, ClientOrderId, Decimal, InstrumentInfo, InstrumentStatus, NewOrder, OrderKind,
+    OrderType, Position, PriceBand, SessionPhase, SessionStatus, Side, SubmitOrder, TimeInForce,
+    TradingStatus, VenueOrderId,
 };
+
+mod status;
+
+pub use status::check_instrument_status;
 
 /// Terms that passed every check risk runs. Nothing outside this module
 /// can make one, so holding one is proof that risk ran. It is not `Clone`:
@@ -85,6 +92,8 @@ pub(crate) struct Context<'a> {
     pub info: Option<&'a InstrumentInfo>,
     pub band: Option<&'a PriceBand>,
     pub session: Option<&'a SessionStatus>,
+    /// The instrument's own status, if its venue published one.
+    pub status: Option<&'a InstrumentStatus>,
     pub position: Option<&'a Position>,
     /// Shares the working sell orders take, other than the order being
     /// amended.
@@ -97,7 +106,8 @@ pub(crate) struct Context<'a> {
 }
 
 /// Every check, in order: the trading state, this terminal's limits, then
-/// the market's rules, session, and the holding a sell may take.
+/// the instrument's status, the market's rules, session, and the holding a
+/// sell may take.
 pub(crate) fn clear(
     terms: NewOrder,
     context: &Context<'_>,
@@ -118,6 +128,12 @@ pub(crate) fn clear(
         check_trading_state(&selling, context.trading, held, working)?;
     }
     check(&terms, context.limits)?;
+    check_instrument_status(
+        &selling,
+        context.status,
+        context.position,
+        context.working_sells,
+    )?;
     check_market_rules(&terms, context.info, context.band)?;
     check_session(&terms, context.session)?;
     check_sellable(
@@ -194,6 +210,17 @@ pub enum RiskReject {
         unsettled: Decimal,
         working: Decimal,
     },
+    /// The instrument does not trade now, and its venue takes no orders
+    /// for it (ADR 0026).
+    NotTrading {
+        status: TradingStatus,
+        reason: Option<String>,
+    },
+    /// A short sale without a limit price, under a short-sale restriction:
+    /// only `long` can be sold at market.
+    ShortSaleRestricted {
+        long: Decimal,
+    },
 }
 
 impl fmt::Display for RiskReject {
@@ -261,6 +288,23 @@ impl fmt::Display for RiskReject {
                 f,
                 "only {sellable} can be sold now: {held} held, {unsettled} not settled yet, \
                  {working} in working sell orders"
+            ),
+            Self::NotTrading { status, reason } => {
+                let what = match status {
+                    TradingStatus::Suspended => "suspended",
+                    _ => "halted",
+                };
+                match reason {
+                    Some(reason) => write!(
+                        f,
+                        "the instrument is {what} ({reason}) and takes no orders now"
+                    ),
+                    None => write!(f, "the instrument is {what} and takes no orders now"),
+                }
+            }
+            Self::ShortSaleRestricted { long } => write!(
+                f,
+                "short sales are restricted: a sell beyond {long} needs a limit price"
             ),
         }
     }

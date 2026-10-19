@@ -25,7 +25,8 @@ use model::{
     OrderStatus, PriceBand, SessionStatus, Side,
 };
 use model::{
-    ExternalOrder, OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderId, VenueOrderState,
+    ExternalOrder, InstrumentStatus, OrderKind, OrderType, RecoverOrder, VenueOrder, VenueOrderId,
+    VenueOrderState,
 };
 
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
@@ -143,8 +144,9 @@ fn external_terms(external: &ExternalOrder) -> Result<Option<Decimal>, ApplyErro
 const ENTRY_UNCONFIRMED: &str = "its entry is not yet confirmed by the venue since the restart";
 
 /// Whether a risk refusal can pass with time alone: the trader resumes
-/// trading, the session moves on, a position changes, shares settle. A
-/// conditional order whose order meets one of these waits rather than fire.
+/// trading, the session moves on, the instrument resumes or its short-sale
+/// restriction lifts, a position changes, shares settle. A conditional
+/// order whose order meets one of these waits rather than fire.
 fn passes_with_time(reason: &RiskReject) -> bool {
     matches!(
         reason,
@@ -152,6 +154,8 @@ fn passes_with_time(reason: &RiskReject) -> bool {
             | RiskReject::ReducingOnly { .. }
             | RiskReject::TypeNotTaken { .. }
             | RiskReject::NotEnoughToSell { .. }
+            | RiskReject::NotTrading { .. }
+            | RiskReject::ShortSaleRestricted { .. }
     )
 }
 
@@ -256,6 +260,8 @@ pub struct ExecutionEngine {
     /// Each market's phase of the day and the order types it takes, by the
     /// market's name as `InstrumentInfo::exchange` gives it.
     sessions: HashMap<String, SessionStatus>,
+    /// Each instrument's own status, where its venue published one.
+    statuses: HashMap<InstrumentId, InstrumentStatus>,
     /// Cash and positions as the venue last reported them.
     account: AccountState,
     connection: Option<ConnectionStatus>,
@@ -276,6 +282,7 @@ impl ExecutionEngine {
             instruments: HashMap::new(),
             bands: HashMap::new(),
             sessions: HashMap::new(),
+            statuses: HashMap::new(),
             account: AccountState::default(),
             connection: None,
         }
@@ -758,14 +765,21 @@ impl ExecutionEngine {
         self.sessions.insert(session.market.clone(), session);
     }
 
+    /// Records an instrument's status, replacing its last one; risk checks
+    /// its orders against it (ADR 0026).
+    pub fn set_instrument_status(&mut self, status: InstrumentStatus) {
+        self.statuses.insert(status.instrument.clone(), status);
+    }
+
     /// A connect that succeeds means up (the contract), so a report from
     /// before it, such as the `Down` of an earlier disconnect, no longer
-    /// holds; nor do the sessions of the last connection, which the adapter
-    /// publishes again.
+    /// holds; nor do the sessions and instrument statuses of the last
+    /// connection, which the adapter publishes again.
     pub fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError> {
         self.gate.connect(bus)?;
         self.connection = None;
         self.sessions.clear();
+        self.statuses.clear();
         Ok(())
     }
 
@@ -851,6 +865,7 @@ impl ExecutionEngine {
             info,
             band: self.bands.get(&terms.instrument),
             session: info.and_then(|info| self.sessions.get(&info.exchange)),
+            status: self.statuses.get(&terms.instrument),
             position: self.account.position(&terms.instrument),
             working_sells: others(Side::Sell),
             working_buys: others(Side::Buy),
@@ -1943,6 +1958,156 @@ mod tests {
             Some("HOSE is in a break and takes no orders now")
         );
         assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    fn halted(engine: &mut ExecutionEngine) {
+        engine.set_instrument_status(
+            InstrumentStatus::new(
+                InstrumentId::new("sim", "AAA"),
+                model::TradingStatus::Halted,
+                UnixNanos(1),
+            )
+            .with_reason("news pending"),
+        );
+    }
+
+    #[test]
+    fn a_halted_instrument_takes_no_order_and_says_why() {
+        let (mut engine, calls) = engine();
+        halted(&mut engine);
+
+        let order = engine.submit(buy("1"));
+
+        assert_eq!(order.status, OrderStatus::Denied);
+        assert_eq!(
+            order.reason.as_deref(),
+            Some("the instrument is halted (news pending) and takes no orders now")
+        );
+        assert!(calls.lock().unwrap().submitted.is_empty());
+    }
+
+    #[test]
+    fn an_order_working_when_its_instrument_halts_can_still_be_cancelled() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("1")).id;
+        halted(&mut engine);
+
+        let order = engine.cancel(id).unwrap();
+
+        assert_eq!(order.status, OrderStatus::PendingCancel);
+        assert_eq!(calls.lock().unwrap().cancelled.len(), 1);
+    }
+
+    #[test]
+    fn an_instrument_resumed_takes_orders_again() {
+        let (mut engine, _) = engine();
+        halted(&mut engine);
+
+        engine.set_instrument_status(InstrumentStatus::new(
+            InstrumentId::new("sim", "AAA"),
+            model::TradingStatus::Trading,
+            UnixNanos(2),
+        ));
+
+        assert_eq!(engine.submit(buy("1")).status, OrderStatus::Submitted);
+    }
+
+    #[test]
+    fn a_halted_instrument_takes_no_amendment() {
+        let (mut engine, calls) = engine();
+        let id = engine.submit(buy("4")).id;
+        engine
+            .apply(&report(
+                id,
+                OrderEvent::Accepted {
+                    venue_order_id: VenueOrderId("V1".into()),
+                },
+            ))
+            .unwrap();
+        halted(&mut engine);
+
+        let refused = engine.amend(id, d("2"), d("5"));
+
+        assert!(matches!(
+            refused,
+            Err(AmendError::Denied(RiskReject::NotTrading { .. }))
+        ));
+        assert!(calls.lock().unwrap().amended.is_empty());
+    }
+
+    #[test]
+    fn a_stop_triggered_in_a_halt_waits_and_fires_once_trading_resumes() {
+        let (mut engine, calls) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine
+            .place_conditional(stop(Trigger::AtOrBelow(d("5")), Then::Limit(d("5"))), None)
+            .unwrap();
+        halted(&mut engine);
+
+        let (held, orders) = engine.on_trade(&aaa, d("5"));
+
+        assert!(orders.is_empty(), "not spent on a denial");
+        assert_eq!(held[0].status, ConditionalStatus::Waiting);
+        assert!(held[0]
+            .blocked
+            .as_deref()
+            .is_some_and(|why| why.contains("halted")));
+
+        engine.set_instrument_status(InstrumentStatus::new(
+            aaa.clone(),
+            model::TradingStatus::Trading,
+            UnixNanos(2),
+        ));
+        let (fired, orders) = engine.on_trade(&aaa, d("4.9"));
+        assert_eq!(fired[0].status, ConditionalStatus::Fired(orders[0].id));
+        assert_eq!(calls.lock().unwrap().submitted.len(), 1);
+    }
+
+    #[test]
+    fn under_a_short_sale_restriction_working_sells_count_against_the_holding() {
+        let (mut engine, calls) = engine();
+        let aaa = InstrumentId::new("sim", "AAA");
+        engine.set_account(AccountState::new(
+            d("1000"),
+            vec![model::Position::new(aaa.clone(), d("5"), d("5"))],
+        ));
+        engine.set_instrument_status(
+            InstrumentStatus::new(aaa.clone(), model::TradingStatus::Trading, UnixNanos(1))
+                .with_short_sale_restricted(true),
+        );
+        let market_sell = |quantity: &str| {
+            NewOrder::new(
+                aaa.clone(),
+                Side::Sell,
+                d(quantity),
+                model::OrderType::MARKET,
+                None,
+            )
+        };
+
+        assert_eq!(
+            engine.submit(market_sell("3")).status,
+            OrderStatus::Submitted
+        );
+        let denied = engine.submit(market_sell("3"));
+
+        assert_eq!(denied.status, OrderStatus::Denied);
+        assert!(denied
+            .reason
+            .is_some_and(|why| why.contains("short sales are restricted")));
+        let priced = NewOrder::limit(aaa.clone(), Side::Sell, d("3"), d("5"));
+        assert_eq!(engine.submit(priced).status, OrderStatus::Submitted);
+        assert_eq!(calls.lock().unwrap().submitted.len(), 2);
+    }
+
+    #[test]
+    fn connecting_again_forgets_the_last_connections_statuses() {
+        let (mut engine, _) = engine();
+        halted(&mut engine);
+
+        engine.connect(bus::Bus::new().handle()).unwrap();
+
+        assert_eq!(engine.submit(buy("1")).status, OrderStatus::Submitted);
     }
 
     #[test]
