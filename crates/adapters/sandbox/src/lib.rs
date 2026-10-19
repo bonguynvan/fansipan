@@ -30,10 +30,11 @@ pub use day::{Clock, MarketDay, Phase, TradingDay};
 pub use profiles::MarketProfile;
 pub use venue::{Listing, SimVenue, Tick, DEPTH_LEVELS, MIN_MID, TICK, TOP_OF_BOOK_SIZE};
 
-const TICK_INTERVAL: Duration = Duration::from_millis(500);
+/// How often the market moves unless told otherwise.
+pub const DEFAULT_BEAT: Duration = Duration::from_millis(500);
 const WALK_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 /// Quotes of made-up history sent when an instrument is first subscribed:
-/// twenty minutes at the beat's pace, so a chart opens with something to
+/// twenty minutes at the default beat, so a chart opens with something to
 /// show instead of filling up one bar at a time.
 const HISTORY_QUOTES: usize = 2_400;
 
@@ -45,6 +46,7 @@ fn locked(set: &Subscriptions) -> MutexGuard<'_, HashSet<InstrumentId>> {
 
 pub struct SandboxDataClient {
     venue: SimVenue,
+    beat: Duration,
     quotes: Subscriptions,
     trades: Subscriptions,
     running: Arc<AtomicBool>,
@@ -54,10 +56,17 @@ impl SandboxDataClient {
     pub fn new(venue: SimVenue) -> Self {
         Self {
             venue,
+            beat: DEFAULT_BEAT,
             quotes: Arc::default(),
             trades: Arc::default(),
             running: Arc::default(),
         }
+    }
+
+    /// Moves the market every `beat` instead of every [`DEFAULT_BEAT`]: a
+    /// short beat makes a busy feed, for measuring the terminal under load.
+    pub fn with_beat(self, beat: Duration) -> Self {
+        Self { beat, ..self }
     }
 
     fn listed(&self, instrument: &InstrumentId) -> Result<(), AdapterError> {
@@ -82,6 +91,7 @@ impl DataClient for SandboxDataClient {
         let venue = self.venue.clone();
         let quotes = self.quotes.clone();
         let trades = self.trades.clone();
+        let pause = self.beat;
         thread::Builder::new()
             .name("sandbox-market".into())
             .spawn(move || {
@@ -96,7 +106,7 @@ impl DataClient for SandboxDataClient {
                         bus: bus.as_ref(),
                     };
                     beat.run(&mut state, now());
-                    thread::sleep(TICK_INTERVAL);
+                    thread::sleep(pause);
                 }
                 bus.publish(down(Connection::MarketData));
             })
@@ -193,7 +203,7 @@ impl Beat<'_> {
                         instrument,
                         now,
                         HISTORY_QUOTES,
-                        TICK_INTERVAL,
+                        DEFAULT_BEAT,
                         &mut state.seed,
                     )
                     .into_iter()

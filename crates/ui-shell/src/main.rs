@@ -6,12 +6,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::env;
+use std::ops::RangeInclusive;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fansipan_shell::{run, Market, RiskLimits, Venue};
 use model::UnixNanos;
-use sandbox::{Clock, MarketProfile, SandboxDataClient, SandboxExecutionClient};
+use sandbox::{Clock, MarketProfile, SandboxDataClient, SandboxExecutionClient, DEFAULT_BEAT};
 
 const VENUE: &str = "sim";
 /// Which simulated market to run; see `sandbox::profiles::PROFILE_IDS`.
@@ -20,6 +21,10 @@ const DEFAULT_MARKET: &str = "vn";
 /// `real` runs the market's real trading hours; anything else, or nothing,
 /// runs a compressed demo day.
 const CLOCK_ENV: &str = "FANSIPAN_SANDBOX_CLOCK";
+/// How often the simulated market moves, in milliseconds: 500 by default,
+/// a few for a busy feed to measure the terminal under load.
+const BEAT_ENV: &str = "FANSIPAN_SANDBOX_BEAT_MS";
+const BEAT_MS: RangeInclusive<u64> = 1..=60_000;
 
 /// The simulated market named by `FANSIPAN_SANDBOX_MARKET`, or the default.
 fn market_profile(chosen: Option<String>) -> Result<MarketProfile, String> {
@@ -36,12 +41,31 @@ fn clock(profile: &MarketProfile, chosen: Option<&str>, now: UnixNanos) -> Clock
     }
 }
 
-fn sandbox(profile: &MarketProfile, clock: Clock) -> Venue {
+/// The beat `FANSIPAN_SANDBOX_BEAT_MS` names, or the sandbox's own.
+fn beat(chosen: Option<&str>) -> Result<Duration, String> {
+    let Some(raw) = chosen else {
+        return Ok(DEFAULT_BEAT);
+    };
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|ms| BEAT_MS.contains(ms))
+        .map(Duration::from_millis)
+        .ok_or_else(|| {
+            format!(
+                "{BEAT_ENV}: \"{raw}\" is not a whole number of milliseconds from {} to {}",
+                BEAT_MS.start(),
+                BEAT_MS.end()
+            )
+        })
+}
+
+fn sandbox(profile: &MarketProfile, clock: Clock, beat: Duration) -> Venue {
     let sim = profile.venue_on(clock);
     Venue::new(
         VENUE,
         Market::new(profile.id, profile.title, profile.currency),
-        Box::new(SandboxDataClient::new(sim.clone())),
+        Box::new(SandboxDataClient::new(sim.clone()).with_beat(beat)),
         Box::new(SandboxExecutionClient::new(sim)),
         RiskLimits {
             max_order_quantity: profile.max_order_quantity,
@@ -59,10 +83,12 @@ fn now() -> UnixNanos {
 }
 
 fn main() -> ExitCode {
-    match market_profile(env::var(MARKET_ENV).ok()) {
-        Ok(profile) => {
+    let chosen = market_profile(env::var(MARKET_ENV).ok())
+        .and_then(|profile| Ok((profile, beat(env::var(BEAT_ENV).ok().as_deref())?)));
+    match chosen {
+        Ok((profile, beat)) => {
             let clock = clock(&profile, env::var(CLOCK_ENV).ok().as_deref(), now());
-            run(sandbox(&profile, clock))
+            run(sandbox(&profile, clock, beat))
         }
         Err(e) => {
             eprintln!("{e}");
@@ -92,11 +118,23 @@ mod tests {
         let profile = market_profile(Some("us".into())).unwrap();
 
         assert_eq!(
-            sandbox(&profile, Clock::Compressed { start: now() })
+            sandbox(&profile, Clock::Compressed { start: now() }, DEFAULT_BEAT)
                 .instruments()
                 .len(),
             profile.listings.len()
         );
+    }
+
+    #[test]
+    fn the_beat_is_the_sandboxs_own_unless_set_to_whole_milliseconds() {
+        assert_eq!(beat(None), Ok(DEFAULT_BEAT));
+        assert_eq!(beat(Some(" 10 ")), Ok(Duration::from_millis(10)));
+        for wrong in ["0", "60001", "fast", "1.5", "-3"] {
+            assert!(
+                beat(Some(wrong)).unwrap_err().starts_with(BEAT_ENV),
+                "{wrong}"
+            );
+        }
     }
 
     #[test]

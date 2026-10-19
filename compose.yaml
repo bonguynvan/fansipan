@@ -21,6 +21,8 @@ services:
       # real: the market's real trading hours. Anything else: a demo day
       # that runs every phase every 15 minutes.
       FANSIPAN_SANDBOX_CLOCK: ${FANSIPAN_SANDBOX_CLOCK:-demo}
+      # How often the market moves, in milliseconds; a few for a busy feed.
+      FANSIPAN_SANDBOX_BEAT_MS: ${FANSIPAN_SANDBOX_BEAT_MS:-500}
       # The chart's clock: TZ=Asia/Ho_Chi_Minh docker compose up
       TZ: ${TZ:-UTC}
     volumes:
