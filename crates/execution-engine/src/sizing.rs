@@ -96,7 +96,7 @@ pub struct Inputs<'a> {
     pub stop: Decimal,
     pub budget: RiskBudget,
     /// The account's equity, needed only for a percentage budget.
-    pub equity: Option<Result<Decimal, InstrumentId>>,
+    pub equity: Option<Result<Decimal, SizingError>>,
     pub info: Option<&'a InstrumentInfo>,
     /// How large one order could be anyway.
     pub capacity: &'a OrderCapacity,
@@ -139,7 +139,7 @@ pub fn size(inputs: &Inputs<'_>) -> Result<Sizing, SizingError> {
 
 fn budget(
     budget: RiskBudget,
-    equity: Option<Result<Decimal, InstrumentId>>,
+    equity: Option<Result<Decimal, SizingError>>,
 ) -> Result<Decimal, SizingError> {
     match budget {
         RiskBudget::Amount(amount) if amount > Decimal::ZERO => Ok(amount),
@@ -148,7 +148,7 @@ fn budget(
         {
             let equity = match equity {
                 Some(Ok(equity)) => equity,
-                Some(Err(instrument)) => return Err(SizingError::EquityUnknown(instrument)),
+                Some(Err(unknown)) => return Err(unknown),
                 None => return Err(SizingError::NoEquity),
             };
             if equity <= Decimal::ZERO {
@@ -184,24 +184,24 @@ fn round_trip_costs(
     commission.checked_add(sold_at.checked_mul(costs.sell_tax_rate)?)
 }
 
-/// Cash plus every position at its mark. `Err` names a position with no
-/// mark, whose value, and so the equity, is not known.
+/// Cash plus every position at its mark. A position with no mark leaves
+/// the equity unknown, and the error names it.
 pub fn equity(
     account: &AccountState,
     mark: impl Fn(&InstrumentId) -> Option<Decimal>,
-) -> Result<Decimal, InstrumentId> {
+) -> Result<Decimal, SizingError> {
     account
         .positions
         .iter()
         .filter(|position| position.quantity != Decimal::ZERO)
         .try_fold(account.cash, |total, position| {
-            let price = mark(&position.instrument).ok_or_else(|| position.instrument.clone())?;
-            // A sum past what a Decimal holds is not a price anyone trades at.
-            Ok(position
+            let price = mark(&position.instrument)
+                .ok_or_else(|| SizingError::EquityUnknown(position.instrument.clone()))?;
+            position
                 .quantity
                 .checked_mul(price)
                 .and_then(|value| total.checked_add(value))
-                .unwrap_or(total))
+                .ok_or(SizingError::TooLarge)
         })
 }
 
@@ -379,7 +379,15 @@ mod tests {
         let account = AccountState::new(d("1000"), vec![Position::new(id(), d("10"), d("40"))]);
 
         assert_eq!(equity(&account, |_| Some(d("50"))), Ok(d("1500")));
-        assert_eq!(equity(&account, |_| None), Err(id()));
+        assert_eq!(
+            equity(&account, |_| None),
+            Err(SizingError::EquityUnknown(id()))
+        );
+        assert_eq!(
+            equity(&account, |_| Some(Decimal::MAX)),
+            Err(SizingError::TooLarge),
+            "a value past what a Decimal holds is not dropped"
+        );
         assert_eq!(
             sized(Side::Buy, "50", "48", RiskBudget::PercentOfEquity(d("1"))).map(|s| s.budget),
             Ok(d("1000"))
@@ -394,7 +402,7 @@ mod tests {
             entry: d("50"),
             stop: d("48"),
             budget: RiskBudget::PercentOfEquity(d("1")),
-            equity: Some(Err(id())),
+            equity: Some(Err(SizingError::EquityUnknown(id()))),
             info: None,
             capacity: &roomy(),
         };
