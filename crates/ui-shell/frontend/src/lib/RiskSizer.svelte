@@ -10,14 +10,23 @@
   // The ticket's symbol, side, and type, and the price it would enter at:
   // its limit, or its reference for an order without one (ADR 0021).
   // `entryTyped` says the entry is the trader's own limit, not the
-  // reference moving with the quotes.
-  let { symbol, side, orderType, entry, entryTyped = false, decimals, onuse } = $props();
+  // reference moving with the quotes. The stop-loss and take-profit are the
+  // ticket's: it sends them with the order as a bracket (ADR 0022), and the
+  // stop is also what the size is worked out from.
+  let {
+    symbol,
+    side,
+    orderType,
+    entry,
+    entryTyped = false,
+    decimals,
+    onuse,
+    stop = $bindable(null),
+    takeProfit = $bindable(null),
+  } = $props();
   const id = $props.id();
 
   let open = $state(false);
-  // A stop belongs to one instrument; it starts over with the next.
-  const blankFor = (_symbol) => null;
-  let stop = $derived(blankFor(symbol));
   let risk = $state("");
   let percent = $state(false);
 
@@ -95,7 +104,19 @@
 </script>
 
 <details class="sizer" bind:open>
-  <summary>{t("ticket.risk.title")}</summary>
+  <summary>
+    {t("ticket.exits.title")}
+    {#if !open && (Number(stop) > 0 || Number(takeProfit) > 0)}
+      <span class="set num">
+        {[
+          Number(stop) > 0 ? t("ticket.exits.stopAt", { price: price(stop, decimals) }) : null,
+          Number(takeProfit) > 0 ? t("ticket.exits.targetAt", { price: price(takeProfit, decimals) }) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      </span>
+    {/if}
+  </summary>
   <div class="fields">
     <label>
       <span id="{id}-stop">
@@ -103,6 +124,18 @@
         {#if Number(entry) > 0}<em class="hint">{t("ticket.risk.entry", { price: price(entry, decimals) })}</em>{/if}
       </span>
       <input class="num" type="number" aria-labelledby="{id}-stop" min="0" step="any" bind:value={stop} onkeydown={staysHere} />
+    </label>
+    <label>
+      <span id="{id}-target">{t("ticket.exits.takeProfit")}</span>
+      <input
+        class="num"
+        type="number"
+        aria-labelledby="{id}-target"
+        min="0"
+        step="any"
+        bind:value={takeProfit}
+        onkeydown={staysHere}
+      />
     </label>
     <label>
       <span id="{id}-risk">{t("ticket.risk.amount")}</span>
@@ -142,6 +175,13 @@
     text-transform: uppercase;
     letter-spacing: 0.1em;
     cursor: pointer;
+  }
+
+  .set {
+    margin-left: 0.5rem;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   summary:hover,

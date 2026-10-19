@@ -5,7 +5,7 @@
   import { price, quantity as formatQuantity } from "./format.js";
   import { stepDown, stepUp, tickTable } from "./ticks.js";
   import { UNTYPED, typedOr } from "./ticket.js";
-  import { TRIGGERS, complete, conditionWords, placeArgs } from "./conditionals.js";
+  import { TRIGGERS, complete, conditionWords, isLive, placeArgs } from "./conditionals.js";
   import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
 
@@ -200,11 +200,14 @@
     {#if market.conditionalList.length}
       <ol class="held">
         {#each market.conditionalList as conditional (conditional.id)}
-          <li class:done={conditional.status !== "waiting"}>
+          <li class:done={!isLive(conditional)}>
             <span class="what">
               <span class={conditional.side === "buy" ? "up" : "down"}>{t(`side.${conditional.side}`)}</span>
               <span class="num">{formatQuantity(conditional.quantity)}</span>
               <span class="sym">{conditional.symbol}</span>
+              {#if conditional.after_order != null}
+                <span class="dim">{t("conditional.exitOf", { id: conditional.after_order })}</span>
+              {/if}
             </span>
             <span class="when">
               {condition(conditional)}
@@ -214,9 +217,12 @@
             </span>
             <span class="status">
               {t(`conditional.status.${conditional.status}`)}
+              {#if conditional.status === "pending"}
+                <span class="dim">{t("conditional.pendingNote", { id: conditional.after_order })}</span>
+              {/if}
               {#if conditional.status === "fired"}<span class="dim num">{sentOrder(conditional)}</span>{/if}
             </span>
-            {#if conditional.status === "waiting"}
+            {#if isLive(conditional)}
               <button
                 type="button"
                 class="cancel"
@@ -478,7 +484,9 @@
 
   .what {
     display: flex;
-    gap: 0.375rem;
+    flex-wrap: wrap;
+    gap: 0 0.375rem;
+    min-width: 0;
   }
 
   .when {

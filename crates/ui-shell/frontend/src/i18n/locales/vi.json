@@ -397,5 +397,14 @@
   "ticket.risk.bound.holding": "vị thế đang nắm giữ",
   "ticket.risk.bound.order_size": "giới hạn khối lượng lệnh",
   "ticket.risk.bound.order_value": "giới hạn giá trị lệnh",
-  "ticket.risk.cappedNone": "Không đặt được lệnh nào: {bound} không cho phép"
+  "ticket.risk.cappedNone": "Không đặt được lệnh nào: {bound} không cho phép",
+  "ticket.exits.title": "Cắt lỗ, chốt lời và khối lượng",
+  "ticket.exits.takeProfit": "Giá chốt lời",
+  "ticket.exits.stopAt": "cắt lỗ {price}",
+  "ticket.exits.targetAt": "chốt lời {price}",
+  "ticket.submitWithExits": "{side} {symbol} kèm cắt lỗ/chốt lời",
+  "ticket.sentWithExits": "#{id} {side} {quantity} {symbol} đã gửi; lệnh cắt lỗ/chốt lời chờ lệnh này khớp",
+  "conditional.status.pending": "Chờ khớp",
+  "conditional.exitOf": "thoát vị thế của #{id}",
+  "conditional.pendingNote": "chờ #{id} khớp"
 }

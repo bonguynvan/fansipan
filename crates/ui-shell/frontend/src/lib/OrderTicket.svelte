@@ -12,6 +12,7 @@
   import { orderTypeName, phaseName } from "./orderTypes.js";
   import { UNTYPED, isSendable, typedOr } from "./ticket.js";
   import { capacityArgs } from "./capacity.js";
+  import { exitsOf } from "./sizing.js";
   import RiskSizer from "./RiskSizer.svelte";
   import { panelSize } from "./panelSize.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
@@ -48,6 +49,10 @@
   const orderType = $derived(pickOrderType(offered, wantedType));
   const priced = $derived(isPriced(orderType));
   let limitPrice = $derived(blankFor(selected));
+  // A position's exits, sent with the order as a bracket (ADR 0022).
+  let exitStop = $derived(blankFor(selected));
+  let takeProfit = $derived(blankFor(selected));
+  const exits = $derived(exitsOf(exitStop, takeProfit));
   const missingPrice = $derived(priced && !isSendable(limitPrice));
   const missingQuantity = $derived(!isSendable(quantity));
 
@@ -171,19 +176,20 @@
     busy = true;
     message = null;
     try {
-      const order = await invoke("place_order", {
+      const args = {
         symbol: selected,
         side,
         quantity: asText(quantity),
         limitPrice: priced ? asText(limitPrice) : null,
         kind: orderType.kind,
         timeInForce: orderType.time_in_force,
-      });
+      };
+      const order = exits ? (await invoke("place_bracket", { ...args, ...exits })).order : await invoke("place_order", args);
       message = REFUSED.has(order.status)
         ? { kind: "err", text: t(order.status === "denied" ? "ticket.denied" : "ticket.rejected", { reason: order.reason }) }
         : {
             kind: "ok",
-            text: t("ticket.sent", {
+            text: t(exits ? "ticket.sentWithExits" : "ticket.sent", {
               id: order.id,
               side: t(`side.${side}`),
               quantity: formatQuantity(quantity),
@@ -312,6 +318,8 @@
       {orderType}
       entry={priced && Number(limitPrice) > 0 ? Number(limitPrice) : reference}
       entryTyped={priced && Number(limitPrice) > 0}
+      bind:stop={exitStop}
+      bind:takeProfit
       {decimals}
       onuse={(sized) => (typedQuantity = sized)}
     />
@@ -328,7 +336,9 @@
     </dl>
 
     <button class="submit {side}" type="submit" disabled={!selected || !orderType || missingPrice || missingQuantity || busy}>
-      {busy ? t("ticket.sending") : t("ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
+      {busy
+        ? t("ticket.sending")
+        : t(exits ? "ticket.submitWithExits" : "ticket.submit", { side: t(`side.${side}`), symbol: selected ?? "" })}
     </button>
 
     {#if message}

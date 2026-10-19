@@ -40,10 +40,13 @@ export function conditionWords(conditional) {
   return { id: `conditional.when.${conditional.trigger}`, vars: { price: conditional.price } };
 }
 
-/** Waiting ones first, then the rest; newest first within each. */
+/** Whether a held order can still fire: waiting, or an exit pending on its entry (ADR 0022). */
+export const isLive = (conditional) => conditional.status === "waiting" || conditional.status === "pending";
+
+/** Live ones first, then the rest; newest first within each. */
 export function inOrder(conditionals) {
-  const waiting = (c) => (c.status === "waiting" ? 0 : 1);
-  return [...conditionals].sort((a, b) => waiting(a) - waiting(b) || b.id - a.id);
+  const rank = (c) => (isLive(c) ? 0 : 1);
+  return [...conditionals].sort((a, b) => rank(a) - rank(b) || b.id - a.id);
 }
 
 /** Conditionals by id, with `changed` laid over `held`. */

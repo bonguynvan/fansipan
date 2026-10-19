@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import english from "../i18n/locales/en.json";
-import { TRIGGERS, complete, conditionWords, inOrder, placeArgs, withConditionals } from "./conditionals.js";
+import { TRIGGERS, complete, conditionWords, inOrder, isLive, placeArgs, withConditionals } from "./conditionals.js";
 
 const form = (patch = {}) => ({
   symbol: "FPT",
@@ -57,17 +57,20 @@ describe("a held conditional", () => {
       expect(english[`conditional.trigger.${trigger}`]).toBeTruthy();
       expect(english[conditionWords({ trigger, percent: false }).id]).toBeTruthy();
     }
-    for (const status of ["waiting", "fired", "cancelled"]) expect(english[`conditional.status.${status}`]).toBeTruthy();
+    for (const status of ["pending", "waiting", "fired", "cancelled"]) expect(english[`conditional.status.${status}`]).toBeTruthy();
   });
 
-  it("lists waiting ones first, newest first", () => {
+  it("lists live ones first, an exit pending on its entry among them, newest first", () => {
     const listed = inOrder([
       { id: 1, status: "waiting" },
       { id: 2, status: "fired" },
       { id: 3, status: "waiting" },
+      { id: 4, status: "pending" },
     ]);
 
-    expect(listed.map((c) => c.id)).toEqual([3, 1, 2]);
+    expect(listed.map((c) => c.id)).toEqual([4, 3, 1, 2]);
+    expect(isLive({ status: "pending" })).toBe(true);
+    expect(isLive({ status: "cancelled" })).toBe(false);
   });
 
   it("takes a batch's changes over what is held", () => {

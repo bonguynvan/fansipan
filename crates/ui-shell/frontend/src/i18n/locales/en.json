@@ -388,7 +388,7 @@
   "conditional.cancel": "Cancel",
   "conditional.cancelOne": "Cancel conditional order #{id}",
   "ticket.risk.title": "Size by risk",
-  "ticket.risk.stop": "Stop",
+  "ticket.risk.stop": "Stop-loss",
   "ticket.risk.entry": "entry {price}",
   "ticket.risk.amount": "Risk",
   "ticket.risk.unit": "Risk unit",
@@ -402,5 +402,14 @@
   "ticket.risk.bound.holding": "the holding",
   "ticket.risk.bound.order_size": "the order size limit",
   "ticket.risk.bound.order_value": "the order value limit",
-  "ticket.risk.cappedNone": "Nothing fits: {bound} allows no order"
+  "ticket.risk.cappedNone": "Nothing fits: {bound} allows no order",
+  "ticket.exits.title": "Stop, target and size",
+  "ticket.exits.takeProfit": "Take-profit",
+  "ticket.exits.stopAt": "stop {price}",
+  "ticket.exits.targetAt": "target {price}",
+  "ticket.submitWithExits": "{side} {symbol} with exits",
+  "ticket.sentWithExits": "#{id} {side} {quantity} {symbol} sent; its exits wait for its fills",
+  "conditional.status.pending": "Pending",
+  "conditional.exitOf": "exit of #{id}",
+  "conditional.pendingNote": "waits for #{id} to fill"
 }

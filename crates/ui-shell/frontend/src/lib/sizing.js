@@ -1,6 +1,7 @@
-// The ticket's question to core about sizing from risk (ADR 0021). Core
-// works the size out in exact decimals, costs and caps included; this
-// decides what to ask, how the answer reads, and what the trader keeps.
+// The ticket's questions to core about sizing from risk (ADR 0021) and the
+// exits it sends with an order (ADR 0022). Core works the size out in exact
+// decimals, costs and caps included, and checks the exits; this decides
+// what to ask and send, how the answer reads, and what the trader keeps.
 
 /** Where the trader's budget is kept, for every ticket. */
 export const RISK_SETTING = "screen.order-ticket.risk";
@@ -34,6 +35,17 @@ export function sizingArgs({ symbol, side, orderType, entry, stop, risk, percent
     risk: plain(risk),
     percent: Boolean(percent),
   };
+}
+
+/**
+ * The exits to send with the ticket's order as `place_bracket` takes them,
+ * or null for a plain order: a stop-loss price, a take-profit price, or both.
+ */
+export function exitsOf(stop, takeProfit) {
+  const stopPrice = positive(stop) ? plain(stop) : null;
+  const target = positive(takeProfit) ? plain(takeProfit) : null;
+  if (!stopPrice && !target) return null;
+  return { stopPrice, trail: null, trailPercent: false, takeProfit: target };
 }
 
 /**

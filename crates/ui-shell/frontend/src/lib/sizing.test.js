@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import english from "../i18n/locales/en.json";
-import { keptBudget, plain, sizingArgs, sizingMessage } from "./sizing.js";
+import { exitsOf, keptBudget, plain, sizingArgs, sizingMessage } from "./sizing.js";
 
 const limit = { kind: "limit", time_in_force: "day" };
 const ticket = (patch = {}) => ({
@@ -48,6 +48,13 @@ describe("sizing from risk", () => {
     expect(plain(0.0000001)).toBe("0.0000001");
     expect(plain(12.5)).toBe("12.5");
     expect(sizingArgs(ticket({ entry: 0.0000002, stop: 0.0000001 }))).toMatchObject({ entry: "0.0000002", stop: "0.0000001" });
+  });
+
+  it("sends exits only when there is one, each as plain text", () => {
+    expect(exitsOf(null, "")).toBeNull();
+    expect(exitsOf(0, -1)).toBeNull();
+    expect(exitsOf(95, null)).toEqual({ stopPrice: "95", trail: null, trailPercent: false, takeProfit: null });
+    expect(exitsOf("", 120)).toMatchObject({ stopPrice: null, takeProfit: "120" });
   });
 
   it("keeps a budget only as a positive number and a unit", () => {
