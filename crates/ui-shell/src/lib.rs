@@ -478,6 +478,18 @@ fn sizing_of(shell: &Shell, ticket: &SizingTicket<'_>) -> Result<SizingDto, Stri
         .map_err(|e| e.to_string())
 }
 
+/// The app's configuration and assets. On Windows the window icon is read
+/// from the running executable's resources, which only the shell's own
+/// binary carries; a program that opens the terminal as a library (an
+/// adapter's example, ADR 0008) gets the icon built into this crate instead.
+fn context() -> tauri::Context<tauri::Wry> {
+    let mut context = tauri::generate_context!();
+    if context.default_window_icon().is_none() {
+        context.set_default_window_icon(Some(tauri::include_image!("icons/icon.png")));
+    }
+    context
+}
+
 /// Sets the trader's switch, for every window. Orders already working stay
 /// working: halting cancels nothing by itself.
 fn set_trading(shell: &Shell, state: &str) -> Result<(), String> {
@@ -949,7 +961,7 @@ pub fn run(venue: Venue) -> ExitCode {
             workspace::settings_remove,
             workspace::open_window
         ])
-        .build(tauri::generate_context!());
+        .build(context());
 
     match app {
         Ok(app) => {
@@ -1173,6 +1185,13 @@ mod tests {
             0,
             "a refusal is not counted"
         );
+    }
+
+    #[test]
+    fn the_window_has_an_icon_in_a_program_without_the_shells_resources() {
+        // A test executable carries no icon resources, as an adapter's
+        // example that opens the terminal does not.
+        assert!(context().default_window_icon().is_some());
     }
 
     fn size_aapl(stop: &'static str) -> SizingTicket<'static> {
