@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { onBatch, startBridge } from "./bridge.js";
+import { inOrder, withConditionals } from "./conditionals.js";
 import { withConnections } from "./connection.js";
 import { withSessions, withTypeNames } from "./sessions.js";
 import { createSync } from "./sync.js";
@@ -44,12 +45,16 @@ class Market {
   dayBySymbol = $derived(
     Object.fromEntries((this.day?.instruments ?? []).map((line) => [line.symbol, line.pnl === null ? null : Number(line.pnl)])),
   );
+  /** Conditional orders held in this terminal (ADR 0020), by id. */
+  conditionals = $state.raw({});
   ready = $state(false);
 
   symbols = $derived(Object.keys(this.quotes).sort());
   /** Every symbol the venue lists: quoted, or with its rules published and no quote yet. */
   listed = $derived([...new Set([...Object.keys(this.quotes), ...Object.keys(this.instruments)])].sort());
   orderList = $derived(Object.values(this.orders).sort((a, b) => b.id - a.id));
+  /** Waiting conditional orders first, newest first. */
+  conditionalList = $derived(inOrder(Object.values(this.conditionals)));
 
   apply(batch) {
     if (batch.quotes.length) {
@@ -68,6 +73,7 @@ class Market {
     this.tapes = withPrints(this.tapes, batch.prints ?? []);
     if (batch.trading) this.trading = batch.trading;
     if (batch.day) this.day = batch.day;
+    this.conditionals = withConditionals(this.conditionals, batch.conditionals ?? []);
   }
 
   /** Places that show every tradable price of `symbol`: 0 for VND shares, 2 for cents. */

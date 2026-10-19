@@ -76,4 +76,16 @@ describe("createSync", () => {
     expect(received[0].sessions).toEqual([hose]);
     expect(received[1].sessions).toEqual([]);
   });
+
+  it("hands on the snapshot's conditional orders as a batch", () => {
+    const received = [];
+    const sync = createSync((b) => received.push(b));
+    const stop = { id: 1, symbol: "FPT", status: "waiting" };
+
+    sync.snapshot({ ...snapshot(1), conditionals: [stop] });
+    sync.snapshot(snapshot(2));
+
+    expect(received[0].conditionals).toEqual([stop]);
+    expect(received[1].conditionals).toEqual([]);
+  });
 });

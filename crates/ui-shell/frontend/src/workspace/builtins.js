@@ -14,6 +14,7 @@ import Portfolio from "../lib/Portfolio.svelte";
 import PriceBoard from "../lib/PriceBoard.svelte";
 import TimeAndSales from "../lib/TimeAndSales.svelte";
 import DepthLadder from "../lib/DepthLadder.svelte";
+import ConditionalOrders from "../lib/ConditionalOrders.svelte";
 
 export const DEFAULT_LAYOUT = "trading";
 
@@ -87,6 +88,15 @@ export function registerBuiltins() {
     linkable: true,
     defaultParams: { linked: true },
     description: "screen.depth-ladder.description",
+  });
+
+  registerScreen({
+    id: "conditional-orders",
+    title: "screen.conditional-orders.title",
+    component: ConditionalOrders,
+    linkable: true,
+    defaultParams: { linked: true },
+    description: "screen.conditional-orders.description",
   });
 
   registerTradingActions();
