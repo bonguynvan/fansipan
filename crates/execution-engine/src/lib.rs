@@ -6,6 +6,7 @@
 pub mod capacity;
 pub mod gate;
 pub mod lifecycle;
+pub mod pnl;
 pub mod risk;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,6 +24,7 @@ use model::{OrderKind, OrderType, VenueOrder, VenueOrderState};
 pub use capacity::{Bound, BuyingPower, OrderCapacity};
 pub use gate::Gate;
 pub use lifecycle::TransitionError;
+pub use pnl::DayPnl;
 pub use risk::{Cleared, RiskLimits, RiskReject, TradingState};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,6 +181,49 @@ impl ExecutionEngine {
             account: AccountState::default(),
             connection: None,
         }
+    }
+
+    /// The day's profit and loss (ADR 0019) for every instrument held now
+    /// or traded this session, by instrument. `mark` gives an instrument's
+    /// price now, or `None` when it has none.
+    pub fn day_pnl(&self, mark: impl Fn(&InstrumentId) -> Option<Decimal>) -> Vec<DayPnl> {
+        let mut flows: BTreeMap<&InstrumentId, pnl::Flows> = BTreeMap::new();
+        for tracked in self.orders.values() {
+            let order = &tracked.order;
+            if order.filled_quantity.is_zero() {
+                continue;
+            }
+            let entry = flows.entry(&order.instrument).or_default();
+            *entry = entry.add(
+                order.side == Side::Buy,
+                order.filled_quantity,
+                order.avg_fill_price,
+            );
+        }
+        for position in &self.account.positions {
+            flows.entry(&position.instrument).or_default();
+        }
+        flows
+            .into_iter()
+            .map(|(instrument, flows)| {
+                let held = self
+                    .account
+                    .position(instrument)
+                    .map_or(Decimal::ZERO, |p| p.quantity);
+                let reference = self.bands.get(instrument).map(|band| band.reference);
+                let costs = self
+                    .instruments
+                    .get(instrument)
+                    .map(|info| info.costs)
+                    .unwrap_or_default();
+                let (pnl, costs) = pnl::day_pnl(&flows, held, reference, mark(instrument), costs);
+                DayPnl {
+                    instrument: instrument.clone(),
+                    pnl,
+                    costs,
+                }
+            })
+            .collect()
     }
 
     /// Whether this terminal sends new orders now (risk's first check).
@@ -1710,6 +1755,25 @@ mod tests {
             engine.amend(growing, d("5"), d("5")),
             Err(AmendError::Denied(RiskReject::ReducingOnly { .. }))
         ));
+    }
+
+    #[test]
+    fn the_day_counts_this_sessions_fills_against_the_venues_position() {
+        let (mut engine, _) = engine();
+        let instrument = InstrumentId::new("sim", "AAA");
+        let id = engine.submit(buy("4")).id;
+        engine.apply(&report(id, fill("F1", "4"))).unwrap();
+        engine.set_account(AccountState::new(
+            d("980"),
+            vec![model::Position::new(instrument.clone(), d("4"), d("5"))],
+        ));
+
+        let day = engine.day_pnl(|_| Some(d("6")));
+
+        // Four bought at 5 today, worth 6 each now.
+        assert_eq!(day.len(), 1);
+        assert_eq!(day[0].instrument, instrument);
+        assert_eq!(day[0].pnl, Some(d("4")));
     }
 
     #[test]
