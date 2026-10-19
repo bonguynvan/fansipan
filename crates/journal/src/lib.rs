@@ -11,7 +11,7 @@ mod record;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use execution_engine::{Conditional, ConditionalStatus, OrderRecord, Restored, TradingState};
@@ -173,6 +173,17 @@ pub fn utc_date(unix_seconds: u64) -> String {
 pub struct Journal {
     file: File,
     path: PathBuf,
+    /// A write was cut short and could not be cut back off: the next one
+    /// starts on a fresh line, so it is not glued to the torn one.
+    torn: bool,
+}
+
+/// What reading a day's file found.
+struct Read {
+    restored: Restored,
+    damaged: Option<PathBuf>,
+    /// Readable records beyond the header.
+    records: usize,
 }
 
 /// A day's journal as opened: the session it holds, and where its damaged
@@ -185,39 +196,47 @@ pub struct Opened {
 
 impl Journal {
     /// Opens `date`'s journal in `folder`, creating both if need be, and
-    /// rebuilds the session it records. A day with no file yet starts from
-    /// what was live in the latest earlier one. Take the folder's
-    /// [`AccountLock`] first.
+    /// rebuilds the session it records. A day whose file holds no records
+    /// yet starts from what was live in the latest earlier one, written into
+    /// the new file whole or not at all. Take the folder's [`AccountLock`]
+    /// first.
     pub fn open(folder: &Path, date: &str) -> Result<Opened, JournalError> {
         fs::create_dir_all(folder)?;
         let path = folder.join(format!("{date}.{EXTENSION}"));
-        let (restored, damaged, carried) = match fs::read(&path) {
-            Ok(bytes) => {
-                let (restored, damaged) = read(&path, &bytes)?;
-                (restored, damaged, None)
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => match latest_before(folder, date)? {
-                Some(earlier) => {
-                    let bytes = fs::read(&earlier)?;
-                    let (restored, damaged) = read(&earlier, &bytes)?;
-                    let carried = live(&restored);
-                    (carried.clone(), damaged, Some(carried))
-                }
-                None => (Restored::default(), None, None),
-            },
+        let today = match fs::read(&path) {
+            Ok(bytes) => Some(read(&path, &bytes, date)?),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(e.into()),
         };
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-        if file.metadata()?.len() == 0 {
-            file.write_all(header_line(date)?.as_bytes())?;
-            file.sync_data()?;
-        }
-        let mut journal = Self { file, path };
-        if let Some(carried) = carried {
-            journal.append(&records_of(&carried).map_err(JournalError::Record)?)?;
-        }
+        let (restored, damaged) = match today {
+            Some(found) if found.records > 0 => (found.restored, found.damaged),
+            found => {
+                let mut damaged = found.and_then(|found| found.damaged);
+                let carried = match latest_before(folder, date)? {
+                    Some((day, earlier)) => {
+                        let bytes = fs::read(&earlier)?;
+                        let before = read(&earlier, &bytes, &day)?;
+                        damaged = damaged.or(before.damaged);
+                        live(&before.restored)
+                    }
+                    None => Restored::default(),
+                };
+                let mut text = header_line(date)?;
+                for record in records_of(&carried).map_err(JournalError::Record)? {
+                    text.push_str(&line_of(&record)?);
+                }
+                replace(&path, text.as_bytes())?;
+                (carried, damaged)
+            }
+        };
+        let mut file = OpenOptions::new().write(true).open(&path)?;
+        file.seek(SeekFrom::End(0))?;
         Ok(Opened {
-            journal,
+            journal: Self {
+                file,
+                path,
+                torn: false,
+            },
             restored,
             damaged,
         })
@@ -228,30 +247,46 @@ impl Journal {
     }
 
     /// Appends `records`, one line each, and syncs them to the disk. A
-    /// write that fails part way is cut back off, so the next append starts
-    /// on a line of its own.
+    /// write that fails part way is cut back off; if even that fails, the
+    /// next write starts on a fresh line.
     pub fn append(&mut self, records: &[Record]) -> Result<(), JournalError> {
         if records.is_empty() {
             return Ok(());
         }
         let mut text = String::new();
-        for record in records {
-            text.push_str(&serde_json::to_string(record).map_err(io::Error::other)?);
+        if self.torn {
             text.push('\n');
         }
-        let before = self.file.metadata()?.len();
+        for record in records {
+            text.push_str(&line_of(record)?);
+        }
+        let before = self.file.seek(SeekFrom::End(0))?;
         let written = self
             .file
             .write_all(text.as_bytes())
             .and_then(|()| self.file.sync_data());
-        if let Err(e) = written {
-            // Best effort: if even this fails, the next open sets the
-            // partial line aside as damaged.
-            let _ = self.file.set_len(before);
-            return Err(e.into());
+        match written {
+            Ok(()) => {
+                self.torn = false;
+                Ok(())
+            }
+            Err(e) => {
+                self.torn = self.cut_back(before).is_err();
+                Err(e.into())
+            }
         }
-        Ok(())
     }
+
+    /// Cuts the file back to `length`, where the next write will go.
+    fn cut_back(&mut self, length: u64) -> io::Result<()> {
+        self.file.set_len(length)?;
+        self.file.seek(SeekFrom::End(0)).map(drop)
+    }
+}
+
+fn line_of(record: &Record) -> Result<String, JournalError> {
+    let line = serde_json::to_string(record).map_err(io::Error::other)?;
+    Ok(format!("{line}\n"))
 }
 
 fn header_line(date: &str) -> Result<String, JournalError> {
@@ -263,8 +298,8 @@ fn header_line(date: &str) -> Result<String, JournalError> {
     Ok(format!("{line}\n"))
 }
 
-/// The latest day's journal in `folder` dated before `date`, if any.
-fn latest_before(folder: &Path, date: &str) -> Result<Option<PathBuf>, JournalError> {
+/// The latest day's journal in `folder` dated before `date`, and its date.
+fn latest_before(folder: &Path, date: &str) -> Result<Option<(String, PathBuf)>, JournalError> {
     let mut latest: Option<(String, PathBuf)> = None;
     for entry in fs::read_dir(folder)? {
         let path = entry?.path();
@@ -285,21 +320,24 @@ fn latest_before(folder: &Path, date: &str) -> Result<Option<PathBuf>, JournalEr
             latest = Some((day, path));
         }
     }
-    Ok(latest.map(|(_, path)| path))
+    Ok(latest)
 }
 
 /// The session `bytes` records, and where lines that could not be read were
 /// moved. Such a line is skipped, not the end of reading: each line is the
 /// whole state of one thing, so the rest still holds. A last line the
-/// process did not finish counts as one. The journal is then rewritten,
-/// atomically, with its readable lines only.
-fn read(path: &Path, bytes: &[u8]) -> Result<(Restored, Option<PathBuf>), JournalError> {
+/// process did not finish counts as one; a header that names no format is
+/// replaced with `date`'s. The journal is then rewritten, atomically, with
+/// its readable lines only.
+fn read(path: &Path, bytes: &[u8], date: &str) -> Result<Read, JournalError> {
     let mut orders: BTreeMap<u64, OrderRecord> = BTreeMap::new();
     let mut conditionals: BTreeMap<u64, Conditional> = BTreeMap::new();
     let mut trading: Option<TradingState> = None;
     let mut reserved: Option<u64> = None;
+    let fresh_header = header_line(date)?;
     let mut good: Vec<&[u8]> = Vec::new();
     let mut bad: Vec<&[u8]> = Vec::new();
+    let mut records = 0;
     for (index, line) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
         let Some(body) = line.strip_suffix(b"\n") else {
             bad.push(line);
@@ -309,8 +347,15 @@ fn read(path: &Path, bytes: &[u8]) -> Result<(Restored, Option<PathBuf>), Journa
             match header_format(body) {
                 Some(FORMAT) => good.push(line),
                 Some(other) => return Err(JournalError::Format(other)),
-                None => bad.push(line),
+                None => {
+                    bad.push(line);
+                    good.push(fresh_header.as_bytes());
+                }
             }
+            continue;
+        }
+        // The fresh line a write starts on after one was cut short.
+        if body.is_empty() {
             continue;
         }
         let applied = serde_json::from_slice::<Record>(body)
@@ -325,7 +370,10 @@ fn read(path: &Path, bytes: &[u8]) -> Result<(Restored, Option<PathBuf>), Journa
                 )
             });
         match applied {
-            Ok(()) => good.push(line),
+            Ok(()) => {
+                good.push(line);
+                records += 1;
+            }
             Err(_) => bad.push(line),
         }
     }
@@ -350,7 +398,11 @@ fn read(path: &Path, bytes: &[u8]) -> Result<(Restored, Option<PathBuf>), Journa
         trading,
         next_order_id: reserved,
     };
-    Ok((restored, damaged))
+    Ok(Read {
+        restored,
+        damaged,
+        records,
+    })
 }
 
 /// The format a header line names, or `None` when it names none.
@@ -364,11 +416,15 @@ fn header_format(body: &[u8]) -> Option<u64> {
 /// Replaces `path` with `lines`, through a temporary file and a rename, so
 /// a crash leaves either the old journal or the new one whole.
 fn rewrite(path: &Path, lines: &[&[u8]]) -> Result<(), JournalError> {
+    replace(path, &lines.concat())
+}
+
+/// Replaces `path` with `bytes` whole: written and synced under another
+/// name, then renamed over it.
+fn replace(path: &Path, bytes: &[u8]) -> Result<(), JournalError> {
     let temporary = path.with_extension(format!("{EXTENSION}.rewrite"));
     let mut file = File::create(&temporary)?;
-    for line in lines {
-        file.write_all(line)?;
-    }
+    file.write_all(bytes)?;
     file.sync_data()?;
     drop(file);
     fs::rename(&temporary, path)?;

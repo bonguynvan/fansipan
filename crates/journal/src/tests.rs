@@ -377,3 +377,106 @@ fn every_conditional_shape_reads_back() {
         assert_eq!(line.to_conditional().unwrap(), held);
     }
 }
+
+#[test]
+fn a_write_cut_short_is_cut_back_off_so_the_next_starts_clean() {
+    let folder = scratch();
+    let mut opened = Journal::open(&folder, "2026-10-19").unwrap();
+    let first = order(1, OrderStatus::Accepted, "0");
+    opened
+        .journal
+        .append(&[Record::order(&first).unwrap()])
+        .unwrap();
+    let before = opened.journal.file.metadata().unwrap().len();
+    // Half a line, as a full disk would leave it.
+    opened
+        .journal
+        .file
+        .write_all(br#"{"order":{"id":"#)
+        .unwrap();
+
+    opened.journal.cut_back(before).unwrap();
+    let second = order(2, OrderStatus::Accepted, "0");
+    opened
+        .journal
+        .append(&[Record::order(&second).unwrap()])
+        .unwrap();
+    drop(opened);
+
+    let again = Journal::open(&folder, "2026-10-19").unwrap();
+    assert_eq!(again.damaged, None, "nothing torn was left behind");
+    assert_eq!(again.restored.orders, vec![first, second]);
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_write_that_could_not_be_cut_back_does_not_take_the_next_one_with_it() {
+    let folder = scratch();
+    let mut opened = Journal::open(&folder, "2026-10-19").unwrap();
+    opened
+        .journal
+        .file
+        .write_all(br#"{"order":{"id":"#)
+        .unwrap();
+    opened.journal.torn = true;
+
+    let next = order(2, OrderStatus::Accepted, "0");
+    opened
+        .journal
+        .append(&[Record::order(&next).unwrap()])
+        .unwrap();
+    drop(opened);
+
+    let again = Journal::open(&folder, "2026-10-19").unwrap();
+    assert!(again.damaged.is_some(), "the torn half is set aside");
+    assert_eq!(
+        again.restored.orders,
+        vec![next],
+        "the next record is whole"
+    );
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_day_whose_file_holds_only_its_header_still_carries_the_last_one_over() {
+    let folder = scratch();
+    let mut monday = Journal::open(&folder, "2026-10-19").unwrap();
+    let open_order = order(1, OrderStatus::Accepted, "0");
+    monday
+        .journal
+        .append(&[Record::order(&open_order).unwrap()])
+        .unwrap();
+    drop(monday);
+    // A crash after the new day's header and before what it carries.
+    fs::write(
+        folder.join("2026-10-20.jsonl"),
+        header_line("2026-10-20").unwrap(),
+    )
+    .unwrap();
+
+    let tuesday = Journal::open(&folder, "2026-10-20").unwrap();
+
+    assert_eq!(tuesday.restored.orders, vec![open_order]);
+    let _ = fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_damaged_header_is_replaced_so_the_next_open_finds_nothing_wrong() {
+    let folder = scratch();
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("2026-10-19.jsonl"),
+        b"garbage\n{\"trading\":\"halted\"}\n",
+    )
+    .unwrap();
+    assert!(Journal::open(&folder, "2026-10-19")
+        .unwrap()
+        .damaged
+        .is_some());
+
+    let again = Journal::open(&folder, "2026-10-19").unwrap();
+
+    assert_eq!(again.damaged, None);
+    assert_eq!(again.restored.trading, Some(TradingState::Halted));
+    let _ = fs::remove_dir_all(&folder);
+}

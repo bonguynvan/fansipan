@@ -915,6 +915,10 @@ impl ExecutionEngine {
             tracked.amending_to = None;
         }
         tracked.order = next;
+        // An end the venue reports is final, whatever the journal missed.
+        if !tracked.order.status.is_open() {
+            tracked.unconfirmed = false;
+        }
         Ok(tracked.order.clone())
     }
 
@@ -2848,6 +2852,20 @@ mod tests {
             "the exit sells what the venue says"
         );
         assert!(calls.lock().unwrap().submitted.len() == 1);
+    }
+
+    #[test]
+    fn a_restored_order_the_venue_ends_is_confirmed_by_that_end() {
+        let (mut before, _) = engine();
+        let open = before.submit(buy("4"));
+        let (mut after, _) = engine();
+        after.restore(recorded(&before)).unwrap();
+
+        after
+            .apply(&report(open.id, OrderEvent::Cancelled))
+            .unwrap();
+
+        assert!(!after.is_unconfirmed(open.id), "an end is final");
     }
 
     #[test]

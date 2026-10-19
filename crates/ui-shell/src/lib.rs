@@ -313,6 +313,9 @@ fn day_of(shell: &Shell) -> Result<DayDto, String> {
 /// Takes everything pending as the next numbered batch; `None` if nothing
 /// changed since the last one.
 fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
+    // Held before the batch is taken, so a command finishing meanwhile waits
+    // to journal its change until this flush has written what it took.
+    let mut journal = lock(&shell.journal)?;
     let batch = mem::take(&mut *lock(&shell.pending)?);
     if batch.is_empty() {
         return Ok(None);
@@ -326,7 +329,6 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
         day: day_of(shell).ok(),
         ..batch.into_dto(seq)
     };
-    let mut journal = lock(&shell.journal)?;
     let resyncing = journal.as_ref().is_some_and(journaling::Kept::resyncing);
     if !orders.is_empty() || !conditionals.is_empty() || trading || resyncing {
         let orders: Vec<ClientOrderId> = orders.into_iter().map(ClientOrderId).collect();

@@ -196,9 +196,16 @@ impl Kept {
     pub fn write(&mut self, built: Built, now_seconds: u64) -> Option<String> {
         let date = utc_date(now_seconds);
         let mut outcome = Ok(());
+        let mut carried_damage = None;
         if date != self.date {
             match Journal::open(&self.folder, &date) {
                 Ok(opened) => {
+                    carried_damage = opened.damaged.map(|path| {
+                        format!(
+                            "lines of the journal that could not be read were set aside in {}",
+                            path.display()
+                        )
+                    });
                     self.journal = opened.journal;
                     self.date = date;
                 }
@@ -214,7 +221,7 @@ impl Kept {
         let problem = match outcome {
             Ok(()) => {
                 self.resync = false;
-                built.problems.into_iter().next()
+                built.problems.into_iter().next().or(carried_damage)
             }
             Err(e) => {
                 self.resync = true;
