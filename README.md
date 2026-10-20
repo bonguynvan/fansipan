@@ -45,10 +45,9 @@ by `node scripts/footprint.mjs`:
   private memory, under 450 MB once its garbage is collected, and under
   half of one core.
 - **In the Docker demo** (`node scripts/footprint-docker.mjs`): a 322 MB
-  image, under half a second to the window, and about 290 MB for the
-  container idle, 750 MB under the busy feed (three windows, as above).
-  With no GPU there, WebKit draws in software: a quarter of a core idle,
-  three cores busy.
+  image, about half a second to the window, and about 290 MB for the
+  container idle, 360 MB under the busy feed. With no GPU there, WebKit
+  draws in software: about a quarter of a core idle, just over one busy.
 
 ## Run with Docker
 
