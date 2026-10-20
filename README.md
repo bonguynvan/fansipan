@@ -124,7 +124,4 @@ LGPL-3.0-or-later: see [COPYING.LESSER](COPYING.LESSER) and
 licence.
 
 The tables are [bo-grid](https://github.com/bonguynvan/bo-grid) and the
-chart is [TradeCanvas](https://github.com/bonguynvan/tradecanvas). The
-split between data and execution clients follows the pattern of
-[NautilusTrader](https://github.com/nautechsystems/nautilus_trader); no
-code is taken from it.
+chart is [TradeCanvas](https://github.com/bonguynvan/tradecanvas).

@@ -1,6 +1,6 @@
-//! Conditional orders held in this terminal, as NautilusTrader's
-//! order emulator holds what a venue does not take: a stop, a take-profit,
-//! or a trailing stop waits here, watching the instrument's trades, and
+//! Conditional orders held in this terminal, for what a venue does not
+//! take: a stop, a take-profit, or a trailing stop waits here, watching
+//! the instrument's trades, and
 //! when one fires it becomes an ordinary new order, cleared by risk at that
 //! moment. It serves venues that take no stops of their own, where brokers
 //! typically hold such orders on their servers instead.

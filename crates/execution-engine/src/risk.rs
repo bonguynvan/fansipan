@@ -65,8 +65,8 @@ impl Cleared<NewOrder> {
     }
 }
 
-/// Whether this terminal sends new orders: the trader's kill switch, as
-/// NautilusTrader's risk engine has it. Cancels are never stopped.
+/// Whether this terminal sends new orders: the trader's kill switch.
+/// Cancels are never stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TradingState {
     /// Orders go out as the other checks allow.
