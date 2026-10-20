@@ -1,17 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "The main window has no system frame: its own title bar moves it (and maximises it on a double-click), and its own buttons minimise, maximise, restore, and close it; its menus may close it (File, Exit: closing the main window quits the terminal) and put it in full screen",
+  "description": "The main window has the system's frame. Its menus may close it (File, Exit: closing the main window quits the terminal) and put it in full screen",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:window:allow-close",
-    "core:window:allow-set-fullscreen",
-    "core:window:allow-start-dragging",
-    "core:window:allow-internal-toggle-maximize",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-is-maximized"
+    "core:window:allow-set-fullscreen"
   ]
 }

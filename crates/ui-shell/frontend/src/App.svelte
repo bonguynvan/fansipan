@@ -10,7 +10,6 @@
   import KeysDialog from "./lib/KeysDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
-  import WindowButtons from "./lib/WindowButtons.svelte";
   import SearchBox from "./lib/SearchBox.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import { registerAppSections } from "./lib/appSections.js";
@@ -118,24 +117,20 @@
   );
 </script>
 
-<!-- An extra window is the screen alone: no top bar, moved by its tab strip.
-     The main window has no system frame either: its title bar
-     holds the menus and the window buttons, and moves the window from
-     wherever nothing else answers to the pointer. -->
+<!-- An extra window is the screen alone, moved by its tab strip. The main
+     window has the system's frame; under it, the menus and search. -->
 <div class="terminal" class:detached={label !== MAIN_WINDOW}>
   {#if label === MAIN_WINDOW}
-  <header class="titlebar" data-tauri-drag-region>
-    <div class="brand" data-tauri-drag-region>
+  <header class="toolbar">
+    <div class="brand">
       <span class="mark" aria-hidden="true">▲</span>
-      <span data-tauri-drag-region>Fansipan</span>
+      <span>Fansipan</span>
     </div>
     <!-- The venue gives way first when the window narrows. -->
-    <span class="venue dim" data-tauri-drag-region>{market.info?.title ?? ""}</span>
+    <span class="venue dim">{market.info?.title ?? ""}</span>
     <MenuBar onNotice={(notice) => (workspace.notice = notice)} />
-    <div class="drag" data-tauri-drag-region></div>
+    <div class="gap"></div>
     <SearchBox onNotice={(notice) => (workspace.notice = notice)} onPick={() => showSection(TRADE)} />
-    <div class="drag" data-tauri-drag-region></div>
-    <WindowButtons />
   </header>
   <div class="statusbar">
     <div class="figures">
@@ -186,36 +181,31 @@
     display: grid;
     grid-template-rows: auto auto 1fr;
     height: 100vh;
-    /* No system frame around any window: a hairline keeps its edge. */
+  }
+
+  /* An extra window has no system frame: a hairline keeps its edge. */
+  .terminal.detached {
+    grid-template-rows: 1fr;
     border: 1px solid var(--rule);
   }
 
-  .terminal.detached {
-    grid-template-rows: 1fr;
-  }
-
-  /* The title bar: the brand, the menus, room to drag, the window buttons. */
-  .titlebar {
+  /* Under the system's title bar: the brand, the menus, search. */
+  .toolbar {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     gap: 1rem;
     min-height: 2.25rem;
-    padding-left: 0.75rem;
+    padding: 0 0.75rem;
     background: var(--ink);
     border-bottom: 1px solid var(--rule);
     user-select: none;
   }
 
-  .titlebar > :global(.menubar) {
-    align-self: center;
+  .toolbar > :global(.menubar) {
     flex: none;
   }
 
-  .titlebar > :global(.buttons) {
-    flex: none;
-  }
-
-  .drag {
+  .gap {
     flex: 1 1 0;
     min-width: 0.5rem;
   }
