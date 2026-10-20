@@ -1423,7 +1423,6 @@ fn serve(launch: launch::Launch, ready: Option<(Shell, Receiver<Event>)>) -> Exi
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,
-            workspace::open_window
         ])
         .build(context());
 

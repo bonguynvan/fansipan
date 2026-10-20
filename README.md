@@ -24,9 +24,9 @@ simulated adapter, the sandbox. No real broker is connected from here.
 - **Orders the engine owns.** Adapters only report what the venue says;
   the engine decides each order's state, handles the venue's races, and
   checks risk before an order ever reaches an adapter.
-- **A workspace you arrange.** Docked panels you split, stack, float, or
-  move to another monitor, with pages and desktops, all restored on
-  restart. Search (Ctrl+K) finds any command or symbol.
+- **A workspace you arrange.** Panels you drag to split, stack, and
+  resize, on pages and desktops, all restored on restart. Search (Ctrl+K)
+  finds any command or symbol.
 - **In more than one language.** English and Vietnamese; a translation is
   one JSON file.
 
@@ -40,13 +40,16 @@ by `node scripts/footprint.mjs`:
 - **Under a second** from launch to the first prices on the board.
 - **Idle, one window:** about 300 MB of private memory and 6 to 8% of one
   core. The Rust core is 9 MB of that; the rest is WebView2.
-- **A busy feed (1,000 to 1,600 quotes a second) with three windows:**
-  about 1.1 GB of private memory, under 900 MB once its garbage is
-  collected, and one and a half to two and a half cores.
+- **A busy feed (1,000 to 1,600 quotes a second):** about 1.1 GB of
+  private memory, under 900 MB once its garbage is collected, and one and a
+  half to two and a half cores. This was measured on an earlier build with
+  three windows open; the terminal now keeps one, and the busy figures are
+  due to be measured again.
 - **In the Docker demo** (`node scripts/footprint-docker.mjs`): a 322 MB
-  image, under half a second to the windows, and about 290 MB for the
-  container idle, 750 MB under the busy feed. With no GPU there, WebKit
-  draws in software: a quarter of a core idle, three cores busy.
+  image, under half a second to the window, and about 290 MB for the
+  container idle, 750 MB under the busy feed (three windows, as above).
+  With no GPU there, WebKit draws in software: a quarter of a core idle,
+  three cores busy.
 
 ## Run with Docker
 

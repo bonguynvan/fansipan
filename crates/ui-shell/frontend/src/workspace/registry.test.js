@@ -8,7 +8,6 @@ import {
   registerScreen,
   resetRegistryForTests,
 } from "./registry.js";
-import { EXTRA_WINDOW_LABEL, newWindowLabel } from "./labels.js";
 
 const Component = () => {};
 
@@ -64,17 +63,5 @@ describe("registerLayout", () => {
     expect(() => registerLayout({ id: "x", title: "X" })).toThrow(/build/);
     registerLayout({ id: "y", title: "Y", build: () => {} });
     expect(() => registerLayout({ id: "y", title: "Y", build: () => {} })).toThrow(/already registered/);
-  });
-});
-
-describe("newWindowLabel", () => {
-  it("produces labels the shell accepts", () => {
-    for (const [now, random] of [
-      [Date.now(), Math.random()],
-      [0, 0.123456],
-      [Number.MAX_SAFE_INTEGER, 0.999999],
-    ]) {
-      expect(newWindowLabel(now, random)).toMatch(EXTRA_WINDOW_LABEL);
-    }
   });
 });

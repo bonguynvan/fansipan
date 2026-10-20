@@ -18,8 +18,8 @@ use crate::{connect_engines, flush, logbook, pump, settle, start_journal, Shell,
 
 /// The settings key that remembers the trader's choice.
 const CHOICE_KEY: &str = "venue.choice";
-/// Sent to every window once the venue's engines answer commands, so a
-/// window that loaded while it was being opened can show the workspace.
+/// Sent to the window once the venue's engines answer commands, so a
+/// page that loaded while it was being opened can show the workspace.
 const STARTED_EVENT: &str = "venue-started";
 
 /// One venue a trader can choose to run against.
@@ -70,7 +70,7 @@ pub(crate) struct ChoiceDto {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct LaunchDto {
     /// "choosing", "opening", or "running". The workspace loads only once
-    /// running; while choosing, the main window shows the choices.
+    /// running; while choosing, the window shows the choices.
     stage: &'static str,
     /// Empty when the build runs one venue, so there is nothing to change.
     choices: Vec<ChoiceDto>,
@@ -183,7 +183,7 @@ fn saved_choice(saved: Option<Value>, launch: &Launch) -> Option<String> {
 
 /// Starts what runs once a venue is connected (the journal, the shell's
 /// state for the commands, the threads that feed the screens), then marks
-/// the venue `id` running and tells every window.
+/// the venue `id` running and tells the window.
 pub(crate) fn start(app: &AppHandle, shell: Shell, events: Receiver<Event>, id: &str) {
     logbook::info(&format!("venue {} ({id})", shell.venue));
     match app.path().app_data_dir() {
@@ -202,14 +202,12 @@ pub(crate) fn start(app: &AppHandle, shell: Shell, events: Receiver<Event>, id: 
         logbook::error(&format!("venue {id}: {e}"));
     }
     if let Err(e) = app.emit(STARTED_EVENT, id) {
-        logbook::warn(&format!(
-            "could not tell the windows the venue started: {e}"
-        ));
+        logbook::warn(&format!("could not tell the window the venue started: {e}"));
     }
 }
 
 /// At start, opens the remembered choice. Without one, or when it no
-/// longer opens, the main window asks, saying why.
+/// longer opens, the window asks, saying why.
 pub(crate) fn resume(app: &AppHandle) {
     let launch = app.state::<Launch>();
     let Some(id) = saved_choice(app.state::<Store>().read(CHOICE_KEY), &launch) else {
@@ -245,7 +243,7 @@ pub(crate) fn choose_venue(
 }
 
 /// Another venue, from the menu: remembered, then the terminal restarts on
-/// it, once its windows have saved what they hold.
+/// it, once the window has saved what it holds.
 #[tauri::command]
 pub(crate) fn switch_venue(
     app: AppHandle,

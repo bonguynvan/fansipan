@@ -1,9 +1,7 @@
 // The built-in menus and the actions behind them. They register
 // through the calls a plugin uses (menus.js, hotkeys.svelte.js), so every
 // command that is an action can be given a key in Keyboard shortcuts, and
-// the menu shows it. The main window registers them: it alone has the menu
-// bar, and a page command in an extra window would act on pages it does not
-// show.
+// the menu shows it.
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { registerAction } from "./hotkeys.svelte.js";
@@ -24,7 +22,6 @@ import {
   copyPage,
   newDesktop,
   newPage,
-  popOut,
   workspace,
 } from "../workspace/workspace.svelte.js";
 
@@ -61,11 +58,6 @@ function closeThisPage() {
   if (workspace.pages) closePageTab(activePage(workspace.pages).id);
 }
 
-function popOutActive() {
-  const panel = workspace.api?.activePanel;
-  return panel ? popOut(panel) : { id: "menu.noPanel" };
-}
-
 async function toggleFullScreen() {
   const window = getCurrentWindow();
   await window.setFullscreen(!(await window.isFullscreen()));
@@ -83,7 +75,6 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
   registerAction({ id: "workspace.copy-page", title: "hotkey.action.copyPage", run: copyPage });
   registerAction({ id: "workspace.close-page", title: "hotkey.action.closePage", defaultKey: "Ctrl+W", run: closeThisPage });
   registerAction({ id: "workspace.new-desktop", title: "hotkey.action.newDesktop", run: newDesktop });
-  registerAction({ id: "workspace.pop-out", title: "hotkey.action.popOut", run: popOutActive });
   registerAction({ id: "app.full-screen", title: "hotkey.action.fullScreen", defaultKey: "F11", run: toggleFullScreen });
   registerAction({ id: "app.shortcuts", title: "hotkey.action.shortcuts", run: showShortcuts });
   registerAction({ id: "app.about", title: "hotkey.action.about", run: showAbout });
@@ -198,7 +189,6 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
   ]) {
     registerMenuItem("window", { group: "move", action });
   }
-  registerMenuItem("window", { group: "panel", action: "workspace.pop-out" });
 
   registerMenuItem("help", { group: "keys", action: "app.shortcuts" });
   registerMenuItem("help", { group: "about", action: "app.about" });

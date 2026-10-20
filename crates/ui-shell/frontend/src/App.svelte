@@ -20,34 +20,25 @@
   import { journalNotice } from "./lib/journal.js";
   import { registerBuiltins } from "./workspace/builtins.js";
   import Workspace from "./workspace/Workspace.svelte";
-  import {
-    MAIN_WINDOW,
-    currentWindowLabel,
-    flushLayout,
-    registerWorkspaceActions,
-    workspace,
-  } from "./workspace/workspace.svelte.js";
+  import { flushLayout, registerWorkspaceActions, workspace } from "./workspace/workspace.svelte.js";
   import { flushLocale, startLocale, t } from "./i18n/i18n.svelte.js";
   import { startTheme } from "./lib/theme.svelte.js";
   import { startUiScale } from "./lib/ui.svelte.js";
 
-  const label = currentWindowLabel();
   let keysOpen = $state(false);
   let aboutOpen = $state(false);
 
   // Screens must be registered before any layout that names them loads.
   registerBuiltins();
   registerWorkspaceActions();
-  if (label === MAIN_WINDOW) {
-    registerAppMenus({ showShortcuts: () => (keysOpen = true), showAbout: () => (aboutOpen = true) });
-    registerAppSections();
-    beforeEachAction(revealFor);
-  }
+  registerAppMenus({ showShortcuts: () => (keysOpen = true), showAbout: () => (aboutOpen = true) });
+  registerAppSections();
+  beforeEachAction(revealFor);
   const shown = $derived(place.current === TRADE ? null : getSection(place.current));
 
   // A journal that stops being written is told at once.
   $effect(() => {
-    if (market.journalError && label === MAIN_WINDOW) {
+    if (market.journalError) {
       workspace.notice = { id: "journal.writeFailed", vars: { error: market.journalError.problem } };
     }
   });
@@ -68,8 +59,7 @@
     startHotkeys({ onNotice: (notice) => (workspace.notice = notice) }).catch(failed);
     startMarket()
       .then(() => {
-        // Told once, in the window the trader starts in.
-        const notice = label === MAIN_WINDOW ? journalNotice(market.journal) : null;
+        const notice = journalNotice(market.journal);
         if (notice) workspace.notice = notice;
       })
       .catch(failed);
@@ -117,10 +107,8 @@
   );
 </script>
 
-<!-- An extra window is the screen alone, moved by its tab strip. The main
-     window has the system's frame; under it, the menus and search. -->
-<div class="terminal" class:detached={label !== MAIN_WINDOW}>
-  {#if label === MAIN_WINDOW}
+<!-- Under the system's frame, the menus and search, then the figures. -->
+<div class="terminal">
   <header class="toolbar">
     <div class="brand">
       <span class="mark" aria-hidden="true">▲</span>
@@ -156,14 +144,13 @@
       </div>
     </div>
   </div>
-  {/if}
 
-  <div class="body" class:framed={label === MAIN_WINDOW}>
-    {#if label === MAIN_WINDOW}<Sidebar />{/if}
+  <div class="body">
+    <Sidebar />
     <!-- The workspace stays mounted while another section shows, so its
          panels keep their state. -->
     <main hidden={shown !== null}>
-      <Workspace {label} />
+      <Workspace />
     </main>
     {#if shown}
       <div class="section">
@@ -181,12 +168,6 @@
     display: grid;
     grid-template-rows: auto auto 1fr;
     height: 100vh;
-  }
-
-  /* An extra window has no system frame: a hairline keeps its edge. */
-  .terminal.detached {
-    grid-template-rows: 1fr;
-    border: 1px solid var(--rule);
   }
 
   /* Under the system's title bar: the brand, the menus, search. */
@@ -380,12 +361,8 @@
 
   .body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    min-height: 0;
-  }
-
-  .body.framed {
     grid-template-columns: auto minmax(0, 1fr);
+    min-height: 0;
   }
 
   main,

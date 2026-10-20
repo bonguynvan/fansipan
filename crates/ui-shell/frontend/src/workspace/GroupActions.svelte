@@ -1,20 +1,8 @@
 <script>
   // The buttons at the right of each panel group's tab strip, for the
-  // active panel: whether it follows the shared symbol, its own symbol when
-  // it does not, floating the group over the page or docking it again, and
-  // moving the panel to a window of its own (or, from an extra window, back
-  // to the main one).
-  import {
-    MAIN_WINDOW,
-    dockGroup,
-    dockInMain,
-    floatGroup,
-    popOut,
-    screenOf,
-    setPanelSymbol,
-    toggleLink,
-    workspace,
-  } from "./workspace.svelte.js";
+  // active panel: whether it follows the shared symbol, and its own symbol
+  // when it does not.
+  import { screenOf, setPanelSymbol, toggleLink } from "./workspace.svelte.js";
   import { isLinked, symbolOf } from "../lib/links.svelte.js";
   import { market } from "../lib/market.svelte.js";
   import { t } from "../i18n/i18n.svelte.js";
@@ -23,16 +11,6 @@
 
   let panel = $state.raw(null);
   let params = $state.raw({});
-  let floating = $state(false);
-
-  // Whether the group floats over the page, kept as dockview moves it.
-  $effect(() => {
-    floating = group.api.location.type === "floating";
-    const watching = group.api.onDidLocationChange((event) => (floating = event.location.type === "floating"));
-    return () => watching.dispose();
-  });
-
-  const inMain = $derived(workspace.label === MAIN_WINDOW);
 
   function watchParams(target) {
     return target?.api.onDidParametersChange((next) => (params = next ?? {})) ?? { dispose() {} };
@@ -86,31 +64,6 @@
       aria-label={t("workspace.linkPanel", { title: panel.title })}
       onclick={() => toggleLink(panel)}><span class="dot" aria-hidden="true"></span></button
     >
-  {/if}
-  {#if panel}
-    <button
-      class="float"
-      title={floating ? t("workspace.dock") : t("workspace.float")}
-      aria-label={floating
-        ? t("workspace.dockNamed", { title: panel.title })
-        : t("workspace.floatNamed", { title: panel.title })}
-      onclick={() => (floating ? dockGroup(group) : floatGroup(group))}>{floating ? "⇲" : "⇱"}</button
-    >
-    {#if inMain}
-      <button
-        class="popout"
-        title={t("workspace.moveToNewWindow")}
-        aria-label={t("workspace.moveToNewWindowNamed", { title: panel.title })}
-        onclick={() => popOut(panel)}>⧉</button
-      >
-    {:else}
-      <button
-        class="popout"
-        title={t("workspace.dockInMain")}
-        aria-label={t("workspace.dockInMainNamed", { title: panel.title })}
-        onclick={() => dockInMain(panel)}>⤓</button
-      >
-    {/if}
   {/if}
 </div>
 

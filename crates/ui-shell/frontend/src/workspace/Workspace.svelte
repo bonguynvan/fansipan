@@ -3,30 +3,13 @@
   // The UMD build: in dockview-core 8 only it carries the library's CSS
   // (injected on load); the ES module build ships none.
   import { createDockview, themeDark, themeLight } from "dockview-core/dist/dockview-core.js";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { windowHandles } from "./dragStrips.js";
   import { getScreen } from "./registry.js";
   import { createRenderer } from "./renderer.svelte.js";
   import GroupActions from "./GroupActions.svelte";
   import PageBar from "./PageBar.svelte";
-  import {
-    MAIN_WINDOW,
-    dockGroup,
-    dockInMain,
-    floatGroup,
-    isFloating,
-    movePanelToPage,
-    otherPages,
-    persist,
-    popOut,
-    restore,
-    retitlePanels,
-    workspace,
-  } from "./workspace.svelte.js";
+  import { movePanelToPage, otherPages, persist, restore, retitlePanels, workspace } from "./workspace.svelte.js";
   import { i18n, t, tn } from "../i18n/i18n.svelte.js";
   import { theme } from "../lib/theme.svelte.js";
-
-  let { label } = $props();
 
   let host;
 
@@ -56,24 +39,17 @@
   onMount(() => {
     const api = createDockview(host, {
       theme: dockTheme(theme.resolved),
-      // A panel floats over its page on demand, kept on screen;
-      // it leaves for another monitor as a native window, never as a
-      // browser pop-up.
-      floatingGroupBounds: "boundedWithinViewport",
+      // Every panel is docked: dragged to split, stack, or resize, never
+      // lifted over the page.
+      disableFloatingGroups: true,
       createComponent: ({ name }) => createRenderer(getScreen(name), name),
       createRightHeaderActionComponent: headerActions,
       getTabContextMenuItems: ({ panel }) => [
         "maximize",
-        isFloating(panel.group)
-          ? { label: t("workspace.dock"), action: () => dockGroup(panel.group) }
-          : { label: t("workspace.float"), action: () => floatGroup(panel.group) },
         ...otherPages().map((page) => ({
           label: t("workspace.moveToPage", { name: page.name }),
           action: () => movePanelToPage(panel, page.id),
         })),
-        label === MAIN_WINDOW
-          ? { label: t("workspace.moveToNewWindow"), action: () => popOut(panel) }
-          : { label: t("workspace.dockInMain"), action: () => dockInMain(panel) },
         "separator",
         "close",
         "closeOthers",
@@ -81,24 +57,7 @@
     });
 
     const subscriptions = [api.onDidLayoutChange(persist)];
-    if (label !== MAIN_WINDOW) {
-      // An extra window has no title bar: some of its tab strips' empty
-      // parts move it instead (and maximise it on a double-click).
-      const markDragStrips = () => {
-        const strips = [...host.querySelectorAll(".dv-void-container")];
-        const handles = windowHandles(strips, (strip) => strip.closest(".dv-resize-container") !== null);
-        for (const strip of strips) strip.toggleAttribute("data-tauri-drag-region", handles.has(strip));
-      };
-      subscriptions.push(
-        // Fires after groups are added, removed, floated, or docked.
-        api.onDidLayoutChange(markDragStrips),
-        // An extra window with nothing left in it has no reason to stay open.
-        api.onDidRemovePanel(() => {
-          if (api.totalPanels === 0 && !workspace.rebuilding) getCurrentWindow().close();
-        }),
-      );
-    }
-    restore(api, label);
+    restore(api);
 
     return () => {
       subscriptions.forEach((s) => s.dispose());
@@ -126,9 +85,7 @@
     </p>
   {/if}
 
-  {#if label === MAIN_WINDOW}
-    <PageBar />
-  {/if}
+  <PageBar />
 
   <div class="workspace" bind:this={host}></div>
 </div>

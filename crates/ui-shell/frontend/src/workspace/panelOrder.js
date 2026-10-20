@@ -1,17 +1,16 @@
 // The order the keyboard walks a page's panels in (Ctrl+F6 by default):
-// as the page is read, groups top to bottom and then left to right, the
-// docked ones before those floating over them, and inside a group its tabs
-// in order.
+// as the page is read, groups top to bottom and then left to right, and
+// inside a group its tabs in order.
 
 /**
  * Panels in walking order.
  * @template P
- * @param {{ top: number, left: number, floating: boolean, panels: P[] }[]} groups
+ * @param {{ top: number, left: number, panels: P[] }[]} groups
  * @returns {P[]}
  */
 export function panelOrder(groups) {
   return [...groups]
-    .sort((a, b) => Number(a.floating) - Number(b.floating) || a.top - b.top || a.left - b.left)
+    .sort((a, b) => a.top - b.top || a.left - b.left)
     .flatMap((group) => group.panels);
 }
 

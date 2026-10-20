@@ -38,7 +38,7 @@ function blankDesktop(name, pageName, incoming = []) {
 /**
  * A fresh workspace: one desktop with one empty page, named `pageName` or
  * the default, holding `panels` (`[{ component, params, title }]`) to show
- * first: a pop-out's panel, for one.
+ * first.
  */
 export function seedWorkspace(names, { pageName = null, panels = [] } = {}) {
   const desktop = blankDesktop(names.desktop(1), pageName ?? names.page(1), panels);
@@ -95,6 +95,29 @@ export function takeIncoming(ws) {
   const page = activePage(ws);
   if (page.incoming.length === 0) return [ws, []];
   return [withPage(ws, page.id, (p) => ({ ...p, incoming: [] })), page.incoming];
+}
+
+/** Adds `panels` to the active page, to show the next time it is put on screen. */
+export function addIncoming(ws, panels) {
+  if (panels.length === 0) return ws;
+  return withPage(ws, activePage(ws).id, (p) => ({ ...p, incoming: [...p.incoming, ...panels] }));
+}
+
+/**
+ * Every panel a workspace holds, on every desktop and page, as
+ * `{ component, params, title }`: what it takes to show them elsewhere.
+ */
+export function panelsOf(ws) {
+  return ws.desktops.flatMap((desktop) =>
+    desktop.pages.flatMap((page) => [
+      ...Object.values(page.dockview?.panels ?? {})
+        .map((panel) =>
+          revivePanel({ component: panel?.contentComponent, params: panel?.params, title: panel?.params?.titleKey }),
+        )
+        .filter(Boolean),
+      ...page.incoming,
+    ]),
+  );
 }
 
 /** A new open page, made active. `dockview` copies an arrangement ("Copy of this page"). */
@@ -218,8 +241,9 @@ export function reviveWorkspace(saved, names) {
 }
 
 /**
- * A layout saved before pages and desktops (version 1: dockview's JSON, or a
- * pop-out's panel list) as the first page of a fresh workspace, named
+ * A layout saved before pages and desktops (version 1: dockview's JSON, or
+ * the panel list an older version gave a window of its own) as the first
+ * page of a fresh workspace, named
  * `pageName`. Null when it holds nothing to show.
  */
 export function fromSingleLayout(saved, names, pageName) {

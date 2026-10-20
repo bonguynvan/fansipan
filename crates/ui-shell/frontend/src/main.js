@@ -1,5 +1,4 @@
 import { mount, unmount } from "svelte";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./app.css";
 import App from "./App.svelte";
 import VenueChooser from "./lib/VenueChooser.svelte";
@@ -10,12 +9,12 @@ import "./screens/index.js";
 const target = document.getElementById("app");
 const showWorkspace = () => mount(App, { target });
 
-// The workspace needs a running venue. The main window asks for one when the
-// build offers several and none is chosen; any other window waits for it.
+// The workspace needs a running venue. A build that offers several asks
+// for one when none is chosen; one being opened is waited for.
 async function begin() {
   await loadLaunch();
   if (launch.stage === "running") return showWorkspace();
-  if (launch.stage === "choosing" && getCurrentWindow().label === "main") {
+  if (launch.stage === "choosing") {
     const chooser = mount(VenueChooser, {
       target,
       props: {

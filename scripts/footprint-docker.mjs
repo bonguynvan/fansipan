@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Measures the Docker demo's footprint, as scripts/footprint.mjs does on
 // Windows: the image's size,
-// start-up, and memory and processor when idle and under a busy feed with
-// three windows open.
+// start-up, and memory and processor when idle and under a busy feed.
 //
 // From the repository root, after building the image:
 //
@@ -19,14 +18,13 @@ import { randomBytes } from "node:crypto";
 
 const IMAGE = "fansipan:local";
 const CONFIG = "/home/fansipan/.config";
-const SETTINGS = `${CONFIG}/io.github.bonguynvan.fansipan/settings.json`;
 const SETTLE_MS = 10_000;
 const SAMPLE_MS = 30_000;
 const SAMPLE_EVERY_MS = 3_000;
 const STARTUP_TIMEOUT_S = 120;
 const SCENARIOS = [
   { name: "Idle, one window", beatMs: 500, windows: 1 },
-  { name: "Busy feed (10 ms beat), three windows", beatMs: 10, windows: 3 },
+  { name: "Busy feed (10 ms beat), one window", beatMs: 10, windows: 1 },
 ];
 /** What each process in the container is, by its command name. */
 const GROUPS = [
@@ -129,53 +127,6 @@ function waitForWindows(container, count) {
   return BigInt(out.stdout.trim());
 }
 
-/** Reads the volume's settings, through the image itself. */
-function readSettings(volume) {
-  const out = spawnSync(
-    "docker",
-    ["run", "--rm", "-v", `${volume}:${CONFIG}`, "--entrypoint", "cat", IMAGE, SETTINGS],
-    { encoding: "utf8" },
-  );
-  return out.status === 0 ? JSON.parse(out.stdout) : null;
-}
-
-function writeSettings(volume, settings) {
-  const out = spawnSync(
-    "docker",
-    ["run", "--rm", "-i", "-v", `${volume}:${CONFIG}`, "--entrypoint", "sh", IMAGE, "-c", `cat > ${SETTINGS}`],
-    { input: JSON.stringify(settings, null, 2), encoding: "utf8" },
-  );
-  if (out.status !== 0) throw new Error(`could not write the settings: ${out.stderr}`);
-}
-
-/**
- * Seeds `volume` so the terminal reopens `count - 1` extra windows, each
- * with the main window's default layout, as a pop-out stores one: starts
- * once to let the main window save its layout, then lists the windows.
- */
-async function seedWindows(volume, count, scenario) {
-  const name = `fansipan-seed-${randomBytes(3).toString("hex")}`;
-  run(name, volume, scenario);
-  try {
-    waitForWindows(name, 1);
-    let layout = null;
-    for (let i = 0; i < 60 && !layout; i++) {
-      await sleep(500);
-      const cat = spawnSync("docker", ["exec", name, "cat", SETTINGS], { encoding: "utf8" });
-      if (cat.status === 0) layout = JSON.parse(cat.stdout)["workspace.layout.main"] ?? null;
-    }
-    if (!layout) throw new Error("the main window saved no layout");
-  } finally {
-    docker(["stop", "-t", "10", name]);
-    remove(name);
-  }
-  const settings = readSettings(volume) ?? {};
-  const extra = Array.from({ length: count - 1 }, (_, i) => `ws-measure${i + 2}`);
-  settings["workspace.windows"] = extra;
-  for (const label of extra) settings[`workspace.layout.${label}`] = settings["workspace.layout.main"];
-  writeSettings(volume, settings);
-}
-
 /** Averages memory over the samples, and processor time between the first and the last. */
 function summarize(samples) {
   const byGroup = (sample, key) => {
@@ -211,7 +162,6 @@ async function measure(scenario) {
   const name = `fansipan-footprint-${randomBytes(3).toString("hex")}`;
   docker(["volume", "create", volume]);
   try {
-    if (scenario.windows > 1) await seedWindows(volume, scenario.windows, scenario);
     run(name, volume, scenario);
     const shown = waitForWindows(name, scenario.windows);
     const startUpMs = Number(shown - startedAtNanos(name)) / 1e6;

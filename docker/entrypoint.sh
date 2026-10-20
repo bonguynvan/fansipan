@@ -31,8 +31,8 @@ until xdpyinfo >/dev/null 2>&1; do
   sleep 0.1
 done
 
-# A window manager, so windows can be moved, resized, and popped out; it
-# opens the main window maximized.
+# A window manager, so the window can be moved and resized; it opens it
+# maximized.
 openbox --config-file /etc/fansipan/openbox.xml >/dev/null 2>&1 &
 # VNC listens inside the container only; websockify is the one way in.
 x11vnc -display "$DISPLAY" -forever -shared -nopw -localhost -quiet -rfbport 5900 >/dev/null 2>&1 &

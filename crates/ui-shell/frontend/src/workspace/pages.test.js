@@ -4,12 +4,14 @@ import {
   activeDesktop,
   activePage,
   addDesktop,
+  addIncoming,
   addPage,
   closePage,
   deletePage,
   fromSingleLayout,
   movePanelToPage,
   openPages,
+  panelsOf,
   removeDesktop,
   renameDesktop,
   renamePage,
@@ -201,5 +203,32 @@ describe("reading back a save", () => {
     expect(activePage(ws).incoming).toEqual([{ component: "chart", params: { linked: true }, title: null }]);
     expect(fromSingleLayout({ version: 1, seed: [] }, names, "Page")).toBeNull();
     expect(fromSingleLayout({ version: 3 }, names, "Page")).toBeNull();
+  });
+});
+
+describe("panels from elsewhere", () => {
+  const chart = { component: "chart", params: { linked: true }, title: null };
+
+  it("lists every panel of every page and desktop, waiting ones included", () => {
+    let ws = withPageLayout(seedWorkspace(names), {
+      panels: {
+        "board-1": { id: "board-1", contentComponent: "board", params: { titleKey: "screen.board" } },
+        broken: { id: "broken" },
+      },
+    });
+    ws = addDesktop(ws, names);
+    ws = addIncoming(ws, [chart]);
+
+    expect(panelsOf(ws)).toEqual([{ component: "board", params: { titleKey: "screen.board" }, title: "screen.board" }, chart]);
+  });
+
+  it("puts panels on the page on screen, to show when it is next shown", () => {
+    const ws = addIncoming(seedWorkspace(names), [chart, chart]);
+
+    const [rest, incoming] = takeIncoming(ws);
+
+    expect(incoming).toEqual([chart, chart]);
+    expect(activePage(rest).incoming).toEqual([]);
+    expect(addIncoming(rest, [])).toBe(rest);
   });
 });

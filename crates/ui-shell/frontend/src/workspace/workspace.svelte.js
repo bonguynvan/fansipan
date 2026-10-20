@@ -1,37 +1,30 @@
-// One native window's workspace: its desktops and pages (pages.js), the
-// page dockview shows now, and whether each panel follows the shared
-// symbol. The whole workspace is saved per window in the
-// shell's settings store; the shell reopens extra windows at start and
-// each window restores itself from its key.
+// The terminal's workspace: its desktops and pages (pages.js), the page
+// dockview shows now, and whether each panel follows the shared symbol.
+// The whole workspace is saved in the shell's settings store.
 //
 // dockview holds only the active page. Before the page changes, its
 // arrangement is read back into the workspace (`capture`), so a page keeps
 // its panels while another is on screen.
 
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLayout, getScreen } from "./registry.js";
 import { DEFAULT_LAYOUT } from "./builtins.js";
-import { debouncedSetter, getSetting, removeSetting, setSetting } from "../lib/settings.js";
+import { debouncedSetter, getSetting, removeSetting } from "../lib/settings.js";
 import { isLinked, linkPatch, migrateLinkParams } from "../lib/links.svelte.js";
 import { marketInfo } from "../lib/market.svelte.js";
 import { marketPreset } from "../lib/markets.js";
-import { newWindowLabel } from "./labels.js";
 import { panelOrder, stepFrom } from "./panelOrder.js";
 import { registerAction } from "../lib/hotkeys.svelte.js";
 import { px } from "../lib/ui.svelte.js";
 import * as pages from "./pages.js";
+import { dockedLayout } from "./docked.js";
 import { t } from "../i18n/i18n.svelte.js";
 
-export const MAIN_WINDOW = "main";
+/** Where the workspace is saved: the key from when each window had its own. */
+const LAYOUT_KEY = "workspace.layout.main";
 const SAVE_DELAY_MS = 400;
-/** An extra window sends a panel back to the main window's page on this event. */
-const DOCK_EVENT = "workspace-dock";
-/** Where the first panel lifted off the dock floats, and how big, in pixels at 100%; the next ones cascade. */
-const FLOATING_BOX = { x: 80, y: 60, width: 460, height: 340 };
-const FLOATING_STEP = 28;
-const FLOATING_SPAN = 8;
+/** Where versions with extra windows listed them; each kept its layout under its own key. */
+const EXTRA_WINDOWS_KEY = "workspace.windows";
+const EXTRA_WINDOW_LABEL = /^ws-[a-z0-9]{1,24}$/;
 
 /** Default names in the trader's language. */
 const names = {
@@ -41,34 +34,17 @@ const names = {
 
 class WorkspaceState {
   api = $state.raw(null);
-  label = $state(MAIN_WINDOW);
-  /** This window's desktops and pages (pages.js); null until restored. */
+  /** The desktops and pages (pages.js); null until restored. */
   pages = $state.raw(null);
   /** `{ id, vars, count }` of a message for the notice bar, or null. */
   notice = $state(null);
-  /**
-   * True while a whole page is being replaced or restored. Panels come and
-   * go in bulk then, so "the last panel left" means nothing: an extra window
-   * must not close itself mid-rebuild.
-   */
+  /** True while a whole page is being replaced or restored: nothing is saved midway. */
   rebuilding = false;
 }
 
 export const workspace = new WorkspaceState();
 
 let saver = null;
-
-export function layoutKey(label) {
-  return `workspace.layout.${label}`;
-}
-
-export function currentWindowLabel() {
-  try {
-    return getCurrentWindow().label;
-  } catch {
-    return MAIN_WINDOW;
-  }
-}
 
 function newPanelId(screenId) {
   return `${screenId}-${crypto.randomUUID().slice(0, 8)}`;
@@ -91,7 +67,7 @@ function capture() {
   workspace.pages = pages.withPageLayout(workspace.pages, workspace.api.toJSON());
 }
 
-/** Saves this window's workspace soon; safe to call on every change. */
+/** Saves the workspace soon; safe to call on every change. */
 export function persist() {
   if (!saver || !workspace.api || !workspace.pages || workspace.rebuilding) return;
   capture();
@@ -157,8 +133,9 @@ function buildLayout(layout) {
   for (const [panel, size] of sized) panel.group.api.setSize(size);
 }
 
-/** Saved dockview JSON with every panel's parameters brought up to date. */
-function migratedDockview(dockview) {
+/** Saved dockview JSON brought up to date: every panel docked, its parameters current. */
+function migratedDockview(saved) {
+  const dockview = dockedLayout(saved);
   const panels = Object.fromEntries(
     Object.entries(dockview?.panels ?? {}).map(([id, panel]) => [
       id,
@@ -205,7 +182,6 @@ function showActivePage(layoutId = null) {
   });
   retitlePanels();
   persist();
-  dockWaiting();
 }
 
 /** Applies `change` to the workspace, then shows the active page if it is another one. */
@@ -250,7 +226,6 @@ export function stepPanel(step) {
       return {
         top: Math.round(box.top),
         left: Math.round(box.left),
-        floating: group.api.location.type === "floating",
         panels: group.panels,
       };
     }),
@@ -368,72 +343,6 @@ export function otherPages() {
   return pages.openPages(workspace.pages).filter((p) => p.id !== here);
 }
 
-// Floating and docking -------------------------------------------------------
-
-export const isFloating = (group) => group?.api.location.type === "floating";
-
-/** Lifts a group off the dock to float over the page, leaving the dock as it was. */
-export function floatGroup(group) {
-  const api = workspace.api;
-  if (!api || group?.api.location.type !== "grid") return;
-  const n = api.groups.filter(isFloating).length % FLOATING_SPAN;
-  api.addFloatingGroup(group, {
-    x: px(FLOATING_BOX.x + n * FLOATING_STEP),
-    y: px(FLOATING_BOX.y + n * FLOATING_STEP),
-    width: px(FLOATING_BOX.width),
-    height: px(FLOATING_BOX.height),
-  });
-  persist();
-}
-
-/** Puts a floating group back into the dock, at the right. */
-export function dockGroup(group) {
-  if (!isFloating(group)) return;
-  group.api.moveTo({ position: "right" });
-  persist();
-}
-
-/**
- * Sends a panel from an extra window back to the main window, which docks
- * it into its page on screen. The panel leaves this window only once the
- * main window has been sent it.
- */
-export async function dockInMain(panel) {
-  try {
-    await emit(DOCK_EVENT, specOf(panel));
-    workspace.api?.removePanel(panel);
-  } catch (err) {
-    notify("workspace.dockFailed", { error: String(err) });
-  }
-}
-
-let docking = null;
-/** Panels sent back before this window's page was on screen; docked once it is. */
-const dockQueue = [];
-
-function dockWaiting() {
-  while (dockQueue.length && workspace.pages && !workspace.rebuilding) {
-    const panel = dockQueue.shift();
-    addScreen(panel.component, { title: panel.title ?? undefined, params: migrateLinkParams(panel.params) });
-  }
-  persist();
-}
-
-/**
- * The main window takes panels sent back from extra windows; once. One
- * that arrives while the main window is still restoring waits for its page,
- * which would otherwise clear it away.
- */
-function takeDockedPanels() {
-  docking ??= listen(DOCK_EVENT, ({ payload }) => {
-    if (typeof payload?.component !== "string" || !payload.component) return;
-    const params = payload.params && typeof payload.params === "object" ? payload.params : {};
-    dockQueue.push({ component: payload.component, params, title: payload.title ?? null });
-    dockWaiting();
-  });
-  return docking;
-}
-
 // Desktops ---------------------------------------------------------------------
 
 export function newDesktop() {
@@ -454,7 +363,7 @@ export function removeDesktop(id) {
 
 // Restoring --------------------------------------------------------------------
 
-/** The layout a fresh main window opens with: the market preset's, else the default. */
+/** The layout a fresh workspace opens with: the market preset's, else the default. */
 async function defaultLayout() {
   const info = await marketInfo();
   return getLayout(marketPreset(info?.id).layout ?? DEFAULT_LAYOUT) ?? getLayout(DEFAULT_LAYOUT);
@@ -472,7 +381,7 @@ export function retitlePanels() {
   }
 }
 
-/** A fresh main window: one page built from the default layout. */
+/** A fresh workspace: one page built from the default layout. */
 async function startFresh(api) {
   const layout = await defaultLayout();
   // The window may have torn this dockview down while waiting.
@@ -482,29 +391,50 @@ async function startFresh(api) {
 }
 
 /**
- * Restores this window from its save: a workspace of pages, a single
- * layout from before pages (migrated into the first page), or a pop-out's
- * panel. With nothing usable, the main window starts fresh; an extra
- * window shows a watchlist if its save was damaged, and closes if it never
- * had one (it would otherwise reopen, empty, forever).
+ * The panels of the extra windows an older version kept, and the keys that
+ * held them. A window whose layout cannot be read gives none.
  */
-export async function restore(api, label) {
+async function extraWindows() {
+  const listed = await getSetting(EXTRA_WINDOWS_KEY).catch(() => null);
+  if (!Array.isArray(listed)) return { panels: [], keys: [] };
+  const labels = listed.filter((label) => typeof label === "string" && EXTRA_WINDOW_LABEL.test(label));
+  const panels = [];
+  for (const label of labels) {
+    const saved = await getSetting(`workspace.layout.${label}`).catch(() => null);
+    const kept = pages.reviveWorkspace(saved, names) ?? pages.fromSingleLayout(saved, names, names.page(1));
+    if (kept) panels.push(...pages.panelsOf(kept));
+  }
+  return { panels, keys: [EXTRA_WINDOWS_KEY, ...labels.map((label) => `workspace.layout.${label}`)] };
+}
+
+/** Drops the extra windows' keys once the workspace holding their panels is saved. */
+async function forgetExtraWindows({ panels, keys }) {
+  await flushLayout();
+  await Promise.all(keys.map((key) => removeSetting(key).catch(() => {})));
+  if (panels.length) workspace.notice = { id: "workspace.windowsMerged", count: panels.length };
+}
+
+/**
+ * Restores the workspace from its save: a workspace of pages, or a single
+ * layout from before pages (migrated into the first page). Panels an older
+ * version kept in extra windows join the page on screen. With nothing
+ * usable, it starts fresh.
+ */
+export async function restore(api) {
   workspace.api = api;
-  workspace.label = label;
   workspace.pages = null;
-  if (label === MAIN_WINDOW) takeDockedPanels().catch((err) => notify("workspace.dockFailed", { error: String(err) }));
   // Saving stays off until the save is in: a resize or an empty first page
   // must never overwrite it while it is still loading.
   saver = null;
 
   let saved;
   try {
-    saved = await getSetting(layoutKey(label));
+    saved = await getSetting(LAYOUT_KEY);
   } catch (err) {
     // Unreadable is not the same as absent: show the default, but leave
     // whatever is stored alone rather than overwrite it.
     notify("workspace.unreadable", { error: String(err) });
-    if (label === MAIN_WINDOW) await startFresh(api);
+    await startFresh(api);
     return;
   }
   if (workspace.api !== api) return;
@@ -514,48 +444,22 @@ export async function restore(api, label) {
     // Something is saved that this version cannot read, perhaps from a newer
     // one. Keep it: show a default, and save nothing this session.
     notify("workspace.unknownSave");
-    if (label === MAIN_WINDOW) await startFresh(api);
-    else {
-      workspace.pages = pages.seedWorkspace(names, { panels: [{ component: "watchlist", params: {}, title: null }] });
-      showActivePage();
-    }
+    await startFresh(api);
     return;
   }
-  saver = debouncedSetter(layoutKey(label), SAVE_DELAY_MS, (message) => {
+  saver = debouncedSetter(LAYOUT_KEY, SAVE_DELAY_MS, (message) => {
     notify("workspace.notSaved", { error: message });
   });
   if (restored) {
-    workspace.pages = restored;
+    const extra = await extraWindows();
+    if (workspace.api !== api) return;
+    workspace.pages = pages.addIncoming(restored, extra.panels);
     showActivePage();
-  } else if (label === MAIN_WINDOW) {
-    await startFresh(api);
+    if (extra.keys.length) {
+      forgetExtraWindows(extra).catch((err) => notify("workspace.notSaved", { error: String(err) }));
+    }
   } else {
-    getCurrentWindow().close();
-  }
-}
-
-/** Moves a panel into a new native window of its own. */
-export async function popOut(panel) {
-  const label = newWindowLabel();
-  const seed = pages.seedWorkspace(names, {
-    panels: [{ component: panel.view.contentComponent, params: panel.params ?? {}, title: panel.params?.titleKey ?? null }],
-  });
-  try {
-    await setSetting(layoutKey(label), seed);
-    // The window opens at the size of the panel's group, tab strip and all;
-    // a group not laid out yet has no size, and the window takes the default.
-    const { width, height } = panel.group.api;
-    const sized = width > 0 && height > 0;
-    await invoke("open_window", {
-      label,
-      width: sized ? Math.round(width) : undefined,
-      height: sized ? Math.round(height) : undefined,
-    });
-    workspace.api?.removePanel(panel);
-  } catch (err) {
-    notify("workspace.windowFailed", { error: String(err) });
-    // The seed was for a window that never opened; nothing else removes it.
-    removeSetting(layoutKey(label)).catch(() => {});
+    await startFresh(api);
   }
 }
 

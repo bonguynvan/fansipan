@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Measures what the README reports about Fansipan's footprint on Windows:
 // install size, start-up time, and memory and processor when idle and under
-// a busy feed with three windows open.
+// a busy feed.
 //
 // From the repository root, after a release build:
 //
@@ -37,7 +37,7 @@ const COLLECTED_SETTLE_MS = 5_000;
 const BOARD_CELLS = 16 * 5;
 const SCENARIOS = [
   { name: "Idle, one window", beatMs: 500, windows: 1 },
-  { name: "Busy feed (10 ms beat), three windows", beatMs: 10, windows: 3 },
+  { name: "Busy feed (10 ms beat), one window", beatMs: 10, windows: 1 },
 ];
 /** Win32 reports processor time in 100-nanosecond units. */
 const TICKS_PER_MS = 10_000;
@@ -260,26 +260,6 @@ async function sample(root, ms) {
   };
 }
 
-async function openWindows(count) {
-  for (let n = 1; n < count; n++) {
-    // As the app's own pop-out does, the window's layout is stored before
-    // it opens (an extra window with none closes itself): here, a copy of
-    // the main window's, so every window shows the full default layout.
-    const opened = await evaluate(`(async () => {
-      const invoke = window.__TAURI_INTERNALS__.invoke;
-      let layout = null;
-      for (let i = 0; i < 100 && !layout; i++) {
-        layout = await invoke("settings_get", { key: "workspace.layout.main" });
-        if (!layout) await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (!layout) return "the main window saved no layout";
-      await invoke("settings_set", { key: "workspace.layout.ws-measure${n}", value: layout });
-      return invoke("open_window", { label: "ws-measure${n}" }).then(() => "ok", (e) => String(e));
-    })()`);
-    if (opened !== "ok") throw new Error(`could not open a window: ${opened}`);
-  }
-}
-
 /** The app's environment: this run's settings, and no other Fansipan or WebView2 ones. */
 function appEnv(scenario, profile) {
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(FANSIPAN_|WEBVIEW2_)/i.test(key)));
@@ -303,7 +283,6 @@ async function measure(scenario, profile) {
   failed.catch(() => {});
   try {
     const startUpMs = await Promise.race([startUp(started), failed]);
-    await openWindows(scenario.windows);
     await sleep(SETTLE_MS);
     const windows = (await pages()).length;
     if (windows !== scenario.windows) throw new Error(`${scenario.name}: ${windows} windows open, not ${scenario.windows}`);
