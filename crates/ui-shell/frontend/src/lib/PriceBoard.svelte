@@ -106,7 +106,7 @@
     price("change", t("board.change"), { group: t("board.matched"), format: formatChange, cellClass: toneOf("last") }),
     {
       type: "number", key: "pct", header: t("board.pct"), width: px(56), group: t("board.matched"),
-      format: formatPct, cellClass: toneOf("last"),
+      format: formatPct, cellClass: toneOf("last"), autoWidth: true,
     },
     ...levels("a", t("board.asks"), [1, 2, 3]),
     size("volume", t("board.totalVolume"), { group: t("board.day"), width: px(92), sortable: true, flash: "change" }),
