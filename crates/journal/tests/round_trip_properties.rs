@@ -1,4 +1,4 @@
-//! Properties of the journal's records (ADR 0023): whatever an order holds,
+//! Properties of the journal's records: whatever an order holds,
 //! its record written as a line and read back is the same order, decimals
 //! to the last digit and scale. The generators aim at the edges: zero,
 //! trailing zeros, and a decimal's full 28 digits of scale.
@@ -14,7 +14,7 @@ use proptest::test_runner::RngSeed;
 
 const SEED: u64 = 20_261_019;
 
-/// A fixed seed, so every run explores the same cases (CLAUDE.md: tests are
+/// A fixed seed, so every run explores the same cases (tests are
 /// deterministic). Set PROPTEST_RNG_SEED to explore others.
 fn config() -> ProptestConfig {
     let config = ProptestConfig::default();

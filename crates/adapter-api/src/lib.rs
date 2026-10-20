@@ -1,6 +1,7 @@
 //! The one crate an external adapter repo depends on.
-//! Full rationale + required/forbidden behavior: /docs/adapter-contract.md
-//! Breaking changes here are a last resort — see that doc's "Versioning" section.
+//! It is semver-stable: a breaking change here breaks every adapter, so it
+//! is a last resort, and an addition comes with a default that keeps
+//! existing adapters building.
 //!
 //! `model` and `bus` are re-exported so an adapter pins one version of the
 //! contract instead of three crates that must agree with each other.
@@ -195,7 +196,6 @@ pub struct AdapterConfig {
 }
 
 /// Streams market data for a venue. One instance per venue connection.
-/// Required/forbidden behavior: /docs/adapter-contract.md
 pub trait DataClient: Send {
     fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError>;
 
@@ -209,7 +209,6 @@ pub trait DataClient: Send {
 }
 
 /// Submits and manages orders for a venue. One instance per venue account.
-/// Required/forbidden behavior: /docs/adapter-contract.md
 pub trait ExecutionClient: Send {
     fn connect(&mut self, bus: Box<dyn BusHandle>) -> Result<(), AdapterError>;
 
@@ -236,7 +235,7 @@ pub trait ExecutionClient: Send {
 
     /// The account this client trades, stable across restarts, once
     /// connected. Core keeps a journal per account and restores it at
-    /// start (ADR 0023); it stores only a hash of this. The default names
+    /// start; it stores only a hash of this. The default names
     /// none, and core then keeps no journal: right for a venue whose
     /// account does not outlive the process, such as a simulated one.
     fn account_id(&self) -> Option<String> {
@@ -245,14 +244,14 @@ pub trait ExecutionClient: Send {
 
     /// Core adopted the order the venue knows as `venue_order_id`, which
     /// this client reported as `Event::ExternalOrder`, as `order_id`: report
-    /// on it under that id from now on (ADR 0024). Return at once. The
+    /// on it under that id from now on. Return at once. The
     /// default does nothing, which is right for a client that reports no
     /// external orders.
     fn adopt_order(&mut self, _venue_order_id: &VenueOrderId, _order_id: ClientOrderId) {}
 
     /// This client's answers about orders the terminal knew before it
     /// restarted, and about orders whose commands the venue has not
-    /// answered (ADR 0025), if its venue can say. The default says it
+    /// answered, if its venue can say. The default says it
     /// cannot: core then shows those orders as not yet confirmed by the
     /// venue.
     fn recovery(&mut self) -> Option<&mut dyn OrderRecovery> {
@@ -262,13 +261,13 @@ pub trait ExecutionClient: Send {
 
 /// Reports the venue's view of orders the terminal held before it
 /// restarted, or that have waited too long for the venue's answer to a
-/// command (ADR 0025). An adapter implements it on its execution client and
+/// command. An adapter implements it on its execution client and
 /// returns itself from [`ExecutionClient::recovery`].
 pub trait OrderRecovery: Send {
     /// Ask the venue about `orders`. Returning `Ok` means "asked": for each
     /// order the venue knows, the answer arrives later as an
     /// `Event::Execution` carrying `OrderEvent::Snapshot`, exactly as after
-    /// a reconnect (ADR 0012). An order the venue does not know is left
+    /// a reconnect. An order the venue does not know is left
     /// unanswered, and stays unconfirmed.
     fn recover_orders(&mut self, orders: Vec<RecoverOrder>) -> Result<(), AdapterError>;
 }

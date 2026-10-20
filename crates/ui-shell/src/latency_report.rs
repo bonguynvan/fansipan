@@ -1,4 +1,4 @@
-//! The quote path, measured as a distribution (roadmap Phase 7). A quote
+//! The quote path, measured as a distribution. A quote
 //! an adapter publishes on the bus is routed by the shell's pump into the
 //! data engine and the pending batch; this times each one, from when it was
 //! due to when it was routed, at a steady 1,000, 10,000, and 100,000 quotes
@@ -8,7 +8,7 @@
 //! stops reading piles up.
 //!
 //! Timing is no part of the ordinary suite: these run on purpose, in
-//! release, and their output goes in docs/performance.md:
+//! release, and print a table of what they measured:
 //!
 //! ```text
 //! cargo test -p fansipan-shell --release --lib latency -- --ignored --nocapture --test-threads 1
@@ -256,7 +256,7 @@ fn micros(ns: u64) -> String {
     }
 }
 
-/// A report line per rate, as the markdown docs/performance.md keeps. A
+/// A report line per rate, as a markdown table row. A
 /// flush comes every 50 ms, too few in a run for a P99 that is not just
 /// the maximum, so the maximum is what it reports.
 fn report(runs: &[Run]) -> String {

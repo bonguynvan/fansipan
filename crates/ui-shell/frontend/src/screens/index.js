@@ -1,5 +1,5 @@
 // Your screens and layouts. Register them here; "Add panel" and the page
-// bar's "+" pick them up. See docs/customizing.md.
+// bar's "+" pick them up.
 //
 // import { registerLayout, registerScreen } from "../workspace/registry.js";
 // import Spread from "./Spread.svelte";

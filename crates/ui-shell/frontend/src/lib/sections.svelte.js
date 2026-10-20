@@ -1,4 +1,4 @@
-// The sidebar's places (ADR 0017): Trade, the workspace, first; then each
+// The sidebar's places: Trade, the workspace, first; then each
 // section registered the way screens are. A section is registered only once
 // it has something to show, so the sidebar never offers an empty place.
 // Each one is also an action ("section.<id>"), so a key can be bound to it

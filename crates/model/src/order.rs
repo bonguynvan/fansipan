@@ -9,7 +9,7 @@ pub enum Side {
 }
 
 /// Where an order is in its life. Transitions are decided by the execution
-/// engine alone; see /docs/order-lifecycle.md for the full table.
+/// engine alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum OrderStatus {
@@ -141,7 +141,7 @@ impl CancelOrder {
 
 /// An order on the account that this terminal did not place (from the
 /// broker's own app, another program): the venue's id, its terms, and the
-/// venue's view of it now. Core adopts it (ADR 0024).
+/// venue's view of it now. Core adopts it.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct ExternalOrder {

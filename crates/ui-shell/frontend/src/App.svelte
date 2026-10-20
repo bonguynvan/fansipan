@@ -46,7 +46,7 @@
   }
   const shown = $derived(place.current === TRADE ? null : getSection(place.current));
 
-  // A journal that stops being written is told at once (ADR 0023).
+  // A journal that stops being written is told at once.
   $effect(() => {
     if (market.journalError && label === MAIN_WINDOW) {
       workspace.notice = { id: "journal.writeFailed", vars: { error: market.journalError.problem } };
@@ -119,7 +119,7 @@
 </script>
 
 <!-- An extra window is the screen alone: no top bar, moved by its tab strip.
-     The main window has no system frame either (ADR 0017): its title bar
+     The main window has no system frame either: its title bar
      holds the menus and the window buttons, and moves the window from
      wherever nothing else answers to the pointer. -->
 <div class="terminal" class:detached={label !== MAIN_WINDOW}>

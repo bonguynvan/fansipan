@@ -1,6 +1,6 @@
 // One native window's workspace: its desktops and pages (pages.js), the
 // page dockview shows now, and whether each panel follows the shared
-// symbol (ADR 0013). The whole workspace is saved per window in the
+// symbol. The whole workspace is saved per window in the
 // shell's settings store; the shell reopens extra windows at start and
 // each window restores itself from its key.
 //
@@ -157,7 +157,7 @@ function buildLayout(layout) {
   for (const [panel, size] of sized) panel.group.api.setSize(size);
 }
 
-/** Saved dockview JSON with every panel's parameters brought up to ADR 0013. */
+/** Saved dockview JSON with every panel's parameters brought up to date. */
 function migratedDockview(dockview) {
   const panels = Object.fromEntries(
     Object.entries(dockview?.panels ?? {}).map(([id, panel]) => [

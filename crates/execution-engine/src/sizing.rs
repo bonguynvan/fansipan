@@ -1,9 +1,9 @@
 //! How large an order may be for what the trader will lose if its stop is
 //! hit, as NautilusTrader's fixed-risk sizer works it out: the money at
-//! risk over the loss on each unit, rounded down to what the market takes
-//! (ADR 0021). The loss on each unit counts the round trip's costs as the
+//! risk over the loss on each unit, rounded down to what the market takes.
+//! The loss on each unit counts the round trip's costs as the
 //! adapter states them, so a stop hit costs no more than the budget, and
-//! the size never exceeds what the account can take (ADR 0016).
+//! the size never exceeds what the account can take.
 
 use std::fmt;
 

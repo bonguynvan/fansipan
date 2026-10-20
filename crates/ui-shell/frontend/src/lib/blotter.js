@@ -25,9 +25,8 @@ export function viewCounts(orders) {
 
 /**
  * What an order's note says: the venue's reason, or else why the order is
- * unusual: a command the venue has not answered (ADR 0025), not yet
- * confirmed since a restart (ADR 0023), or placed elsewhere and adopted
- * (ADR 0024).
+ * unusual: a command the venue has not answered, not yet
+ * confirmed since a restart, or placed elsewhere and adopted.
  */
 export function orderNote(order, t) {
   if (order.reason) return order.reason;

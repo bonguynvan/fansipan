@@ -150,7 +150,7 @@ export function registerBuiltins() {
   });
 
   // Vietnamese boards quote in thousands of dong, to two places on every
-  // exchange. Each exchange's session comes from the adapter (ADR 0009).
+  // exchange. Each exchange's session comes from the adapter.
   registerMarketPreset({
     id: "vn",
     priceScale: 1000,

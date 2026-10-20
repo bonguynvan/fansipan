@@ -4,7 +4,7 @@
 // they come from the message catalogs, in the reader's language. A preset
 // only says how a market's prices are usually read. Markets without one
 // get FALLBACK.
-// Register your own from screens/index.js; see docs/customizing.md.
+// Register your own from screens/index.js.
 
 const ID = /^[a-z][a-z0-9-]{0,39}$/;
 

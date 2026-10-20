@@ -17,7 +17,7 @@
 //! The engine also holds the market-data connection's status as the adapter
 //! last reported it, so a screen can tell a quiet market from a dead feed,
 //! each market's session: the phase of its day and what it takes, and each
-//! instrument's own status where its venue published one (ADR 0026).
+//! instrument's own status where its venue published one.
 
 mod bars;
 mod session;

@@ -1,7 +1,7 @@
 // The workspace's extension points. Everything a user can put on screen is
 // a registered screen, and every starting arrangement is a registered
 // layout. The built-ins register through the same calls a third party
-// uses (see builtins.js and docs/customizing.md).
+// uses (see builtins.js).
 
 const ID = /^[a-z][a-z0-9-]{0,39}$/;
 

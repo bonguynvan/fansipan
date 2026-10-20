@@ -17,8 +17,8 @@ pub enum TradingStatus {
 
 /// One instrument's status on its venue: whether it trades, whether the
 /// venue takes orders for it while it does not, and whether short sales in
-/// it are restricted. An adapter publishes one whenever any of it changes
-/// (ADR 0026); an instrument with none published trades as its market does.
+/// it are restricted. An adapter publishes one whenever any of it changes;
+/// an instrument with none published trades as its market does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct InstrumentStatus {

@@ -1,4 +1,4 @@
-//! Properties of sizing from risk (ADR 0021): whatever the prices, costs,
+//! Properties of sizing from risk: whatever the prices, costs,
 //! and lot, a stop hit loses no more than the budget, and one more lot
 //! would lose more. The generators aim at the edges: a stop one cent from
 //! the entry, and a budget that is exactly a whole number of lots' loss.
@@ -11,7 +11,7 @@ use proptest::test_runner::RngSeed;
 
 const SEED: u64 = 20_261_019;
 
-/// A fixed seed, so every run explores the same cases (CLAUDE.md: tests are
+/// A fixed seed, so every run explores the same cases (tests are
 /// deterministic). Set PROPTEST_RNG_SEED to explore others.
 fn config() -> ProptestConfig {
     let config = ProptestConfig::default();

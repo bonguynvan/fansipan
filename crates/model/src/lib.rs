@@ -1,9 +1,8 @@
 //! Domain types. No I/O, no async — pure data + invariants.
-//! See /docs/architecture.md for how this fits the rest of the workspace.
 //!
 //! Prices, quantities, and cash are [`Decimal`]: binary floats cannot represent
 //! most decimal prices exactly, and order-book and P&L arithmetic must not
-//! drift. See /docs/adr/0001-decimal-money.md.
+//! drift.
 
 mod account;
 mod connection;

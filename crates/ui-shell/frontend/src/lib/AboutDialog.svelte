@@ -1,6 +1,6 @@
 <script>
   // Help › About Fansipan: what the app is, its version, its licence, and
-  // where its log is, to attach to a problem report (ADR 0027).
+  // where its log is, to attach to a problem report.
   import { getVersion } from "@tauri-apps/api/app";
   import ProblemReport from "./ProblemReport.svelte";
   import { t } from "../i18n/i18n.svelte.js";

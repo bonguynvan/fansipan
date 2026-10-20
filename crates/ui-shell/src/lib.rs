@@ -6,7 +6,7 @@
 //! The shell never names an adapter. A binary does that: this crate's own
 //! wires the sandbox (`src/main.rs`), and an adapter repo wires its adapter
 //! the same way in an example, so its library still depends only on
-//! `fansipan-adapter-api` (ADR 0008).
+//! `fansipan-adapter-api`.
 
 mod batch;
 mod dto;
@@ -53,7 +53,7 @@ const EVENT_NAME: &str = "bus-batch";
 /// order's fill feels immediate, slow enough that a burst costs one message.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 /// How long an order waits for the venue's answer to a command before the
-/// venue is asked where it stands (ADR 0025), and how often that is looked at.
+/// venue is asked where it stands, and how often that is looked at.
 const UNANSWERED_AFTER: Duration = Duration::from_secs(15);
 const UNANSWERED_CHECK: Duration = Duration::from_secs(1);
 const DEFAULT_BAR_LIMIT: usize = 500;
@@ -154,7 +154,7 @@ pub struct Shell {
     pending: Mutex<Batch>,
     /// Number of the last batch taken from `pending`.
     flushed: AtomicU64,
-    /// Today's journal, when the adapter names its account (ADR 0023).
+    /// Today's journal, when the adapter names its account.
     journal: Mutex<Option<journaling::Kept>>,
     /// What the journal kept and brought back, for the screens.
     journal_report: Mutex<journaling::JournalDto>,
@@ -366,7 +366,7 @@ fn take_batch(shell: &Shell) -> Result<Option<BatchDto>, String> {
     Ok(Some(dto))
 }
 
-/// Runs a command the trader gave, journaled (ADR 0023): for one that may
+/// Runs a command the trader gave, journaled: for one that may
 /// send an order, ids are reserved on disk before it runs, so a crash
 /// cannot bring an id round again; whatever it changed is recorded before
 /// it returns, so a restart does not undo what the trader did.
@@ -431,8 +431,8 @@ fn journal_words(report: &journaling::JournalDto) -> String {
     words
 }
 
-/// Opens the account's journal for today and restores the session from it
-/// (ADR 0023). A journal that cannot be opened is reported to the screens;
+/// Opens the account's journal for today and restores the session from it.
+/// A journal that cannot be opened is reported to the screens;
 /// the terminal runs on without one.
 fn start_journal(shell: &Shell, base: &std::path::Path) -> Result<(), String> {
     let (kept, report) = {
@@ -640,7 +640,7 @@ fn sizing_of(shell: &Shell, ticket: &SizingTicket<'_>) -> Result<SizingDto, Stri
 /// The app's configuration and assets. On Windows the window icon is read
 /// from the running executable's resources, which only the shell's own
 /// binary carries; a program that opens the terminal as a library (an
-/// adapter's example, ADR 0008) gets the icon built into this crate instead.
+/// adapter's example) gets the icon built into this crate instead.
 fn context() -> tauri::Context<tauri::Wry> {
     let mut context = tauri::generate_context!();
     if context.default_window_icon().is_none() {
@@ -845,7 +845,7 @@ fn place_order(
     submit(&shell, new_order(&shell.venue, &ticket)?)
 }
 
-/// An entry order with its exits (ADR 0022): the entry as `place_order`
+/// An entry order with its exits: the entry as `place_order`
 /// takes it; a stop-loss at `stop_price`, or trailing by `trail` (in
 /// percent with `trail_percent`); a take-profit at `take_profit`. The exits
 /// wait for the entry's fills. A denied entry comes back with no exits.
@@ -883,7 +883,7 @@ fn place_bracket(
     )
 }
 
-/// How large one order could be now (ADR 0016): what the account can pay
+/// How large one order could be now: what the account can pay
 /// for or holds, within this terminal's limits, in the quantities the market
 /// takes. The ticket asks as its side, type, and price change. A buy without
 /// a limit price is valued at the day's ceiling.
@@ -942,7 +942,7 @@ fn set_trading_state(shell: State<'_, Shell>, state: String) -> Result<(), Strin
 }
 
 /// How large an order may be for what the trader will lose if its stop is
-/// hit (ADR 0021); see `SizingTicket` for the fields.
+/// hit; see `SizingTicket` for the fields.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn size_for_risk(
@@ -971,8 +971,8 @@ fn size_for_risk(
     )
 }
 
-/// Holds an order in this terminal until a trade reaches its trigger
-/// (ADR 0020); see `ConditionalTicket` for the fields.
+/// Holds an order in this terminal until a trade reaches its trigger;
+/// see `ConditionalTicket` for the fields.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn place_conditional(
@@ -1078,7 +1078,7 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                 }
                 pending.board(board);
             }
-            // Conditional orders watch the tape (ADR 0020).
+            // Conditional orders watch the tape.
             if shell.waiting.load(Ordering::Acquire) > 0 {
                 fire_conditionals(shell, &trade.instrument, trade.price)?;
             }
@@ -1109,7 +1109,7 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
             let mut exec = lock(&shell.exec)?;
             match exec.apply(report) {
                 Ok(order) => {
-                    // A fill wakes the exits that wait on this order (ADR 0022).
+                    // A fill wakes the exits that wait on this order.
                     let exits = exec.on_order(&order);
                     shell
                         .waiting
@@ -1126,9 +1126,9 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
                 )),
             }
         }
-        // An order placed elsewhere on the account (ADR 0024).
+        // An order placed elsewhere on the account.
         Event::ExternalOrder(external) => {
-            // Adopting takes an order id: reserved on disk first (ADR 0023).
+            // Adopting takes an order id: reserved on disk first.
             journal_changes(shell, false)?;
             let mut exec = lock(&shell.exec)?;
             match exec.on_external(external) {
@@ -1149,7 +1149,7 @@ fn route(shell: &Shell, event: &Event) -> Result<(), String> {
             lock(&shell.pending)?.session(SessionDto::from(session));
         }
         // An instrument's status too: shown by the data engine, checked by
-        // the execution engine's risk (ADR 0026).
+        // the execution engine's risk.
         Event::InstrumentStatus(status) => {
             lock(&shell.data)?.on_instrument_status(status);
             lock(&shell.exec)?.set_instrument_status(status.clone());
@@ -1238,7 +1238,7 @@ fn pump(app: AppHandle, events: Receiver<Event>) {
 }
 
 /// Asks the venue about orders whose commands it has not answered, and
-/// shows them marked until it does (ADR 0025).
+/// shows them marked until it does.
 fn settle(app: AppHandle) {
     thread::spawn(move || {
         let shell = app.state::<Shell>();
@@ -1334,7 +1334,7 @@ fn connect_engines(bus: &Bus, venue: Venue) -> Result<Shell, AdapterError> {
     })
 }
 
-/// Where the log is written, for Help › About (ADR 0027); `None` before it
+/// Where the log is written, for Help › About; `None` before it
 /// starts.
 #[tauri::command]
 fn log_folder() -> Option<String> {

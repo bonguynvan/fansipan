@@ -8,10 +8,10 @@
   import { t } from "../i18n/i18n.svelte.js";
 
   // The ticket's symbol, side, and type, and the price it would enter at:
-  // its limit, or its reference for an order without one (ADR 0021).
+  // its limit, or its reference for an order without one.
   // `entryTyped` says the entry is the trader's own limit, not the
   // reference moving with the quotes. The stop-loss and take-profit are the
-  // ticket's: it sends them with the order as a bracket (ADR 0022), and the
+  // ticket's: it sends them with the order as a bracket, and the
   // stop is also what the size is worked out from.
   let {
     symbol,

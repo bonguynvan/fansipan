@@ -1,5 +1,5 @@
-//! The engine's records on disk, and the session rebuilt from them
-//! (ADR 0023). One folder per account, named by a hash of it, and one file
+//! The engine's records on disk, and the session rebuilt from them.
+//! One folder per account, named by a hash of it, and one file
 //! per UTC date: a header line, then one record per line, each the whole
 //! state of one thing, the last for each thing winning. A day's file opens
 //! with what was still live in the latest earlier one. A line that cannot

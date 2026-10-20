@@ -1,4 +1,4 @@
-//! The shell's side of the journal (ADR 0023). At start it takes the
+//! The shell's side of the journal. At start it takes the
 //! account's lock, opens the journal for today, restores the engine from
 //! it, and asks the venue about restored orders still open. What the trader
 //! does is recorded before the command returns, and order ids are reserved

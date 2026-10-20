@@ -1,4 +1,4 @@
-// The UI rules a machine can check (docs/ui-rules.md, ADR 0014, ADR 0015):
+// The UI rules a machine can check:
 // sizes in every component's styles and in app.css are rem or relative,
 // never pixels, except for hairline borders and outlines and for shadows;
 // font sizes come from the type scale; colours come from the palette's

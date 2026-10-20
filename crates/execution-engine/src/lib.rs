@@ -1,7 +1,7 @@
 //! Owns order state and the account as the venue last reported it. Risk
 //! runs before anything reaches the adapter; adapters only report what the
 //! venue said, and this engine decides what it means.
-//! The state machine itself is in [`lifecycle`]; see /docs/order-lifecycle.md.
+//! The state machine itself is in [`lifecycle`].
 
 pub mod capacity;
 pub mod emulator;
@@ -212,11 +212,11 @@ struct Tracked {
     /// The total quantity an amendment in flight asks for.
     amending_to: Option<Decimal>,
     /// Restored from the journal and still open, with no word from the
-    /// venue since the restart (ADR 0023).
+    /// venue since the restart.
     unconfirmed: bool,
-    /// Placed elsewhere and adopted (ADR 0024).
+    /// Placed elsewhere and adopted.
     external: bool,
-    /// Waiting on the venue's answer to a command (ADR 0025).
+    /// Waiting on the venue's answer to a command.
     waiting: Option<settling::Waiting>,
 }
 
@@ -248,7 +248,7 @@ pub struct ExecutionEngine {
     /// Each order's id by the venue's, once the venue has given one.
     by_venue: HashMap<VenueOrderId, ClientOrderId>,
     /// Orders placed elsewhere whose id the adapter has been told this
-    /// session (ADR 0024).
+    /// session.
     introduced: HashSet<ClientOrderId>,
     next_id: u64,
     /// Conditional orders held in this terminal (emulator.rs).
@@ -288,7 +288,7 @@ impl ExecutionEngine {
         }
     }
 
-    /// The day's profit and loss (ADR 0019) for every instrument held now
+    /// The day's profit and loss for every instrument held now
     /// or traded this session, by instrument. `mark` gives an instrument's
     /// price now, or `None` when it has none.
     pub fn day_pnl(&self, mark: impl Fn(&InstrumentId) -> Option<Decimal>) -> Vec<DayPnl> {
@@ -341,7 +341,7 @@ impl ExecutionEngine {
         flows
     }
 
-    /// Holds a conditional order until a trade fires it (ADR 0020). `mark`
+    /// Holds a conditional order until a trade fires it. `mark`
     /// is the instrument's last trade, which a trailing stop starts from.
     pub fn place_conditional(
         &mut self,
@@ -360,7 +360,7 @@ impl ExecutionEngine {
     }
 
     /// Sends `request`'s entry through risk as any order, and holds its
-    /// exits until the entry fills (ADR 0022): each watches for what has
+    /// exits until the entry fills: each watches for what has
     /// filled, and the first to fire cancels the other. `mark`, the last
     /// trade, is what an entry without a limit is checked against. An entry
     /// that does not go out (risk denies it, the adapter refuses it) places
@@ -409,8 +409,8 @@ impl ExecutionEngine {
         Ok((order, placed))
     }
 
-    /// Brings the exits waiting on `order` up to date after a venue report
-    /// (ADR 0022): they watch once it has filled, for what has filled, and
+    /// Brings the exits waiting on `order` up to date after a venue report:
+    /// they watch once it has filled, for what has filled, and
     /// are cancelled when it ends with nothing filled.
     pub fn on_order(&mut self, order: &Order) -> Vec<Conditional> {
         let mut changed = Vec::new();
@@ -572,7 +572,7 @@ impl ExecutionEngine {
 
     /// Once an exit's order goes out, the position it protects is being
     /// closed: its other exit is cancelled, and a cancel is asked for what
-    /// of its entry still works (ADR 0022). A cancel the adapter refuses is
+    /// of its entry still works. A cancel the adapter refuses is
     /// recorded on the exit, since the entry may go on filling.
     fn close_bracket(&mut self, fired: &Conditional) -> (Vec<Conditional>, Vec<Order>) {
         let mut changed = Vec::new();
@@ -663,7 +663,7 @@ impl ExecutionEngine {
         &self.account
     }
 
-    /// How large one order in `instrument` could be now (ADR 0016): what
+    /// How large one order in `instrument` could be now: what
     /// the account can pay for or holds, and this terminal's limits, in the
     /// quantities the market takes. Risk still judges the order itself.
     pub fn capacity(
@@ -688,7 +688,7 @@ impl ExecutionEngine {
     }
 
     /// How large an order may be for what the trader will lose if its stop
-    /// is hit (ADR 0021), within what [`capacity`](Self::capacity) allows
+    /// is hit, within what [`capacity`](Self::capacity) allows
     /// for it at its entry. `mark` prices the positions when the budget is
     /// a percentage of equity.
     pub fn size_for_risk(
@@ -766,7 +766,7 @@ impl ExecutionEngine {
     }
 
     /// Records an instrument's status, replacing its last one; risk checks
-    /// its orders against it (ADR 0026).
+    /// its orders against it.
     pub fn set_instrument_status(&mut self, status: InstrumentStatus) {
         self.statuses.insert(status.instrument.clone(), status);
     }
@@ -1128,7 +1128,7 @@ impl ExecutionEngine {
         self.orders.values().map(|t| &t.order)
     }
 
-    /// The order `id` as the journal records it (ADR 0023).
+    /// The order `id` as the journal records it.
     pub fn order_record(&self, id: ClientOrderId) -> Option<OrderRecord> {
         self.orders.get(&id).map(|tracked| {
             // Sorted, so the same order always records the same way.
@@ -1148,8 +1148,8 @@ impl ExecutionEngine {
         self.orders.get(&id).is_some_and(|tracked| tracked.external)
     }
 
-    /// Takes in an order the venue reports that this terminal did not place
-    /// (ADR 0024). The first report of a venue id makes a new order, created
+    /// Takes in an order the venue reports that this terminal did not place.
+    /// The first report of a venue id makes a new order, created
     /// as submitted and caught up to the venue's view, so its status changes
     /// only in the lifecycle; the adapter is then told its id, as it is once
     /// per session for an order adopted before a restart. A later report of
@@ -1235,7 +1235,7 @@ impl ExecutionEngine {
         self.gate.account_id()
     }
 
-    /// Rebuilds the session from the journal (ADR 0023): its orders, those
+    /// Rebuilds the session from the journal: its orders, those
     /// still open marked unconfirmed until the venue speaks of them; its
     /// conditional orders as they were; and the trader's switch. New ids
     /// continue past the restored ones. Nothing is sent to the venue.
@@ -1282,7 +1282,7 @@ impl ExecutionEngine {
     }
 
     /// Asks the venue about every restored order still unconfirmed; its
-    /// answers arrive as catch-up reports (ADR 0012). `Ok(false)` when the
+    /// answers arrive as catch-up reports. `Ok(false)` when the
     /// venue cannot say, and the orders stay unconfirmed.
     pub fn recover_unconfirmed(&mut self) -> Result<bool, AdapterError> {
         let asked: Vec<RecoverOrder> = self
@@ -1308,7 +1308,7 @@ impl ExecutionEngine {
 
     /// Asks the venue where each order stands that has waited `after` or
     /// more for an answer to a command: sent and not acknowledged, or a
-    /// cancel or an amendment asked for and not answered (ADR 0025). The
+    /// cancel or an amendment asked for and not answered. The
     /// answers arrive as catch-up reports and settle the orders in the
     /// lifecycle. Each wait is asked about up to [`settling::ASKS`] times,
     /// `after` apart; an order asked about is marked unanswered until its
@@ -1322,7 +1322,7 @@ impl ExecutionEngine {
         for tracked in self.orders.values_mut() {
             let status = tracked.order.status;
             // A restored order is asked about at start and stays marked
-            // unconfirmed until the venue speaks of it (ADR 0023).
+            // unconfirmed until the venue speaks of it.
             if !settling::awaits_answer(status) || tracked.unconfirmed {
                 tracked.waiting = None;
                 continue;
@@ -1354,7 +1354,7 @@ impl ExecutionEngine {
     }
 
     /// Whether `id` has waited for an answer to a command and been asked
-    /// about since, with no answer yet (ADR 0025).
+    /// about since, with no answer yet.
     pub fn is_unanswered(&self, id: ClientOrderId) -> bool {
         self.orders.get(&id).is_some_and(|tracked| {
             tracked

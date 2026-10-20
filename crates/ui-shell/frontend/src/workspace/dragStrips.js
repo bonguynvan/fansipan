@@ -1,4 +1,4 @@
-// Which tab strips move a frameless extra window (ADR 0013): the empty part
+// Which tab strips move a frameless extra window: the empty part
 // of each docked strip, as a title bar would. A floating group's strip moves
 // that group instead, unless nothing is docked and it is the only handle the
 // window has.

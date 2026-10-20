@@ -1,5 +1,5 @@
 //! What the engine records so a restart can bring the session back, and
-//! what it is rebuilt from (ADR 0023). A record is the whole current state
+//! what it is rebuilt from. A record is the whole current state
 //! of one thing, so rebuilding is a fold with the last record winning and
 //! sends nothing to the venue.
 
@@ -18,7 +18,7 @@ pub struct OrderRecord {
     pub order: Order,
     pub applied_fills: Vec<FillId>,
     pub amending_to: Option<Decimal>,
-    /// Placed elsewhere and adopted (ADR 0024).
+    /// Placed elsewhere and adopted.
     pub external: bool,
 }
 

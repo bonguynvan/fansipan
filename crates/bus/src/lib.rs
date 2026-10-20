@@ -1,5 +1,5 @@
-//! Typed in-process pub/sub between adapters, engines, and the UI shell.
-//! See /docs/architecture.md § "One message bus, three consumers".
+//! Typed in-process pub/sub between adapters, engines, and the UI shell:
+//! one message bus, three consumers.
 
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
@@ -33,10 +33,10 @@ pub enum Event {
     /// order types it takes.
     Session(SessionStatus),
     /// An order on the account this terminal did not place, as the venue
-    /// holds it now; core adopts it (ADR 0024).
+    /// holds it now; core adopts it.
     ExternalOrder(ExternalOrder),
     /// One instrument halted, suspended, resumed, or had a short-sale
-    /// restriction set or lifted (ADR 0026).
+    /// restriction set or lifted.
     InstrumentStatus(InstrumentStatus),
 }
 

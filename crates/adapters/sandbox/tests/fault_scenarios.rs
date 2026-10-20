@@ -1,8 +1,8 @@
-//! Faults, replayed deterministically (roadmap Phase 7). Between the
+//! Faults, replayed deterministically. Between the
 //! sandbox venue and the execution engine runs a wire that loses the
 //! venue's reports while the connection is down, delivers some twice, and
 //! holds others back to deliver them out of order. A reconnect reads the
-//! venue's orders back and publishes them as snapshots, as ADR 0012 asks
+//! venue's orders back and publishes them as snapshots, as the contract asks
 //! of an adapter; what was in flight when the connection dropped is lost
 //! with it, so no stream report older than a read-back arrives after it.
 //!
@@ -298,7 +298,7 @@ impl Desk {
 
     /// What an adapter does on reconnecting: a new connection, so whatever
     /// the old one had in flight is gone, then the session's orders and the
-    /// account read back. That keeps ADR 0012's rule for adapters: no stream
+    /// account read back. That keeps the contract's rule for adapters: no stream
     /// report older than a read-back arrives after it, or a fill the
     /// read-back already counted would count again.
     fn reconnect(&mut self) {
@@ -361,7 +361,7 @@ fn agrees(order: &Order, view: &VenueOrder) -> Result<(), String> {
         VenueOrderState::Working => order.status.is_open(),
         VenueOrderState::Filled => order.status == OrderStatus::Filled,
         VenueOrderState::Cancelled => order.status == OrderStatus::Cancelled,
-        // A rejection after fills ends as a cancel (ADR 0012).
+        // A rejection after fills ends as a cancel.
         VenueOrderState::Rejected { .. } => {
             order.status == OrderStatus::Rejected
                 || (order.status == OrderStatus::Cancelled && !order.filled_quantity.is_zero())

@@ -1,5 +1,5 @@
 // Each market's phase of the day and the order types it takes now, as the
-// adapter publishes them (ADR 0009). The ticket offers what an instrument's
+// adapter publishes them. The ticket offers what an instrument's
 // market takes; the board shows each market's phase. Nothing here knows a
 // market or an order type by name: the names come with the session.
 

@@ -1,4 +1,4 @@
-// The ticket's question to core about the largest order (ADR 0016). Core
+// The ticket's question to core about the largest order. Core
 // computes the answer in exact decimals by risk's own rules; this only
 // decides what to ask and which price to ask it at.
 

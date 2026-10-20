@@ -1,6 +1,6 @@
 //! How large one order could be, before the trader types its size: what the
 //! account can pay for or holds, and this terminal's own limits, shaped to
-//! the quantities the market takes (ADR 0016). Risk still judges the order
+//! the quantities the market takes. Risk still judges the order
 //! itself; this says where its limits lie, using the same rules.
 
 use model::{AccountState, Decimal, InstrumentInfo, OrderType, Position, PriceBand, Side};

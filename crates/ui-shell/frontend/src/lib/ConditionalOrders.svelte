@@ -19,7 +19,7 @@
   const decimals = $derived(market.priceDecimals(selected));
   const last = $derived(selected ? (market.boards[selected]?.last ?? null) : null);
   // Where the market has a daily band, a marketable order is a limit at its
-  // edge; elsewhere it is a market order (ADR 0020).
+  // edge; elsewhere it is a market order.
   const banded = $derived(Boolean(selected && market.boards[selected]?.floor && market.boards[selected]?.ceiling));
 
   // Sizes and prices start over when the symbol changes, as on the ticket:

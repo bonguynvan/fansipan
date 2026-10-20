@@ -1,6 +1,6 @@
-// The built-in sections (ADR 0017), registered through the call a plugin
+// The built-in sections, registered through the call a plugin
 // uses. Trade is the workspace; Settings and Help each have something to
-// show. Inbox and History come with Phase 8, Money and Support from an
+// show. Other places register the same way, from here or from an
 // adapter that offers them.
 
 import HelpSection from "./HelpSection.svelte";

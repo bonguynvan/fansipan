@@ -53,7 +53,7 @@ pub struct BatchDto {
     pub boards: Vec<BoardDto>,
     pub connections: Vec<ConnectionDto>,
     pub sessions: Vec<SessionDto>,
-    /// Instruments whose status changed (ADR 0026).
+    /// Instruments whose status changed.
     pub statuses: Vec<InstrumentStatusDto>,
     /// Every print since the last batch, by symbol, then oldest first.
     pub prints: Vec<PrintDto>,

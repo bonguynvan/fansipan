@@ -1,4 +1,4 @@
-//! The roadmap's Phase 1 acceptance loop, headless: an order goes through
+//! The paper-trading loop, headless: an order goes through
 //! risk, the execution engine, the sandbox adapter, back over the bus as
 //! execution reports, and the engine's order state and the venue's account
 //! agree at the end. Same wiring as the desktop shell, minus the window.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Measures what the README reports about Fansipan's footprint on Windows:
 // install size, start-up time, and memory and processor when idle and under
-// a busy feed with three windows open (docs/performance.md, "Footprint").
+// a busy feed with three windows open.
 //
 // From the repository root, after a release build:
 //

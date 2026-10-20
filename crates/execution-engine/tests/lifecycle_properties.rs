@@ -1,10 +1,10 @@
-//! Properties of the order lifecycle (roadmap Phase 7): whatever a venue
+//! Properties of the order lifecycle: whatever a venue
 //! reports, in whatever order, late, duplicated, or nonsensical, an order
 //! keeps the invariants below, and nothing panics. In the engine, a report
 //! it refuses leaves the order exactly as it was.
 //!
-//! The seed is fixed, so every run explores the same cases (CLAUDE.md:
-//! tests are deterministic). Set PROPTEST_RNG_SEED to explore others.
+//! The seed is fixed, so every run explores the same cases (tests
+//! are deterministic). Set PROPTEST_RNG_SEED to explore others.
 
 use std::collections::HashSet;
 

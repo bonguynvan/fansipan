@@ -1,7 +1,7 @@
 //! Fansipan as it ships: the terminal wired to the simulated venue.
 //!
 //! An adapter repo builds the same thing around its own adapter, in a few
-//! lines like these (ADR 0008).
+//! lines like these.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

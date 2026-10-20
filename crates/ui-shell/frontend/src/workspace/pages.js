@@ -1,4 +1,4 @@
-// A native window's pages and desktops as plain data (ADR 0013). Desktops
+// A native window's pages and desktops as plain data. Desktops
 // hold pages. A desktop's open pages are its tabs, its closed ones a saved
 // list to reopen. A page keeps dockview's own JSON, or null before it has
 // first been shown, and the panels moved to it from another page that it
@@ -218,7 +218,7 @@ export function reviveWorkspace(saved, names) {
 }
 
 /**
- * A layout saved before ADR 0013 (version 1: dockview's JSON, or a
+ * A layout saved before pages and desktops (version 1: dockview's JSON, or a
  * pop-out's panel list) as the first page of a fresh workspace, named
  * `pageName`. Null when it holds nothing to show.
  */

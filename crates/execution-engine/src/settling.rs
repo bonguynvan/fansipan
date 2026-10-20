@@ -1,4 +1,4 @@
-//! Commands the venue has not answered (ADR 0025): an order sent, or a
+//! Commands the venue has not answered: an order sent, or a
 //! cancel or an amendment asked for, with no word from the venue for a
 //! while. The engine asks the venue where such an order stands, through the
 //! recovery a restart uses, and the answer settles it in the lifecycle.

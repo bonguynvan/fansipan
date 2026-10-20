@@ -1,9 +1,9 @@
-//! The day's profit and loss (ADR 0019), per instrument: what the holding
+//! The day's profit and loss, per instrument: what the holding
 //! is worth now against what it was worth at the day's reference price,
 //! plus what today's sales brought in, less what today's buys paid, less
 //! the broker's commission and the sell tax.
 //!
-//! "Today" is this session's orders, adopted ones included (ADR 0024), at
+//! "Today" is this session's orders, adopted ones included, at
 //! each order's average price. Fills on orders placed elsewhere that the
 //! adapter never reports reach the venue's position but not this ledger,
 //! so they count as if held since the reference.

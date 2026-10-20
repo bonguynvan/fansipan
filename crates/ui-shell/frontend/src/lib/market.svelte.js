@@ -30,7 +30,7 @@ class Market {
   connections = $state.raw({});
   /** Each market's phase of the day and the order types it takes now, keyed by market. */
   sessions = $state.raw({});
-  /** Each instrument's own status where its venue published one (ADR 0026), keyed by symbol. */
+  /** Each instrument's own status where its venue published one, keyed by symbol. */
   statuses = $state.raw({});
   /** Every order type name a market's sessions have given, kept after they move on. */
   typeNames = $state.raw({});
@@ -42,15 +42,15 @@ class Market {
   canAmend = $state(false);
   /** The trader's switch, for every window: "active", "reducing", or "halted". */
   trading = $state("active");
-  /** The day's P&L as the shell counts it (ADR 0019): `{ total, costs, partial, instruments }`. */
+  /** The day's P&L as the shell counts it: `{ total, costs, partial, instruments }`. */
   day = $state.raw(null);
   /** Each instrument's day P&L, by symbol: a number, or null when unknown. */
   dayBySymbol = $derived(
     Object.fromEntries((this.day?.instruments ?? []).map((line) => [line.symbol, line.pnl === null ? null : Number(line.pnl)])),
   );
-  /** Conditional orders held in this terminal (ADR 0020), by id. */
+  /** Conditional orders held in this terminal, by id. */
   conditionals = $state.raw({});
-  /** What the journal kept and brought back at start (ADR 0023); null until the snapshot is in. */
+  /** What the journal kept and brought back at start; null until the snapshot is in. */
   journal = $state.raw(null);
   /** `{ problem }` each time the journal could not be written: a new object every time, so a repeat is told too. */
   journalError = $state.raw(null);

@@ -1,6 +1,6 @@
 <script>
   // How to report a problem: where the log is, what it holds, and its path
-  // to copy (ADR 0027). Help › About and the Help section both show it.
+  // to copy. Help › About and the Help section both show it.
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { t } from "../i18n/i18n.svelte.js";

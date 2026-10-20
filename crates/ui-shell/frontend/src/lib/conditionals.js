@@ -1,6 +1,6 @@
 // The pieces of the conditional-orders screen that are not markup: what it
-// sends the shell, whether a form is complete, and how a held order reads
-// (ADR 0020). The shell parses the numbers exactly and says what is wrong.
+// sends the shell, whether a form is complete, and how a held order reads.
+// The shell parses the numbers exactly and says what is wrong.
 
 /** The triggers the shell takes, in the order the screen offers them. */
 export const TRIGGERS = ["at_or_below", "at_or_above", "trailing"];
@@ -40,7 +40,7 @@ export function conditionWords(conditional) {
   return { id: `conditional.when.${conditional.trigger}`, vars: { price: conditional.price } };
 }
 
-/** Whether a held order can still fire: waiting, or an exit pending on its entry (ADR 0022). */
+/** Whether a held order can still fire: waiting, or an exit pending on its entry. */
 export const isLive = (conditional) => conditional.status === "waiting" || conditional.status === "pending";
 
 /** Live ones first, then the rest; newest first within each. */

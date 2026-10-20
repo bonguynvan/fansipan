@@ -1,4 +1,4 @@
-//! The instrument's own status against an order (ADR 0026): a halted or
+//! The instrument's own status against an order: a halted or
 //! suspended instrument the venue takes no orders for, and a short sale
 //! under a short-sale restriction.
 

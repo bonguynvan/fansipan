@@ -1,5 +1,5 @@
 <script>
-  // Settings (ADR 0017): how the terminal looks and reads, and its keys, in
+  // Settings: how the terminal looks and reads, and its keys, in
   // one place. Each choice is the one the View menu offers, so both change
   // the same setting, here and in every window.
   import { THEMES, setTheme, theme } from "./theme.svelte.js";

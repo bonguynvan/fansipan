@@ -1,4 +1,4 @@
-// The colour theme (ADR 0015): dark, light, or the system's. The palette is
+// The colour theme: dark, light, or the system's. The palette is
 // tokens in app.css, dark under `:root` and light under
 // `:root[data-theme="light"]`; this module sets that attribute. What cannot
 // read CSS (the chart's canvas, dockview's base theme) reads

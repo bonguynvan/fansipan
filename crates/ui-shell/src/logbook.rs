@@ -1,4 +1,4 @@
-//! The terminal's log (ADR 0027): what the shell and engines report, one
+//! The terminal's log: what the shell and engines report, one
 //! line each, in a file per UTC day that a trader can attach to a problem
 //! report. It says what happened to which order and connection, and why.
 //! It writes no price, quantity, or account figure of its own; a reason or

@@ -1,5 +1,5 @@
-// What the trader is told about the journal when the terminal starts
-// (ADR 0023): one notice, the most pressing first. An error, then a damaged
+// What the trader is told about the journal when the terminal starts:
+// one notice, the most pressing first. An error, then a damaged
 // tail set aside, then orders the venue cannot confirm, then what came back.
 
 /** The notice for the snapshot's journal report, or null when there is nothing to say. */

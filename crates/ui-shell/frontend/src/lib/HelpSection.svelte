@@ -1,6 +1,6 @@
 <script>
-  // Help (ADR 0017): what the terminal is, its keys, and how to report a
-  // problem (ADR 0027).
+  // Help: what the terminal is, its keys, and how to report a
+  // problem.
   import { onMount } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import ProblemReport from "./ProblemReport.svelte";

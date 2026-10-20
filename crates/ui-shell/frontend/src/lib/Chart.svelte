@@ -19,8 +19,8 @@
   const indicators = [{ id: "ema", params: { period: 20 } }];
 
   // The chart paints a canvas, which cannot read the app's tokens: it takes
-  // the TradeCanvas theme matching the app's (ADR 0015), with its text in
-  // pixels that follow the trader's text size like every other size (ADR 0014).
+  // the TradeCanvas theme matching the app's, with its text in
+  // pixels that follow the trader's text size like every other size.
   const base = $derived(appTheme.resolved === "light" ? LIGHT_THEME : DARK_THEME);
   const theme = $derived({
     ...base,

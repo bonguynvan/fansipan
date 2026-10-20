@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Measures the Docker demo's footprint, as scripts/footprint.mjs does on
-// Windows (docs/performance.md, "Footprint in Docker"): the image's size,
+// Windows: the image's size,
 // start-up, and memory and processor when idle and under a busy feed with
 // three windows open.
 //

@@ -52,7 +52,7 @@
   const orderType = $derived(pickOrderType(offered, wantedType));
   const priced = $derived(isPriced(orderType));
   let limitPrice = $derived(blankFor(selected));
-  // A position's exits, sent with the order as a bracket (ADR 0022).
+  // A position's exits, sent with the order as a bracket.
   let exitStop = $derived(blankFor(selected));
   let takeProfit = $derived(blankFor(selected));
   const exits = $derived(exitsOf(exitStop, takeProfit));
@@ -109,7 +109,7 @@
 
   const reference = $derived(quote ? Number(side === "buy" ? quote.ask : quote.bid) : null);
 
-  // How large one order can be (ADR 0016): core's answer for this side,
+  // How large one order can be: core's answer for this side,
   // type, and price, asked again whenever the account or the orders move,
   // since both change what fits. A slower, older answer never overwrites a
   // newer one, and an answer to another question (another symbol, side,
@@ -417,7 +417,7 @@
   }
 
   /* Fields fill their row and may shrink below their natural width, so the
-     ticket never pushes past its panel (docs/ui-rules.md, rule 3). */
+     ticket never pushes past its panel. */
   input,
   select {
     width: 100%;

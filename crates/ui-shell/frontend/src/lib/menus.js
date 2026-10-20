@@ -1,4 +1,4 @@
-// The menu bar's extension point (ADR 0017). Menus hold commands, and most
+// The menu bar's extension point. Menus hold commands, and most
 // commands are registered actions (hotkeys.svelte.js): the menu shows the
 // key the trader bound, and a plugin's action sits beside the built-ins with
 // no change here. Two other kinds fill the gaps: a command a key must not

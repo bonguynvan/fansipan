@@ -1,4 +1,4 @@
-//! Properties of risk's market-rule check (roadmap Phase 7): on a market
+//! Properties of risk's market-rule check: on a market
 //! with Vietnam's rules, an order passes exactly when its quantity is one
 //! the market takes and its price is on the ladder and inside the day's
 //! band. Nothing a venue would refuse for those reasons gets through, and
@@ -14,7 +14,7 @@ use proptest::test_runner::RngSeed;
 
 const SEED: u64 = 20_261_008;
 
-/// A fixed seed, so every run explores the same cases (CLAUDE.md: tests are
+/// A fixed seed, so every run explores the same cases (tests are
 /// deterministic). Set PROPTEST_RNG_SEED to explore others.
 fn config() -> ProptestConfig {
     let config = ProptestConfig::default();

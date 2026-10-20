@@ -1,5 +1,5 @@
 <script>
-  // The main window has no system frame (ADR 0017), so it draws its own
+  // The main window has no system frame, so it draws its own
   // minimise, maximise or restore, and close buttons, at the end of its
   // title bar, where Windows keeps them.
   import { onMount } from "svelte";

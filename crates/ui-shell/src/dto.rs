@@ -34,8 +34,7 @@ pub struct Snapshot {
     pub connections: Vec<ConnectionDto>,
     /// Each market's phase of the day, for markets the adapter reported.
     pub sessions: Vec<SessionDto>,
-    /// Each instrument's own status, where its venue published one
-    /// (ADR 0026).
+    /// Each instrument's own status, where its venue published one.
     pub statuses: Vec<InstrumentStatusDto>,
     /// Whether the venue takes amendments; when it does not, no order's
     /// `amendable` matters.
@@ -43,9 +42,9 @@ pub struct Snapshot {
     /// The trader's switch: "active", "reducing", or "halted".
     pub trading: &'static str,
     pub day: DayDto,
-    /// Every conditional order this session (ADR 0020).
+    /// Every conditional order this session.
     pub conditionals: Vec<ConditionalDto>,
-    /// What the journal kept and brought back (ADR 0023).
+    /// What the journal kept and brought back.
     pub journal: JournalDto,
 }
 
@@ -76,7 +75,7 @@ pub struct ConditionalDto {
     pub level: Option<String>,
     /// Why it reached its trigger and waits still.
     pub blocked: Option<String>,
-    /// The entry order an exit protects (ADR 0022).
+    /// The entry order an exit protects.
     pub after_order: Option<u64>,
     /// The other exit, cancelled when this one fires.
     pub oco: Option<u64>,
@@ -132,7 +131,7 @@ impl From<&Conditional> for ConditionalDto {
     }
 }
 
-/// The day's profit and loss (ADR 0019), net of commission and sell tax.
+/// The day's profit and loss, net of commission and sell tax.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct DayDto {
     /// The sum over every instrument whose day is known.
@@ -466,13 +465,13 @@ pub struct OrderDto {
     /// engine's notion of "open".
     pub open: bool,
     /// Restored after a restart and still open, with no word from the venue
-    /// since (ADR 0023). Set by the shell, which asks the engine.
+    /// since. Set by the shell, which asks the engine.
     pub unconfirmed: bool,
     /// Waited for an answer to a command and been asked about, with no
-    /// answer yet (ADR 0025). Set by the shell, which asks the engine.
+    /// answer yet. Set by the shell, which asks the engine.
     pub unanswered: bool,
-    /// Placed elsewhere (the broker's app, another program) and adopted
-    /// (ADR 0024). Set by the shell, which asks the engine.
+    /// Placed elsewhere (the broker's app, another program) and adopted.
+    /// Set by the shell, which asks the engine.
     pub external: bool,
     /// Whether an amendment could change it, on a venue that amends.
     pub amendable: bool,
@@ -529,7 +528,7 @@ pub struct SessionDto {
     pub order_types: Vec<OrderTypeDto>,
 }
 
-/// One instrument's status where its venue published one (ADR 0026).
+/// One instrument's status where its venue published one.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct InstrumentStatusDto {
     pub symbol: String,
@@ -749,7 +748,7 @@ fn bound_label(bound: Bound) -> &'static str {
     }
 }
 
-/// How large an order may be for what the trader will lose (ADR 0021).
+/// How large an order may be for what the trader will lose.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct SizingDto {
     pub quantity: String,
@@ -775,7 +774,7 @@ impl From<&Sizing> for SizingDto {
     }
 }
 
-/// How large one order could be now (ADR 0016), for the ticket.
+/// How large one order could be now, for the ticket.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct CapacityDto {
     /// The largest quantity one order may have; `None` for a buy with no

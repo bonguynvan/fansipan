@@ -1,4 +1,4 @@
-//! Conditional orders held in this terminal (ADR 0020), as NautilusTrader's
+//! Conditional orders held in this terminal, as NautilusTrader's
 //! order emulator holds what a venue does not take: a stop, a take-profit,
 //! or a trailing stop waits here, watching the instrument's trades, and
 //! when one fires it becomes an ordinary new order, cleared by risk at that
@@ -7,7 +7,7 @@
 //!
 //! An exit can wait on an entry order: it watches only once the entry has
 //! filled, for as much as has filled, and two exits can cancel each other,
-//! so a bracket's stop-loss and take-profit never both go out (ADR 0022).
+//! so a bracket's stop-loss and take-profit never both go out.
 //!
 //! They live as long as the terminal runs.
 
@@ -79,7 +79,7 @@ pub struct ConditionalRequest {
     pub then: Then,
 }
 
-/// An entry order with the exits that protect what it fills (ADR 0022).
+/// An entry order with the exits that protect what it fills.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BracketRequest {
     pub entry: NewOrder,

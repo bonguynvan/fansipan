@@ -1,5 +1,5 @@
 <script>
-  // Search in the title bar (ADR 0017): commands, a screen to add, a theme,
+  // Search in the title bar: commands, a screen to add, a theme,
   // a symbol to show, found by typing. Ctrl+K (the "app.search" action,
   // rebindable) puts the keyboard here; the arrows walk the results, Enter
   // runs one, and Esc goes back to where the keyboard was.

@@ -1,4 +1,4 @@
-// Sizes that follow the trader's text size (ADR 0014, docs/ui-rules.md).
+// Sizes that follow the trader's text size.
 // CSS sizes in rem, so the root font size is the one dial. Code that must
 // hand a library pixels (a grid's row height, a column's width) uses
 // `px()`, which scales a size designed at 100% the same way.

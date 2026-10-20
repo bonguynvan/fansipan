@@ -1,4 +1,4 @@
-/* The palette (ADR 0015, docs/ui-rules.md): every colour in the app is one
+/* The palette: every colour in the app is one
    of these tokens, so a theme is one block of values. Dark is the default;
    light is below. The grids, the docking frame, and the screens read the
    tokens directly; only the chart, which paints a canvas, picks its own
@@ -30,7 +30,7 @@
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
 
-  /* The type scale (ADR 0014, docs/ui-rules.md). Every size in the app is
+  /* The type scale. Every size in the app is
      rem, so the trader's text size, zoom, and the system's scaling move
      all of them together. Values at 100%: 10, 11, 12, 13, 14, 15, 18px. */
   --text-2xs: 0.625rem;

@@ -1,5 +1,5 @@
 <script>
-  // The main window's desktops and pages (ADR 0013): a desktop menu, the
+  // The main window's desktops and pages: a desktop menu, the
   // open pages as tabs, and "+" for a new page (blank, from a registered
   // layout, or a copy of this one) or a closed page to open again.
   // Double-click a tab to rename it. Removing a desktop or deleting a closed

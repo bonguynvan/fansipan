@@ -1,6 +1,6 @@
 //! The venue's record of every order it was sent this session, folded from
 //! the reports it publishes. It is what a broker's API returns when an
-//! adapter reads the session's orders back after a reconnect (ADR 0012):
+//! adapter reads the session's orders back after a reconnect:
 //! the adapter publishes it as snapshots, and core catches up on what the
 //! dropped stream did not deliver.
 

@@ -1,5 +1,5 @@
 <script>
-  // The sidebar of places (ADR 0017): one button a section, Trade first,
+  // The sidebar of places: one button a section, Trade first,
   // the section shown marked. The arrows walk it, as they do a toolbar.
   import { keyOf } from "./hotkeys.svelte.js";
   import { listSections, place, showSection } from "./sections.svelte.js";

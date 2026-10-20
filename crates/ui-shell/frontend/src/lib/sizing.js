@@ -1,5 +1,5 @@
-// The ticket's questions to core about sizing from risk (ADR 0021) and the
-// exits it sends with an order (ADR 0022). Core works the size out in exact
+// The ticket's questions to core about sizing from risk and the
+// exits it sends with an order. Core works the size out in exact
 // decimals, costs and caps included, and checks the exits; this decides
 // what to ask and send, how the answer reads, and what the trader keeps.
 

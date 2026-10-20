@@ -1,5 +1,5 @@
 //! The order state machine: one pure function from (order, venue event) to
-//! the next order. The full table, with reasons, is /docs/order-lifecycle.md.
+//! the next order.
 
 use std::fmt;
 

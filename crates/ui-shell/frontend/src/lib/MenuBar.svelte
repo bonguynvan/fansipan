@@ -1,5 +1,5 @@
 <script>
-  // The menu bar (ADR 0017), filled from the menu registry, so a menu or an
+  // The menu bar, filled from the menu registry, so a menu or an
   // item a plugin registers before the app mounts shows here with no change
   // to this file. It keeps Windows' keys: Alt or F10 moves to the bar, the
   // arrows walk it, Enter or Down opens a menu, Esc closes it and Esc again

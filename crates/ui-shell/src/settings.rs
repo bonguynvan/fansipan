@@ -443,7 +443,7 @@ mod tests {
         assert!(settings.get("a").is_none());
     }
 
-    /// No panic on input from outside (roadmap Phase 7): the settings file
+    /// No panic on input from outside: the settings file
     /// is whatever is on disk, a half-written save or a stranger's edit.
     mod from_disk {
         use proptest::collection::vec;

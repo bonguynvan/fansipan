@@ -1,4 +1,4 @@
-// Each instrument's own status, as its venue publishes it (ADR 0026): halted,
+// Each instrument's own status, as its venue publishes it: halted,
 // suspended, or trading under a short-sale restriction or a notice. Risk in
 // the engine refuses what a status forbids; these only say so first.
 

@@ -3,7 +3,7 @@
 
 `cargo build/clippy/test --workspace` never touches a crate left out of
 the workspace, so the build looks green while that crate is broken
-(CLAUDE.md, "Rust conventions"). Run from anywhere: python scripts/check-workspace.py
+and nothing says so. Run from anywhere: python scripts/check-workspace.py
 """
 
 import json

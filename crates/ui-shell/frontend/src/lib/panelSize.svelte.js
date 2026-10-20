@@ -1,6 +1,6 @@
-// How wide a screen is, as marks its styles can select on (ADR 0014,
-// docs/ui-rules.md). A screen gets a panel the trader docks, floats, and
-// resizes, so it adapts to that, not to the window. CSS container queries
+// How wide a screen is, as marks its styles can select on. A screen gets
+// a panel the trader docks, floats, and resizes, so it adapts to that,
+// not to the window. CSS container queries
 // would do this, but a size container captures `position: fixed`
 // descendants, and the grids' menus are fixed.
 

@@ -1,7 +1,7 @@
 # Every push: formatting, workspace membership, licences and advisories once,
 # then the front end and the Rust workspace on Linux and Windows. macOS joins
 # weekly and on demand, as its minutes cost ten times as much on a private
-# repository. What this runs is what CLAUDE.md asks before every commit.
+# repository. What this runs is what a contributor runs before every commit.
 #
 # Actions are pinned to a commit, with the release in a comment, so a moved
 # tag cannot change what runs here.
@@ -113,8 +113,8 @@ jobs:
         run: cargo test --workspace --locked
 
   # Weekly and on demand, on Windows, where the terminal runs: the shell's
-  # tests in release, then the quote path's latency distribution
-  # (docs/performance.md). It is CI's one Windows release build, and so the
+  # tests in release, then the quote path's latency distribution.
+  # It is CI's one Windows release build, and so the
   # one that links the static C runtime the installed app ships with
   # (crates/ui-shell/build.rs); debug builds use the dynamic one. A shared
   # runner is too noisy for a tight latency gate, so the numbers go in the

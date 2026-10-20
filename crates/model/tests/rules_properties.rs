@@ -1,4 +1,4 @@
-//! Properties of market rules as data (roadmap Phase 7): for any tick ladder
+//! Properties of market rules as data: for any tick ladder
 //! of the shape real markets use, every rounding lands on a tradable price
 //! on the right side of the price it started from, and a band built from a
 //! fraction stays inside its limits, on the ladder.
@@ -15,7 +15,7 @@ use proptest::test_runner::RngSeed;
 
 const SEED: u64 = 20_261_008;
 
-/// A fixed seed, so every run explores the same cases (CLAUDE.md: tests are
+/// A fixed seed, so every run explores the same cases (tests are
 /// deterministic). Set PROPTEST_RNG_SEED to explore others.
 fn config() -> ProptestConfig {
     let config = ProptestConfig::default();
@@ -200,7 +200,7 @@ fn any_ladder() -> impl Strategy<Value = TickTable> {
 proptest! {
     #![proptest_config(config())]
 
-    /// No panic on rules data from outside (roadmap Phase 7): whatever
+    /// No panic on rules data from outside: whatever
     /// ladder an adapter publishes and whatever price arrives, rounding,
     /// stepping, and building a band answer without panicking.
     #[test]

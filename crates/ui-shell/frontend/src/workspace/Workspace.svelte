@@ -30,7 +30,7 @@
 
   let host;
 
-  // dockview's dark or light theme, matching the app's (ADR 0015), with the
+  // dockview's dark or light theme, matching the app's, with the
   // app's palette on top (see app.css).
   const dockTheme = (resolved) => {
     const base = resolved === "light" ? themeLight : themeDark;
@@ -56,7 +56,7 @@
   onMount(() => {
     const api = createDockview(host, {
       theme: dockTheme(theme.resolved),
-      // A panel floats over its page on demand (ADR 0013), kept on screen;
+      // A panel floats over its page on demand, kept on screen;
       // it leaves for another monitor as a native window, never as a
       // browser pop-up.
       floatingGroupBounds: "boundedWithinViewport",

@@ -250,7 +250,7 @@ impl SimVenue {
 
     /// Every order of the session as the venue holds it now: what an
     /// adapter reads back after a reconnect and publishes as snapshots, so
-    /// core catches up on what the dropped stream missed (ADR 0012).
+    /// core catches up on what the dropped stream missed.
     pub fn order_views(&self) -> Vec<(ClientOrderId, VenueOrder)> {
         self.state().ledger.views()
     }

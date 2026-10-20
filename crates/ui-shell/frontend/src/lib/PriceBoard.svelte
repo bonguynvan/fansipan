@@ -245,7 +245,7 @@
     color: var(--tone-floor);
   }
 
-  /* An instrument that does not trade now, or trades restricted (ADR 0026). */
+  /* An instrument that does not trade now, or trades restricted. */
   .board :global(.bo-grid .c.pb-stopped) {
     color: var(--text-dim);
     font-style: italic;

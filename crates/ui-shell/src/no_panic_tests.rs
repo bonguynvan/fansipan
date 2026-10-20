@@ -1,4 +1,4 @@
-//! No panic on input from outside (roadmap Phase 7). Core parses no wire
+//! No panic on input from outside. Core parses no wire
 //! protocol, but it reads what it cannot trust: what an adapter publishes
 //! (quotes, prints, depth, rules, bands, order reports and read-backs, the
 //! account, sessions, connections), whatever their values, and what a
@@ -6,8 +6,8 @@
 //! typed error. A panic inside an engine's lock would poison it and take
 //! the terminal down over one bad message.
 //!
-//! The seed is fixed, so every run explores the same cases (CLAUDE.md:
-//! tests are deterministic). Set PROPTEST_RNG_SEED to explore others. The
+//! The seed is fixed, so every run explores the same cases (tests
+//! are deterministic). Set PROPTEST_RNG_SEED to explore others. The
 //! generators are boxed: nested as deep as these are, their unboxed types
 //! overflow a debug build's test-thread stack.
 

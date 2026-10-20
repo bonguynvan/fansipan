@@ -211,7 +211,7 @@ pub enum RiskReject {
         working: Decimal,
     },
     /// The instrument does not trade now, and its venue takes no orders
-    /// for it (ADR 0026).
+    /// for it.
     NotTrading {
         status: TradingStatus,
         reason: Option<String>,

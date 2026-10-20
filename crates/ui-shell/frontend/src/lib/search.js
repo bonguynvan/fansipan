@@ -1,4 +1,4 @@
-// Search across what the trader can do and see (ADR 0017): commands (every
+// Search across what the trader can do and see: commands (every
 // registered action, and every choice a menu offers, such as a screen to
 // add or a theme) and symbols. Matching ignores case and accents, so
 // "dat lenh" finds "Đặt lệnh" and "aapl" finds AAPL.

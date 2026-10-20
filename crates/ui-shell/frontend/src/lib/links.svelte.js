@@ -1,4 +1,4 @@
-// One shared symbol that linked panels follow (ADR 0013). A panel is linked
+// One shared symbol that linked panels follow. A panel is linked
 // (`params.linked`) or not. Linked, it shows the shared symbol and sets it
 // when the trader picks another. Not linked, it keeps its own
 // `params.symbol`.
@@ -13,7 +13,7 @@ import { debouncedSetter, getSetting } from "./settings.js";
 const EVENT = "link-symbol";
 const ASK = "link-symbol-ask";
 const SETTING = "workspace.symbol";
-/** Where link groups (before ADR 0013) kept their symbols; group A's carries over. */
+/** Where the older link groups kept their symbols; group A's carries over. */
 const OLD_SETTING = "workspace.links";
 const SAVE_DELAY_MS = 500;
 /** Ignores this window's own events, which Tauri delivers back late. */
@@ -81,8 +81,9 @@ export function linkPatch(params, linked) {
 }
 
 /**
- * A panel's parameters from before ADR 0013, when they named a link group
- * (`link: "a" | "b" | "c" | "none"`): in a group means linked. Parameters
+ * A panel's parameters from before the one shared symbol, when they named
+ * a link group (`link: "a" | "b" | "c" | "none"`): in a group means
+ * linked. Parameters
  * without `link` come back as they are.
  */
 export function migrateLinkParams(params) {

@@ -1,4 +1,4 @@
-// The built-in menus and the actions behind them (ADR 0017). They register
+// The built-in menus and the actions behind them. They register
 // through the calls a plugin uses (menus.js, hotkeys.svelte.js), so every
 // command that is an action can be given a key in Keyboard shortcuts, and
 // the menu shows it. The main window registers them: it alone has the menu

@@ -1,6 +1,6 @@
 // The theme every grid uses: bo-grid applies a theme as CSS custom
 // properties, so each value names one of the app's tokens and the grids
-// follow the theme (ADR 0015) and the trader's text size (ADR 0014) with
+// follow the theme and the trader's text size with
 // nothing to recompute. Row heights, which bo-grid takes as numbers, come
 // from `px()`.
 
