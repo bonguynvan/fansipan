@@ -61,8 +61,9 @@ Then open <http://localhost:6080/vnc.html?autoconnect=true&resize=scale>.
 - The terminal runs in the container on a virtual display, and noVNC
   shows it in your browser. This works with Docker Desktop on Windows and
   macOS, and with Docker on Linux. The first build takes several minutes.
-- `FANSIPAN_SANDBOX_MARKET=us docker compose up` simulates the US-style
-  market instead.
+- At first launch the terminal asks which simulated market to run and
+  remembers it; **File › Market** changes it later.
+  `FANSIPAN_SANDBOX_MARKET=us` (or `vn`) skips the question.
 - `FANSIPAN_SANDBOX_CLOCK=real` keeps real trading hours instead of the
   demo day, which compresses a whole session into 15 minutes.
 - `FANSIPAN_SANDBOX_BEAT_MS=10` moves the market every 10 ms instead of

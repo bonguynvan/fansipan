@@ -11,6 +11,7 @@ import { registerMenu, registerMenuItem } from "./menus.js";
 import { openSearch } from "./searchEvent.js";
 import { TRADE, showSection } from "./sections.svelte.js";
 import { THEMES, setTheme, theme } from "./theme.svelte.js";
+import { launch, switchVenue } from "./launch.svelte.js";
 import { market } from "./market.svelte.js";
 import { TRADING_STATES, setTradingState } from "./tradingActions.js";
 import { SCALES, setScale, ui } from "./ui.svelte.js";
@@ -100,6 +101,20 @@ export function registerAppMenus({ showShortcuts, showAbout }) {
     registerMenuItem("file", { group: "page", action });
   }
   registerMenuItem("file", { group: "desktop", action: "workspace.new-desktop" });
+  // Only a build that offers more than one venue has one to change to.
+  if (launch.choices.length > 1) {
+    registerMenuItem("file", {
+      group: "venue",
+      title: "menu.venue",
+      choices: () =>
+        launch.choices.map((choice) => ({
+          id: choice.id,
+          label: choice.title,
+          checked: launch.current === choice.id,
+          pick: () => switchVenue(choice.id).catch((err) => ({ id: "venue.switchFailed", vars: { error: String(err) } })),
+        })),
+    });
+  }
   registerMenuItem("file", { group: "app", action: "app.exit" });
 
   registerMenuItem("edit", { title: "menu.cut", hint: "Ctrl+X", run: inField("cut") });

@@ -10,14 +10,17 @@ use std::ops::RangeInclusive;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fansipan_shell::{run, Market, RiskLimits, Venue};
+use fansipan_shell::{run, run_choosing, Choice, Market, RiskLimits, Venue};
 use model::UnixNanos;
-use sandbox::{Clock, MarketProfile, SandboxDataClient, SandboxExecutionClient, DEFAULT_BEAT};
+use sandbox::{
+    profiles::PROFILE_IDS, Clock, MarketProfile, SandboxDataClient, SandboxExecutionClient,
+    DEFAULT_BEAT,
+};
 
 const VENUE: &str = "sim";
-/// Which simulated market to run; see `sandbox::profiles::PROFILE_IDS`.
+/// Which simulated market to run, skipping the trader's choice; see
+/// `sandbox::profiles::PROFILE_IDS`. Unset or empty, the trader chooses.
 const MARKET_ENV: &str = "FANSIPAN_SANDBOX_MARKET";
-const DEFAULT_MARKET: &str = "vn";
 /// `real` runs the market's real trading hours; anything else, or nothing,
 /// runs a compressed demo day.
 const CLOCK_ENV: &str = "FANSIPAN_SANDBOX_CLOCK";
@@ -26,10 +29,29 @@ const CLOCK_ENV: &str = "FANSIPAN_SANDBOX_CLOCK";
 const BEAT_ENV: &str = "FANSIPAN_SANDBOX_BEAT_MS";
 const BEAT_MS: RangeInclusive<u64> = 1..=60_000;
 
-/// The simulated market named by `FANSIPAN_SANDBOX_MARKET`, or the default.
-fn market_profile(chosen: Option<String>) -> Result<MarketProfile, String> {
-    let id = chosen.unwrap_or_else(|| DEFAULT_MARKET.to_string());
-    MarketProfile::by_id(id.trim(), VENUE).map_err(|e| format!("{MARKET_ENV}: {e}"))
+/// The simulated market `FANSIPAN_SANDBOX_MARKET` names; `None` when it
+/// names none, so the trader chooses.
+fn market_profile(chosen: Option<String>) -> Result<Option<MarketProfile>, String> {
+    match chosen.as_deref().map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(id) => MarketProfile::by_id(id, VENUE)
+            .map(Some)
+            .map_err(|e| format!("{MARKET_ENV}: {e}")),
+    }
+}
+
+/// Every simulated market, by title, so none comes first for being the
+/// default.
+fn market_choices() -> Vec<Choice> {
+    let mut profiles: Vec<MarketProfile> = PROFILE_IDS
+        .iter()
+        .filter_map(|id| MarketProfile::by_id(id, VENUE).ok())
+        .collect();
+    profiles.sort_by(|a, b| a.title.cmp(b.title));
+    profiles
+        .iter()
+        .map(|profile| Choice::new(profile.id, profile.title))
+        .collect()
 }
 
 /// The clock `FANSIPAN_SANDBOX_CLOCK` names: real hours, or by default the
@@ -82,14 +104,26 @@ fn now() -> UnixNanos {
     UnixNanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
+/// The sandbox on market `id`, its demo day starting now.
+fn open(id: &str, clock_choice: Option<&str>, beat: Duration) -> Result<Venue, String> {
+    let profile = MarketProfile::by_id(id, VENUE)?;
+    let clock = clock(&profile, clock_choice, now());
+    Ok(sandbox(&profile, clock, beat))
+}
+
 fn main() -> ExitCode {
     let chosen = market_profile(env::var(MARKET_ENV).ok())
         .and_then(|profile| Ok((profile, beat(env::var(BEAT_ENV).ok().as_deref())?)));
+    let clock_choice = env::var(CLOCK_ENV).ok();
     match chosen {
-        Ok((profile, beat)) => {
-            let clock = clock(&profile, env::var(CLOCK_ENV).ok().as_deref(), now());
-            run(sandbox(&profile, clock, beat))
-        }
+        Ok((Some(profile), beat)) => run(sandbox(
+            &profile,
+            clock(&profile, clock_choice.as_deref(), now()),
+            beat,
+        )),
+        Ok((None, beat)) => run_choosing(market_choices(), move |id| {
+            open(id, clock_choice.as_deref(), beat)
+        }),
         Err(e) => {
             eprintln!("{e}");
             ExitCode::FAILURE
@@ -102,8 +136,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vietnam_is_the_default_market() {
-        assert_eq!(market_profile(None).unwrap().id, "vn");
+    fn no_market_is_the_default_so_the_trader_chooses() {
+        assert!(market_profile(None).unwrap().is_none());
+        assert!(market_profile(Some("  ".into())).unwrap().is_none());
+        assert_eq!(
+            market_profile(Some(" vn ".into())).unwrap().unwrap().id,
+            "vn"
+        );
+    }
+
+    #[test]
+    fn every_market_is_offered_once_in_order_of_title() {
+        let mut profiles: Vec<MarketProfile> = PROFILE_IDS
+            .iter()
+            .map(|id| MarketProfile::by_id(id, VENUE).unwrap())
+            .collect();
+        profiles.sort_by(|a, b| a.title.cmp(b.title));
+        let expected: Vec<Choice> = profiles
+            .iter()
+            .map(|p| Choice::new(p.id, p.title))
+            .collect();
+
+        assert_eq!(market_choices(), expected);
+        assert_eq!(expected.len(), PROFILE_IDS.len());
+    }
+
+    #[test]
+    fn each_offered_market_opens() {
+        for choice in PROFILE_IDS {
+            assert!(open(choice, None, DEFAULT_BEAT).is_ok(), "{choice}");
+        }
+        assert!(open("mars", None, DEFAULT_BEAT).is_err());
     }
 
     #[test]
@@ -115,7 +178,7 @@ mod tests {
 
     #[test]
     fn the_sandbox_subscribes_to_every_listing() {
-        let profile = market_profile(Some("us".into())).unwrap();
+        let profile = market_profile(Some("us".into())).unwrap().unwrap();
 
         assert_eq!(
             sandbox(&profile, Clock::Compressed { start: now() }, DEFAULT_BEAT)
@@ -139,7 +202,7 @@ mod tests {
 
     #[test]
     fn the_demo_day_is_the_default_clock() {
-        let vn = market_profile(None).unwrap();
+        let vn = market_profile(Some("vn".into())).unwrap().unwrap();
         let start = UnixNanos(7);
 
         assert_eq!(clock(&vn, None, start), Clock::Compressed { start });

@@ -3,7 +3,8 @@
 #   docker compose up --build
 #   # open http://localhost:6080/vnc.html?autoconnect=true&resize=scale
 #
-# FANSIPAN_SANDBOX_MARKET=us docker compose up   for the US-style market.
+# The terminal asks which simulated market to run, and remembers it. To skip
+# the question: FANSIPAN_SANDBOX_MARKET=us (or vn) docker compose up
 name: fansipan
 
 services:
@@ -17,7 +18,8 @@ services:
       # This machine only: the VNC session behind it has no password.
       - "127.0.0.1:6080:6080"
     environment:
-      FANSIPAN_SANDBOX_MARKET: ${FANSIPAN_SANDBOX_MARKET:-vn}
+      # Empty: the trader chooses at first launch.
+      FANSIPAN_SANDBOX_MARKET: ${FANSIPAN_SANDBOX_MARKET:-}
       # real: the market's real trading hours. Anything else: a demo day
       # that runs every phase every 15 minutes.
       FANSIPAN_SANDBOX_CLOCK: ${FANSIPAN_SANDBOX_CLOCK:-demo}

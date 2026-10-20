@@ -53,6 +53,36 @@ impl Store {
             .lock()
             .map_err(|_| "settings are unavailable after an internal error; restart".to_string())
     }
+
+    /// One setting, for the shell's own use; `None` when unset or the store
+    /// is unavailable.
+    pub(crate) fn read(&self, key: &str) -> Option<Value> {
+        self.lock().ok()?.get(key).cloned()
+    }
+
+    pub(crate) fn write(&self, key: &str, value: Value) -> Result<(), String> {
+        self.lock()?.set(key, value).map_err(|e| e.to_string())
+    }
+}
+
+/// Restarts the app the way quitting ends it: every window is asked to save
+/// and given a moment, and the extra windows stay listed for next start.
+pub(crate) fn restart(app: &AppHandle) {
+    if let Some(lifecycle) = app.try_state::<Lifecycle>() {
+        if lifecycle.exiting.swap(true, Ordering::SeqCst) {
+            return;
+        }
+    }
+    if let Err(e) = app.emit(FLUSH_EVENT, ()) {
+        crate::logbook::warn(&format!(
+            "could not ask windows to save before restarting: {e}"
+        ));
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(EXIT_GRACE);
+        app.restart();
+    });
 }
 
 /// `ws-` followed by 1-24 of a-z and 0-9. Labels become settings keys and

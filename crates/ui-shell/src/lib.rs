@@ -1,7 +1,8 @@
 //! The desktop terminal as a library. [`run`] takes a [`Venue`] (one
 //! adapter's two clients and what the shell needs to know about them),
 //! wires the bus to the engines, and opens the window, with a small command
-//! surface for the web front end.
+//! surface for the web front end. [`run_choosing`] offers several venues
+//! instead, and the trader picks one at first launch.
 //!
 //! The shell never names an adapter. A binary does that: this crate's own
 //! wires the sandbox (`src/main.rs`), and an adapter repo wires its adapter
@@ -13,6 +14,7 @@ mod dto;
 mod journaling;
 #[cfg(test)]
 mod latency_report;
+mod launch;
 mod logbook;
 #[cfg(test)]
 mod no_panic_tests;
@@ -40,6 +42,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_window_state::StateFlags;
 
 pub use execution_engine::RiskLimits;
+pub use launch::Choice;
 
 use batch::{Batch, BatchDto};
 use dto::{
@@ -1345,14 +1348,27 @@ fn log_folder() -> Option<String> {
 pub fn run(venue: Venue) -> ExitCode {
     let bus = Bus::new();
     let events = bus.subscribe();
-    let shell = match connect_engines(&bus, venue) {
-        Ok(shell) => shell,
+    match connect_engines(&bus, venue) {
+        Ok(shell) => serve(launch::Launch::single(), Some((shell, events))),
         Err(e) => {
             logbook::error(&format!("could not connect to the venue: {e}"));
-            return ExitCode::FAILURE;
+            ExitCode::FAILURE
         }
-    };
+    }
+}
 
+/// Runs the terminal on one of `choices`, which `open` turns into a
+/// [`Venue`]: the one the trader chose last time, or, at first launch,
+/// the one they choose then. Changing it later restarts the terminal.
+pub fn run_choosing(
+    choices: Vec<Choice>,
+    open: impl Fn(&str) -> Result<Venue, String> + Send + Sync + 'static,
+) -> ExitCode {
+    serve(launch::Launch::choosing(choices, Box::new(open)), None)
+}
+
+/// Opens the windows; `ready` is the venue already connected, if any.
+fn serve(launch: launch::Launch, ready: Option<(Shell, Receiver<Event>)>) -> ExitCode {
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -1369,20 +1385,20 @@ pub fn run(venue: Venue) -> ExitCode {
                 logbook::hide(std::path::Path::new(&home), "~");
             }
             logbook::info(&format!(
-                "Fansipan {} started on {} {}, venue {}",
+                "Fansipan {} started on {} {}",
                 env!("CARGO_PKG_VERSION"),
                 std::env::consts::OS,
                 std::env::consts::ARCH,
-                shell.venue
             ));
-            if let Err(e) = start_journal(&shell, &data_dir.join("journal")) {
-                logbook::error(&format!("journal: {e}"));
-            }
-            app.manage(shell);
             workspace::setup(app)?;
-            pump(app.handle().clone(), events);
-            flush(app.handle().clone());
-            settle(app.handle().clone());
+            app.manage(launch);
+            match ready {
+                Some((shell, events)) => {
+                    let id = shell.venue.clone();
+                    launch::start(app.handle(), shell, events, &id);
+                }
+                None => launch::resume(app.handle()),
+            }
             Ok(())
         })
         .on_window_event(workspace::on_window_event)
@@ -1401,6 +1417,9 @@ pub fn run(venue: Venue) -> ExitCode {
             size_for_risk,
             place_bracket,
             log_folder,
+            launch::launch_state,
+            launch::choose_venue,
+            launch::switch_venue,
             workspace::settings_get,
             workspace::settings_set,
             workspace::settings_remove,

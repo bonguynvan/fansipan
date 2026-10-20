@@ -66,6 +66,5 @@ RUN sed -i 's/\r$//' /usr/local/bin/fansipan-entrypoint \
     && chmod +x /usr/local/bin/fansipan-entrypoint
 USER fansipan
 WORKDIR /home/fansipan
-ENV FANSIPAN_SANDBOX_MARKET=vn
 EXPOSE 6080
 ENTRYPOINT ["/usr/local/bin/fansipan-entrypoint"]
