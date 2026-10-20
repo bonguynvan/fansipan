@@ -9,6 +9,7 @@ members = [
   "crates/journal",
   "crates/adapters/sandbox",
   "crates/ui-shell",
+  "crates/native-shell",
 ]
 
 [workspace.package]
