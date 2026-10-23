@@ -12,14 +12,14 @@ importers:
         specifier: ^2.0.0
         version: 2.12.1
       '@tradecanvas/chart':
-        specifier: ^1.17.0
-        version: 1.17.0
+        specifier: ^1.31.0
+        version: 1.31.0
       '@tradecanvas/svelte':
-        specifier: ^1.2.4
-        version: 1.2.4(svelte@5.57.2)
+        specifier: ^1.3.13
+        version: 1.3.13(svelte@5.57.2)
       bo-grid:
-        specifier: ^2.2.1
-        version: 2.2.1(svelte@5.57.2)
+        specifier: ^2.2.2
+        version: 2.2.2(svelte@5.57.2)
       dockview-core:
         specifier: ^8.4.1
         version: 8.4.1
@@ -446,17 +446,17 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tradecanvas/chart@1.17.0':
-    resolution: {integrity: sha512-X5SVqWWZHuYj0BlAlVYLjkxtKo/IYCsH/rTXCJUecnT07/Gi9j3YorOSWHS1iG38Tr3EqQnuZbfz8pjdIIW9ZA==}
+  '@tradecanvas/chart@1.31.0':
+    resolution: {integrity: sha512-druEf9PlfVILwIXShgPj1M4jDWH9asYvopqx+N0pW+MyGnShmYP+8cVO/xdO+P5ZBI1z+lIj7pa4YQIYQm5psQ==}
 
-  '@tradecanvas/commons@1.17.0':
-    resolution: {integrity: sha512-S93PqWMfuzBlQoVI1xVd53rVGU2NGkyE/xicH1y4UqaAoV/o0qQtxbCm432Uvh18mAx7PV8e2ZH389bxRWxa+w==}
+  '@tradecanvas/commons@1.31.0':
+    resolution: {integrity: sha512-9Bk1KgowSYc0mYPsf5BAdV3NK7/gYmJO40Oq4svKg2x6Xg+F+krPxnlChwyAt0O7V9l81aZqQ+S9eCO70bfpFw==}
 
-  '@tradecanvas/core@1.17.0':
-    resolution: {integrity: sha512-j48HnOA8vJ2vN9zLj7IWtqsSM4/9N69LhmULdUrnDn5SsNjrtsbOE56ogG0XWbwx3ILR6euzKyFE/VMGa03Ldg==}
+  '@tradecanvas/core@1.31.0':
+    resolution: {integrity: sha512-fFVPHxGKimLnf7jJ59wCoLl94ueaUlshUVizNZhdIE+hz5zCd4gNpewaQABtHmUNLYeQu/yY476wg0x7eMzt1A==}
 
-  '@tradecanvas/svelte@1.2.4':
-    resolution: {integrity: sha512-WhFGJTrwNqlirMbtRDxPtGcXwZFUZtUXaMjrO3jZRUOKGf0P7iSXxHCS8i8IPaHe6Vc7Xm1x0H5a8zD8e6AqLA==}
+  '@tradecanvas/svelte@1.3.13':
+    resolution: {integrity: sha512-ZMQHrp+mDgvtdsWwzFj1i8BQFd7THVMYATk3parA7nuSrcoUVEiZ2LCPOSG7cnFnnLvWqIPkV7f17JqX1WRMQg==}
     peerDependencies:
       svelte: '>=5.0.0'
 
@@ -515,8 +515,8 @@ packages:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
 
-  bo-grid@2.2.1:
-    resolution: {integrity: sha512-cOukBpiF3IgOCoyVA+SVJqaSWpgfF3O9s9zrWiu0lz17Cw3IizKnuw1pniKD937jfWJHEpG0Oedy7Zr0jnepkw==}
+  bo-grid@2.2.2:
+    resolution: {integrity: sha512-7P+D6Lwm5cEBFeK29i2TdwEjuPxdoTl0XD32PKbIIJHAeyTELE5fHMnD7YON/7gbmS2cpzrxkqKIWB2R9Kf+uA==}
     peerDependencies:
       svelte: ^5.0.0
       xlsx: '*'
@@ -1067,20 +1067,20 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.1
       '@tauri-apps/cli-win32-x64-msvc': 2.12.1
 
-  '@tradecanvas/chart@1.17.0':
+  '@tradecanvas/chart@1.31.0':
     dependencies:
-      '@tradecanvas/commons': 1.17.0
-      '@tradecanvas/core': 1.17.0
+      '@tradecanvas/commons': 1.31.0
+      '@tradecanvas/core': 1.31.0
 
-  '@tradecanvas/commons@1.17.0': {}
+  '@tradecanvas/commons@1.31.0': {}
 
-  '@tradecanvas/core@1.17.0':
+  '@tradecanvas/core@1.31.0':
     dependencies:
-      '@tradecanvas/commons': 1.17.0
+      '@tradecanvas/commons': 1.31.0
 
-  '@tradecanvas/svelte@1.2.4(svelte@5.57.2)':
+  '@tradecanvas/svelte@1.3.13(svelte@5.57.2)':
     dependencies:
-      '@tradecanvas/chart': 1.17.0
+      '@tradecanvas/chart': 1.31.0
       svelte: 5.57.2
 
   '@types/chai@5.2.3':
@@ -1142,7 +1142,7 @@ snapshots:
 
   axobject-query@4.1.0: {}
 
-  bo-grid@2.2.1(svelte@5.57.2):
+  bo-grid@2.2.2(svelte@5.57.2):
     dependencies:
       svelte: 5.57.2
 

@@ -9,5 +9,5 @@ export default defineConfig({
   // the chart engine and the docking layout are most of the bundle and are
   // on screen at startup, so a large first chunk costs nothing worth
   // code-splitting for.
-  build: { target: "es2021", outDir: "dist", chunkSizeWarningLimit: 1536 },
+  build: { target: "es2021", outDir: "dist", chunkSizeWarningLimit: 1600 },
 });
